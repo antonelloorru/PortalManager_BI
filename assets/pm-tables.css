@@ -1,0 +1,128 @@
+/*
+ * pm-tables.css — tabelle con intestazione fissa e corpo scorrevole (v1.9.3)
+ *
+ * Il problema: su elenchi lunghi l'intestazione esce dalla vista dopo poche
+ * righe, e da quel punto in poi le colonne sono numeri senza nome. Su schermi
+ * piccoli si aggiunge lo scorrimento orizzontale, che porta fuori vista anche la
+ * prima colonna — quella che dice di quale riga si sta leggendo il valore.
+ *
+ * La soluzione usa `position: sticky`, non un secondo <table> per l'intestazione:
+ * due tabelle affiancate richiedono di sincronizzare le larghezze delle colonne a
+ * mano, e si disallineano al primo contenuto piu' largo del previsto.
+ */
+
+/* -----------------------------------------------------------------------------
+ * 1. Il contenitore scorrevole.
+ *
+ *    L'altezza e' in `vh` e non in pixel: deve adattarsi allo schermo, che e' il
+ *    punto della richiesta. 62vh lascia spazio a intestazione di pagina, filtri e
+ *    piede senza che la tabella debba essere cercata scorrendo.
+ * -------------------------------------------------------------------------- */
+.pm-scroll {
+    max-height: 62vh;
+    overflow: auto;
+    border: 1px solid var(--border, #e2e8f0);
+    border-radius: 8px;
+    position: relative;
+    /* scorrimento fluido su dispositivi tattili */
+    -webkit-overflow-scrolling: touch;
+}
+
+/* schermi bassi: piu' spazio alla tabella, che e' il contenuto principale */
+@media (max-height: 700px) { .pm-scroll { max-height: 55vh; } }
+@media (max-height: 560px) { .pm-scroll { max-height: 48vh; } }
+/* schermi alti: si puo' mostrare di piu' senza rendere la pagina interminabile */
+@media (min-height: 1000px) { .pm-scroll { max-height: 70vh; } }
+
+.pm-scroll > table { margin: 0; border: 0; width: 100%; }
+
+/* -----------------------------------------------------------------------------
+ * 2. L'intestazione che resta.
+ *
+ *    `z-index` su tre livelli: intestazione (3), prima colonna (2), incrocio
+ *    fra le due (4). Senza l'incrocio piu' alto di entrambi, la cella in alto a
+ *    sinistra scompare sotto una delle due quando si scorre in diagonale.
+ * -------------------------------------------------------------------------- */
+.pm-scroll thead th {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    background: var(--th-bg, #f1f5f9);
+    /* il bordo di una cella sticky non viene disegnato durante lo scorrimento:
+       `box-shadow` lo sostituisce e resta visibile */
+    box-shadow: inset 0 -1px 0 var(--border, #cbd5e1);
+    border-bottom: 0;
+}
+
+/* intestazione a due livelli, come nel Service Desk */
+.pm-scroll thead tr:first-child th { top: 0; }
+.pm-scroll thead tr:nth-child(2) th { top: var(--pm-th-h, 34px); z-index: 3; }
+
+/* -----------------------------------------------------------------------------
+ * 3. La prima colonna che resta, dove serve.
+ *
+ *    Si attiva con la classe `pm-fix1` sulla tabella. Non e' predefinita: su una
+ *    tabella stretta bloccare una colonna toglie spazio senza dare nulla.
+ * -------------------------------------------------------------------------- */
+.pm-scroll table.pm-fix1 tbody td:first-child,
+.pm-scroll table.pm-fix1 thead th:first-child {
+    position: sticky;
+    left: 0;
+    background: var(--card-bg, #fff);
+    z-index: 2;
+    box-shadow: inset -1px 0 0 var(--border, #e2e8f0);
+}
+.pm-scroll table.pm-fix1 thead th:first-child { z-index: 4; background: var(--th-bg, #f1f5f9); }
+/* le righe alternate manterrebbero il proprio sfondo sotto la colonna fissa */
+.pm-scroll table.pm-fix1 tbody tr:nth-child(even) td:first-child { background: #f8fafc; }
+
+/* -----------------------------------------------------------------------------
+ * 4. Adattamento alla larghezza.
+ *
+ *    Sotto i 900px le celle si stringono e il corpo cala: e' preferibile a
+ *    troncare le colonne, perche' su una tabella economica un numero troncato e'
+ *    peggio di un numero piccolo.
+ * -------------------------------------------------------------------------- */
+@media (max-width: 900px) {
+    .pm-scroll table { font-size: 10.5px; }
+    .pm-scroll th, .pm-scroll td { padding: 4px 5px; }
+}
+@media (max-width: 600px) {
+    .pm-scroll table { font-size: 10px; }
+    .pm-scroll th, .pm-scroll td { padding: 3px 4px; }
+    .pm-scroll { max-height: 60vh; }
+}
+
+/* -----------------------------------------------------------------------------
+ * 5. In stampa non si scorre.
+ *
+ *    Un contenitore con `overflow: auto` stampa solo la porzione visibile: il
+ *    resto della tabella semplicemente non esce dalla stampante. In stampa il
+ *    limite di altezza va rimosso e l'intestazione ripetuta a ogni pagina.
+ * -------------------------------------------------------------------------- */
+@media print {
+    .pm-scroll { max-height: none; overflow: visible; border: 0; }
+    .pm-scroll thead th { position: static; box-shadow: none;
+                          border-bottom: 1px solid #94a3b8; }
+    .pm-scroll table.pm-fix1 tbody td:first-child,
+    .pm-scroll table.pm-fix1 thead th:first-child { position: static; box-shadow: none; }
+    .pm-scroll thead { display: table-header-group; }
+    .pm-scroll tr { page-break-inside: avoid; }
+}
+
+/* -----------------------------------------------------------------------------
+ * 6. Indicatore di contenuto oltre il bordo.
+ *
+ *    Una tabella tagliata a meta' senza segnali sembra finita. L'ombra sul bordo
+ *    inferiore compare solo quando c'e' altro sotto.
+ * -------------------------------------------------------------------------- */
+.pm-scroll.has-more::after {
+    content: '';
+    position: sticky;
+    bottom: 0;
+    display: block;
+    height: 14px;
+    margin-top: -14px;
+    background: linear-gradient(transparent, rgba(0, 0, 0, .07));
+    pointer-events: none;
+}
