@@ -1,4 +1,3 @@
-[README.md](https://github.com/user-attachments/files/31792730/README.md)
 # certV 2.4 — Portale Integrato Governance, Competenze & Recruiting
 
 ## Installazione Rapida
