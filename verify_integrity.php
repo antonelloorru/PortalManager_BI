@@ -1,0 +1,286 @@
+<?php
+/**
+ * certV 4.1 — verify_integrity.php
+ *
+ * Strumento di diagnostica per Super Admin che:
+ *   1. Verifica esistenza dei file linkati dal menu (header.php)
+ *   2. Verifica esistenza dei moduli core in app/
+ *   3. Identifica file orfani con backslash nel nome (bug zip extraction)
+ *   4. Propone pulizia automatica dei file orfani
+ *
+ * USO:
+ *   - Aprire http://tuo-portale/verify_integrity.php
+ *   - Loggarsi come Super Admin (richiesto)
+ *   - Cliccare "Pulisci file orfani" se proposto
+ *   - ELIMINARE questo file dopo l'uso
+ */
+
+require_once __DIR__ . '/access_control.php';
+
+if ((int)($_SESSION['role_id'] ?? 99) !== 1) {
+    http_response_code(403);
+    die('Accesso solo Super Admin.');
+}
+
+$root = __DIR__;
+$action = $_POST['action'] ?? '';
+$cleanup_done = [];
+$cleanup_errors = [];
+
+// ── Pulizia file orfani con backslash nel nome ────────────────────
+if ($action === 'cleanup' && !empty($_POST['confirm']) && $_POST['confirm'] === 'YES') {
+    if (function_exists('csrf_token') && (!isset($_POST['_csrf']) || !hash_equals($_SESSION['_csrf']['value'] ?? '', $_POST['_csrf']))) {
+        die('CSRF token invalido.');
+    }
+    $orphans = glob($root . '/app\\*.php') ?: [];
+    foreach ($orphans as $file) {
+        // Calcola il nome corretto: app\bootstrap.php -> app/bootstrap.php
+        $basename = basename($file);  // sarà "app\bootstrap.php" su Linux
+        $clean = str_replace('app\\', '', $basename);
+        $target = $root . '/app/' . $clean;
+        if (!is_dir($root . '/app')) @mkdir($root . '/app', 0755, true);
+        if (!file_exists($target)) {
+            if (@rename($file, $target)) {
+                $cleanup_done[] = "Spostato $basename in app/$clean";
+            } else {
+                $cleanup_errors[] = "Errore spostamento $basename";
+            }
+        } else {
+            // Già esiste in posizione corretta: elimina l'orfano
+            if (@unlink($file)) {
+                $cleanup_done[] = "Rimosso orfano $basename (file gia' presente in app/)";
+            } else {
+                $cleanup_errors[] = "Errore rimozione orfano $basename";
+            }
+        }
+    }
+}
+
+// ── 1. File linkati dal menu ──────────────────────────────────────
+$menu_pages = [
+    '2fa_settings.php', '2fa_verify.php',
+    'brand.php', 'brand_distributors.php', 'brand_referents.php', 'brand_technologies.php',
+    'catalogo_certificazioni.php', 'config_notifiche.php',
+    'db_upgrade.php', 'documenti.php', 'gap_analysis.php', 'health_check.php',
+    'index.php', 'logout.php',
+    'manage_companies.php', 'manage_employees.php', 'manage_permissions.php',
+    'manage_roles.php', 'manage_work_modes.php', 'manager_users.php',
+    'mass_upload.php', 'notifications.php', 'programmazione.php', 'publish_posizione.php',
+    'recruiting_agenzie.php', 'recruiting_candidati.php', 'recruiting_contratti.php',
+    'recruiting_posizioni.php', 'report_certificazioni.php',
+    'schema_check_upgrade.php', 'segreteria.php', 'settings.php', 'smtp_settings.php',
+    'system_update.php', 'training_plans.php', 'upload_certificato.php',
+    'view_logs.php', 'visualizza_storico.php',
+];
+$missing_pages = [];
+foreach ($menu_pages as $p) {
+    if (!file_exists($root . '/' . $p)) $missing_pages[] = $p;
+}
+
+// ── 2. Moduli core in app/ ────────────────────────────────────────
+$app_modules = [
+    'bootstrap.php', 'Csrf.php', 'EmailOtp.php', 'Env.php', 'RateLimiter.php',
+    'RecoveryCodes.php', 'Router.php', 'Security.php', 'Session.php',
+    'Totp.php', 'TwoFactor.php', 'UrlHelper.php',
+];
+$missing_modules = [];
+$app_dir_exists = is_dir($root . '/app');
+foreach ($app_modules as $m) {
+    if (!file_exists($root . '/app/' . $m)) $missing_modules[] = $m;
+}
+
+// ── 3. File orfani con backslash nel nome ─────────────────────────
+$orphan_files = glob($root . '/app\\*.php') ?: [];
+$root_duplicates = [];
+$root_modules_to_check = ['Csrf.php', 'Env.php', 'RateLimiter.php', 'Router.php',
+                          'Security.php', 'Session.php', 'UrlHelper.php', 'bootstrap.php'];
+foreach ($root_modules_to_check as $f) {
+    if (file_exists($root . '/' . $f)) $root_duplicates[] = $f;
+}
+
+// ── 4. Statistiche generali ───────────────────────────────────────
+$total_php = count(glob($root . '/*.php') ?: []);
+$total_app = $app_dir_exists ? count(glob($root . '/app/*.php') ?: []) : 0;
+
+$ok_pages = empty($missing_pages);
+$ok_modules = empty($missing_modules) && $app_dir_exists;
+$has_orphans = !empty($orphan_files);
+$has_duplicates = !empty($root_duplicates);
+
+$overall_ok = $ok_pages && $ok_modules && !$has_orphans;
+?>
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>Verifica integrità — certV</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,sans-serif;background:#f1f5f9;padding:24px;color:#1e293b}
+.container{max-width:900px;margin:0 auto}
+h1{font-size:24px;margin-bottom:6px}
+.sub{color:#64748b;font-size:13px;margin-bottom:24px}
+.summary{padding:16px 20px;border-radius:10px;margin-bottom:20px;display:flex;align-items:center;gap:14px;font-weight:600}
+.summary.ok{background:#d1fae5;color:#065f46;border-left:4px solid #10b981}
+.summary.warn{background:#fef3c7;color:#92400e;border-left:4px solid #f59e0b}
+.summary.err{background:#fee2e2;color:#991b1b;border-left:4px solid #ef4444}
+.summary .icon{font-size:24px}
+.section{background:#fff;border-radius:10px;padding:20px;margin-bottom:16px;border:1px solid #e2e8f0}
+.section h2{font-size:16px;margin-bottom:12px;display:flex;align-items:center;gap:10px}
+.section h2 .badge{padding:3px 10px;border-radius:10px;font-size:10px;font-weight:700;text-transform:uppercase}
+.badge.ok{background:#d1fae5;color:#065f46}
+.badge.warn{background:#fef3c7;color:#92400e}
+.badge.err{background:#fee2e2;color:#991b1b}
+.section p{font-size:13px;color:#64748b;margin-bottom:8px;line-height:1.5}
+ul.files{list-style:none;font-size:12px;font-family:Consolas,Monaco,monospace}
+ul.files li{padding:4px 8px;background:#f8fafc;margin-bottom:3px;border-radius:5px;color:#475569}
+ul.files li.bad{background:#fee2e2;color:#991b1b}
+ul.files li.good{background:#f0fdf4;color:#065f46}
+.stat{display:inline-block;background:#f1f5f9;padding:6px 12px;border-radius:6px;font-size:12px;margin-right:8px}
+.stat strong{color:#0ea5e9;font-weight:700}
+.actions{margin-top:20px;padding:16px;background:#fffbeb;border:1px solid #fbbf24;border-radius:8px}
+.btn{padding:10px 18px;background:#0ea5e9;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block}
+.btn:hover{filter:brightness(1.08)}
+.btn.danger{background:#ef4444}
+.warn-text{font-size:12px;color:#92400e;margin-top:6px}
+pre{background:#0f172a;color:#cbd5e1;padding:12px 16px;border-radius:6px;font-size:12px;overflow-x:auto;margin-top:8px}
+.cleanup-result{background:#f0fdf4;color:#065f46;padding:14px;border-radius:8px;margin-bottom:20px;border-left:4px solid #10b981}
+.cleanup-result.err{background:#fef2f2;color:#991b1b;border-left-color:#ef4444}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>🔍 Verifica integrità portale</h1>
+  <p class="sub">Diagnostica della struttura file. Eseguire dopo aggiornamenti per verificare consistenza.</p>
+
+  <?php if ($cleanup_done || $cleanup_errors): ?>
+    <div class="cleanup-result <?= $cleanup_errors ? 'err' : '' ?>">
+      <strong>Pulizia eseguita:</strong>
+      <ul style="margin-top:8px;font-size:12px">
+        <?php foreach ($cleanup_done as $msg): ?>
+          <li>✓ <?= htmlspecialchars($msg) ?></li>
+        <?php endforeach; ?>
+        <?php foreach ($cleanup_errors as $msg): ?>
+          <li>✗ <?= htmlspecialchars($msg) ?></li>
+        <?php endforeach; ?>
+      </ul>
+      <p style="margin-top:8px;font-size:12px">
+        <a href="?" style="color:inherit;text-decoration:underline">Ricarica per nuovo controllo</a>
+      </p>
+    </div>
+  <?php endif; ?>
+
+  <?php if ($overall_ok && !$has_duplicates): ?>
+    <div class="summary ok"><span class="icon">✅</span> Portale integro: nessun problema rilevato.</div>
+  <?php elseif ($has_orphans): ?>
+    <div class="summary err"><span class="icon">⚠️</span> Rilevati file orfani da estrazione ZIP — richiede pulizia.</div>
+  <?php elseif (!$ok_modules || !$ok_pages): ?>
+    <div class="summary warn"><span class="icon">⚠</span> Alcuni file/moduli risultano mancanti.</div>
+  <?php else: ?>
+    <div class="summary warn"><span class="icon">ℹ</span> Verifica funzionalità: moduli duplicati nella root.</div>
+  <?php endif; ?>
+
+  <div style="margin-bottom:20px">
+    <span class="stat">PHP root: <strong><?= $total_php ?></strong></span>
+    <span class="stat">Moduli /app: <strong><?= $total_app ?></strong></span>
+    <span class="stat">Versione: <strong><?= htmlspecialchars(@file_get_contents($root . '/VERSION') ?: '?') ?></strong></span>
+  </div>
+
+  <!-- ═══ Sezione 1: pagine linkate dal menu ═══ -->
+  <div class="section">
+    <h2>1. Pagine linkate dal menu
+      <span class="badge <?= $ok_pages ? 'ok' : 'err' ?>">
+        <?= $ok_pages ? 'OK' : count($missing_pages) . ' mancanti' ?>
+      </span>
+    </h2>
+    <p>Verifica che tutti i 38 file linkati dall'header esistano nel filesystem.</p>
+    <?php if (!$ok_pages): ?>
+      <ul class="files">
+        <?php foreach ($missing_pages as $p): ?>
+          <li class="bad">✗ MANCANTE: <?= htmlspecialchars($p) ?></li>
+        <?php endforeach; ?>
+      </ul>
+    <?php else: ?>
+      <ul class="files"><li class="good">✓ Tutti i 38 file linkati sono presenti.</li></ul>
+    <?php endif; ?>
+  </div>
+
+  <!-- ═══ Sezione 2: moduli /app ═══ -->
+  <div class="section">
+    <h2>2. Moduli core in /app
+      <span class="badge <?= $ok_modules ? 'ok' : 'err' ?>">
+        <?= $ok_modules ? 'OK' : (!$app_dir_exists ? 'cartella mancante' : count($missing_modules) . ' mancanti') ?>
+      </span>
+    </h2>
+    <p>Cartella <code>/app</code> con i 12 moduli di sicurezza (bootstrap, CSRF, sessione, 2FA, ecc.)</p>
+    <?php if (!$app_dir_exists): ?>
+      <ul class="files"><li class="bad">✗ CRITICO: la cartella /app non esiste! Il portale non può funzionare.</li></ul>
+    <?php elseif ($missing_modules): ?>
+      <ul class="files">
+        <?php foreach ($missing_modules as $m): ?>
+          <li class="bad">✗ MANCANTE: app/<?= htmlspecialchars($m) ?></li>
+        <?php endforeach; ?>
+      </ul>
+    <?php else: ?>
+      <ul class="files"><li class="good">✓ Tutti i 12 moduli /app sono presenti.</li></ul>
+    <?php endif; ?>
+  </div>
+
+  <!-- ═══ Sezione 3: file orfani ═══ -->
+  <div class="section">
+    <h2>3. File orfani da estrazione ZIP
+      <span class="badge <?= $has_orphans ? 'err' : 'ok' ?>">
+        <?= $has_orphans ? count($orphan_files) . ' orfani' : 'OK' ?>
+      </span>
+    </h2>
+    <p>File con backslash nel nome (es. <code>app\Csrf.php</code>) creati per errore quando un ZIP Windows viene estratto da un tool che non gestisce le sottocartelle.</p>
+
+    <?php if ($has_orphans): ?>
+      <ul class="files">
+        <?php foreach ($orphan_files as $f): ?>
+          <li class="bad">⚠ <?= htmlspecialchars(basename($f)) ?></li>
+        <?php endforeach; ?>
+      </ul>
+
+      <div class="actions">
+        <strong>Pulizia automatica:</strong> li sposto nella cartella <code>app/</code> corretta. Se la cartella <code>app/</code> contiene già la versione "buona", l'orfano viene eliminato. <strong>Eseguito un backup prima</strong> (consigliato).
+        <p class="warn-text">Premi solo se hai già un backup recente del filesystem.</p>
+        <form method="POST" style="margin-top:12px" onsubmit="return confirm('Confermi la pulizia? I file orfani saranno spostati o rimossi.')">
+          <input type="hidden" name="action" value="cleanup">
+          <input type="hidden" name="confirm" value="YES">
+          <?php if (function_exists('csrf_field')): ?>
+            <?= csrf_field() ?>
+          <?php endif; ?>
+          <button type="submit" class="btn danger">🧹 Pulisci file orfani</button>
+        </form>
+      </div>
+    <?php else: ?>
+      <ul class="files"><li class="good">✓ Nessun file orfano rilevato.</li></ul>
+    <?php endif; ?>
+  </div>
+
+  <!-- ═══ Sezione 4: duplicati nella root ═══ -->
+  <?php if ($has_duplicates): ?>
+  <div class="section">
+    <h2>4. Moduli duplicati nella root
+      <span class="badge warn"><?= count($root_duplicates) ?> duplicati</span>
+    </h2>
+    <p>Questi file dovrebbero stare SOLO in <code>/app/</code>, ma sono stati copiati anche nella root del portale (non causa errori, ma è confuso). Possono essere rimossi a mano dopo aver verificato che <code>/app/</code> contenga le versioni aggiornate.</p>
+    <ul class="files">
+      <?php foreach ($root_duplicates as $f): ?>
+        <li>📄 <?= htmlspecialchars($f) ?> (root) — esiste anche in app/?
+          <?= file_exists($root . '/app/' . $f) ? '<span style="color:#065f46">SÌ</span>' : '<span style="color:#991b1b">NO</span>' ?>
+        </li>
+      <?php endforeach; ?>
+    </ul>
+    <p class="warn-text">Suggerimento: rimuovere a mano i file di root SOLO se la versione in <code>app/</code> è confermata funzionante.</p>
+  </div>
+  <?php endif; ?>
+
+  <div style="text-align:center;margin-top:30px;color:#94a3b8;font-size:11px">
+    <a href="index.php" style="color:#64748b">← Torna alla dashboard</a> ·
+    Eliminare questo file dopo l'uso (<code>verify_integrity.php</code>)
+  </div>
+</div>
+</body>
+</html>
