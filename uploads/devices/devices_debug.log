@@ -1,0 +1,83 @@
+═══ 2026-05-21 09:17:48 ═══
+URL: /portalmanager/r.php?r=6639f933998ee875&id=2&tab=dispositivi
+PHP_SELF: /employee_profile.php
+SESSION user_id=3 role_id=1 employee_id=2
+$can_edit=true
+can('edit')=true
+can('edit','employee_profile.php')=true
+POST data:
+Array
+(
+    [_csrf] => f1d7dc13188bc500513e9eb1179f8442e9acca4676f970662de4f26385a17391
+    [action] => save_sim
+    [device_id] => 0
+    [sim_type] => voce
+    [operator] => TIM
+    [phone_number] => +393316216747  
+    [serial_number] => 
+    [pin_code] => 
+    [puk_code] => 
+    [assigned_at] => 2025-08-01
+    [returned_at] => 
+    [status] => attiva
+    [notes] => 
+)
+
+
+═══ 2026-05-21 09:19:32 ═══
+URL: /portalmanager/r.php?r=6639f933998ee875&id=2&tab=dispositivi
+PHP_SELF: /employee_profile.php
+SESSION user_id=3 role_id=1 employee_id=2
+$can_edit=true
+can('edit')=true
+can('edit','employee_profile.php')=true
+POST data:
+Array
+(
+    [_csrf] => f1d7dc13188bc500513e9eb1179f8442e9acca4676f970662de4f26385a17391
+    [action] => save_phone
+    [device_id] => 0
+    [brand] => Samsung
+    [model] => Galaxy A55 5g
+    [imei_1] => 
+    [imei_2] => 
+    [serial_number] => 
+    [assigned_at] => 2025-08-01
+    [returned_at] => 
+    [status] => assegnato
+    [notes] => non usato
+)
+
+
+═══ 2026-05-21 09:20:52 ═══
+URL: /portalmanager/r.php?r=6639f933998ee875&id=2&tab=dispositivi
+PHP_SELF: /employee_profile.php
+SESSION user_id=3 role_id=1 employee_id=2
+$can_edit=true
+can('edit')=true
+can('edit','employee_profile.php')=true
+POST data:
+Array
+(
+    [_csrf] => f1d7dc13188bc500513e9eb1179f8442e9acca4676f970662de4f26385a17391
+    [action] => save_vehicle
+    [device_id] => 0
+    [brand] => Cupra
+    [model] => Formentor
+    [plate] => gp346np
+    [fuel_type] => Diesel
+    [acquisition_type] => leasing
+    [contract_ref] => 
+    [contract_start] => 
+    [contract_end] => 
+    [monthly_cost] => 
+    [initial_km] => 46000
+    [current_km] => 91900
+    [conditions] => 
+    [assigned_at] => 2025-08-11
+    [returned_at] => 
+    [status] => assegnato
+    [notes] => proveniente da Massimo Ciancio
+)
+
+
