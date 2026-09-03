@@ -21,6 +21,18 @@ $msg      = '';
 $emp_id  = (int)($_GET['id'] ?? 0);
 if (!$emp_id) { redirect('manage_employees'); }
 
+
+// [PM_V1_9_27_APPLIED] Pre-fetch $emp per il branch POST che preserva i campi
+// non modificati dal form (evita data-loss silenzioso). Il fetch principale
+// piu' in basso sovrascrive $emp con la versione arricchita di JOIN per il render.
+try {
+    $__pm_pre = $pdo->prepare("SELECT * FROM employees WHERE id = ?");
+    $__pm_pre->execute([$emp_id]);
+    $emp = $__pm_pre->fetch(PDO::FETCH_ASSOC) ?: [];
+} catch (Throwable $__pm_e) {
+    $emp = [];
+}
+
 // ── UPLOAD DOCUMENTI ──────────────────────────────────────────────────────────
 $upload_base = APP_ROOT . '/uploads/cv_dipendenti/';
 if (!is_dir($upload_base)) @mkdir($upload_base, 0755, true);
