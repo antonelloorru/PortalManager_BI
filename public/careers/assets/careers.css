@@ -1,0 +1,58 @@
+/* PortalManager v1.9.24 — Careers Portal — style minimalista, tema chiaro+scuro */
+:root {
+  --bg: #ffffff; --fg: #1a1e28; --muted: #667085;
+  --primary: #0f6cf6; --primary-fg: #ffffff;
+  --card: #f7f8fb; --border: #e4e7ee;
+  --ok: #16a34a; --err: #dc2626;
+  --radius: 10px; --gap: 16px; --font: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#0e1116; --fg:#e6e9ef; --muted:#98a1b3; --card:#151a22; --border:#242a35; }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); font-family: var(--font); line-height: 1.5; }
+a { color: var(--primary); text-decoration: none; }
+a:hover { text-decoration: underline; }
+.wrap { max-width: 1100px; margin: 0 auto; padding: 0 20px; }
+.hdr { border-bottom: 1px solid var(--border); padding: 14px 0; position: sticky; top: 0; background: var(--bg); z-index: 5; }
+.hdr .wrap { display: flex; align-items: center; justify-content: space-between; }
+.brand { display: flex; gap: 10px; align-items: center; font-weight: 700; color: var(--fg); }
+.brand img { display: block; }
+.hdr nav a { margin-left: 18px; color: var(--muted); }
+.hero { padding: 40px 0 24px; }
+.hero h1 { margin: 0 0 8px; font-size: 32px; }
+.filters { display: grid; grid-template-columns: 2fr 1fr 1fr auto; gap: 8px; margin-top: 18px; }
+input, textarea, button, select { font: inherit; }
+input, textarea, select { padding: 10px 12px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); border-radius: var(--radius); width: 100%; }
+button { padding: 10px 16px; border: 1px solid var(--primary); background: var(--primary); color: var(--primary-fg); border-radius: var(--radius); cursor: pointer; }
+button:hover { filter: brightness(1.05); }
+#btn-cancel { background: transparent; color: var(--fg); border-color: var(--border); }
+h2 { font-size: 22px; margin: 36px 0 12px; display: flex; align-items: center; gap: 8px; }
+.badge { background: var(--card); color: var(--muted); border-radius: 999px; padding: 2px 10px; font-size: 12px; }
+.pos-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: var(--gap); }
+.pos-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; display: flex; flex-direction: column; }
+.pos-card h3 { margin: 0 0 6px; font-size: 18px; }
+.pos-card .meta { display: flex; flex-wrap: wrap; gap: 6px; color: var(--muted); font-size: 13px; }
+.pos-card .meta span::after { content: "·"; margin: 0 6px; }
+.pos-card .meta span:last-child::after { content: ""; margin: 0; }
+.pos-card .desc { color: var(--fg); flex: 1; margin: 12px 0 16px; }
+.btn-apply { align-self: flex-start; }
+form { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; margin-top: 14px; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.grid label { display: flex; flex-direction: column; font-size: 13px; color: var(--muted); gap: 6px; }
+.grid label input, .grid label textarea { color: var(--fg); }
+.col-2 { grid-column: 1 / -1; }
+.consents { border: none; padding: 14px 0 0; display: flex; flex-direction: column; gap: 8px; font-size: 14px; }
+.actions { display: flex; gap: 10px; margin-top: 16px; }
+.status { margin-top: 14px; font-weight: 600; }
+.status.ok  { color: var(--ok); }
+.status.err { color: var(--err); }
+.muted { color: var(--muted); }
+.hint { color: var(--muted); font-size: 12px; }
+.ftr { border-top: 1px solid var(--border); margin-top: 48px; padding: 18px 0; color: var(--muted); }
+.ftr .wrap { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+@media (max-width: 720px) {
+  .filters { grid-template-columns: 1fr 1fr; }
+  .grid    { grid-template-columns: 1fr; }
+  .hero h1 { font-size: 26px; }
+}

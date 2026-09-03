@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="index,follow">
+<meta name="referrer" content="no-referrer">
+<title>Careers — Candidati con noi</title>
+<meta name="description" content="Posizioni aperte e invio candidatura.">
+<link rel="icon" href="assets/favicon.svg">
+<link rel="stylesheet" href="assets/careers.css">
+</head>
+<body>
+<header class="hdr">
+  <div class="wrap">
+    <a href="/careers/" class="brand">
+      <img src="assets/logo.svg" alt="Logo" height="32">
+      <span>Careers</span>
+    </a>
+    <nav>
+      <a href="#positions">Posizioni aperte</a>
+      <a href="#apply">Candidati</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="hero">
+    <h1>Entra a far parte del nostro team.</h1>
+    <p>Consulta le posizioni attualmente aperte e invia la tua candidatura in pochi passi.</p>
+    <div class="filters">
+      <input id="f-q"       type="search" placeholder="Cerca per titolo o parola chiave">
+      <input id="f-dept"    type="text"   placeholder="Reparto">
+      <input id="f-loc"     type="text"   placeholder="Sede">
+      <button id="f-reload" type="button">Aggiorna</button>
+    </div>
+  </section>
+
+  <section id="positions" aria-live="polite">
+    <h2>Posizioni aperte <span id="pos-count" class="badge">—</span></h2>
+    <div id="pos-list" class="pos-list">
+      <p class="muted">Caricamento…</p>
+    </div>
+  </section>
+
+  <section id="apply" hidden>
+    <h2>Candidati per: <span id="apply-title"></span></h2>
+    <form id="apply-form" enctype="multipart/form-data" novalidate>
+      <input type="hidden" name="position_id" id="apply-position-id">
+
+      <div class="grid">
+        <label>Nome*   <input name="first_name" required maxlength="80"></label>
+        <label>Cognome*<input name="last_name"  required maxlength="80"></label>
+        <label class="col-2">Email*
+          <input name="email" type="email" required maxlength="190">
+          <small id="email-status" class="hint"></small>
+        </label>
+        <label>Telefono<input name="phone" type="tel" maxlength="40"></label>
+        <label>Codice Fiscale<input name="fiscal_code" maxlength="32" style="text-transform:uppercase"></label>
+        <label>Data di nascita<input name="birth_date" type="date"></label>
+        <label>Città<input name="city" maxlength="120"></label>
+        <label>Paese<input name="country" maxlength="80"></label>
+        <label class="col-2">LinkedIn (URL)<input name="linkedin_url" type="url" placeholder="https://linkedin.com/in/..."></label>
+        <label>Retribuzione attesa (annua €)<input name="salary_expectation" type="text" inputmode="decimal"></label>
+        <label>Disponibilità<input name="availability" placeholder="es. Immediata, 30gg preavviso"></label>
+        <label class="col-2">Lettera di presentazione
+          <textarea name="cover_letter" rows="5" maxlength="20000"></textarea>
+        </label>
+        <label class="col-2">Curriculum Vitae* (PDF, DOC, DOCX — max 5 MB)
+          <input name="cv" type="file" accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" required>
+        </label>
+      </div>
+
+      <fieldset class="consents">
+        <label><input type="checkbox" name="consent_privacy" value="1" required>
+          Ho letto e accetto l'<a href="/careers/privacy.html" target="_blank" rel="noopener">informativa privacy</a>*</label>
+        <label><input type="checkbox" name="consent_marketing" value="1">
+          Acconsento al trattamento per future opportunità (facoltativo)</label>
+      </fieldset>
+
+      <div class="actions">
+        <button type="submit" id="btn-submit">Invia candidatura</button>
+        <button type="button" id="btn-cancel">Annulla</button>
+      </div>
+      <p id="apply-status" class="status" role="status"></p>
+    </form>
+  </section>
+</main>
+
+<footer class="ftr">
+  <div class="wrap">
+    <small>&copy; <span id="year"></span> Azienda. Portale candidature esterno, isolato dal gestionale HR.</small>
+    <small><a href="/careers/privacy.html">Privacy</a> · <a href="/careers/cookies.html">Cookie</a></small>
+  </div>
+</footer>
+
+<script src="assets/careers.js" defer></script>
+</body>
+</html>
