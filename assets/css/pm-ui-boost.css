@@ -1,0 +1,63 @@
+/* PortalManager v1.9.31 — pm-ui-boost skin (light+dark) */
+.pm-ms-wrap { position: relative; font: inherit; min-width: 180px; }
+.pm-ms-trigger {
+  min-height: 32px; padding: 3px 30px 3px 8px; box-sizing: border-box;
+  border: 1px solid #d1d5db; background: #fff; color: #1f2937;
+  border-radius: 4px; cursor: pointer;
+  display: flex; flex-wrap: wrap; gap: 4px; align-items: center;
+  font-size: 13px; line-height: 1.4;
+}
+.pm-ms-wrap.open .pm-ms-trigger { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,.15); }
+.pm-ms-placeholder { color: #6b7280; }
+.pm-ms-single-label { color: #1f2937; }
+.pm-ms-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe;
+  padding: 1px 6px; border-radius: 999px; font-size: 12px; max-width: 200px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.pm-ms-chip button {
+  background: transparent; border: 0; color: #1e40af; cursor: pointer;
+  font-size: 14px; padding: 0 2px; line-height: 1;
+}
+.pm-ms-chip button:hover { color: #dc2626; }
+.pm-ms-clear {
+  position: absolute; right: 22px; top: 50%; transform: translateY(-50%);
+  background: transparent; border: 0; color: #9ca3af; cursor: pointer; font-size: 14px;
+}
+.pm-ms-caret {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  color: #6b7280; pointer-events: none; font-size: 11px;
+}
+.pm-ms-dropdown {
+  position: absolute; left: 0; right: 0; top: calc(100% + 3px); z-index: 500;
+  background: #fff; border: 1px solid #d1d5db; border-radius: 4px;
+  box-shadow: 0 6px 16px rgba(0,0,0,.10); padding: 4px;
+}
+.pm-ms-search {
+  width: 100%; box-sizing: border-box; padding: 5px 8px; margin-bottom: 3px;
+  border: 1px solid #e5e7eb; border-radius: 3px; font: inherit; font-size: 13px;
+}
+.pm-ms-list { list-style: none; margin: 0; padding: 0; max-height: 260px; overflow-y: auto; }
+.pm-ms-item {
+  padding: 5px 8px 5px 24px; cursor: pointer; position: relative; border-radius: 3px;
+  font-size: 13px; color: #1f2937;
+}
+.pm-ms-item:hover { background: #f3f4f6; }
+.pm-ms-item.selected { background: #eff6ff; color: #1e40af; font-weight: 500; }
+.pm-ms-item.disabled { opacity: .5; cursor: not-allowed; }
+.pm-ms-tick { position: absolute; left: 6px; top: 50%; transform: translateY(-50%); color: transparent; font-size: 12px; }
+.pm-ms-item.selected .pm-ms-tick { color: #2563eb; }
+.pm-ms-empty { padding: 8px; color: #6b7280; text-align: center; font-size: 12px; }
+
+@media (prefers-color-scheme: dark) {
+  .pm-ms-trigger { background: #0f172a; color: #e2e8f0; border-color: #334155; }
+  .pm-ms-single-label { color: #e2e8f0; }
+  .pm-ms-placeholder { color: #94a3b8; }
+  .pm-ms-chip { background: #1e3a8a; color: #bfdbfe; border-color: #1e40af; }
+  .pm-ms-dropdown { background: #0f172a; border-color: #334155; box-shadow: 0 6px 16px rgba(0,0,0,.5); }
+  .pm-ms-search { background: #1e293b; color: #e2e8f0; border-color: #334155; }
+  .pm-ms-item { color: #e2e8f0; }
+  .pm-ms-item:hover { background: #1e293b; }
+  .pm-ms-item.selected { background: #1e3a8a; color: #dbeafe; }
+}
