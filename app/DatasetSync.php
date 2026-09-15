@@ -550,10 +550,44 @@ final class DatasetSync
                 }
                 $upd++;
             } else {
+                // v1.9.44 — INSERT reso idempotente con ON DUPLICATE KEY UPDATE.
+                //
+                // Il controllo di esistenza qui sopra usa la sola chiave del
+                // dataset ($keyF). Alcuni target hanno però una UNIQUE COMPOSTA
+                // che identifica il fatto meglio della chiave: per
+                // `allocazioni_dgb` il target `dgb_forms_activity_operator` ha
+                // `uq_dfao_activity_operator (id_activity, id_operator)`, mentre
+                // la chiave del dataset è il surrogato `id`. Quando in sorgente
+                // la coppia cambia `id`, l'esistenza su `id` non trova la riga
+                // già presente a destinazione e l'INSERT collideva con la UNIQUE
+                // ("Duplicate entry '77772-2474' for key
+                // 'uq_dfao_activity_operator'").
+                //
+                // ON DUPLICATE KEY UPDATE riconcilia sulla UNIQUE reale, qualunque
+                // essa sia (singola o composta), aggiornando la riga esistente —
+                // stessa regola "ultimo vince" della deduplica a monte. Non si
+                // tocca $keyF (la chiave del dataset resta invariata) e, come nel
+                // ramo UPDATE, le celle vuote non sovrascrivono i valori già
+                // registrati. Su MariaDB 10.4 si usa VALUES().
                 $cols = array_keys($rec);
-                $this->pdo->prepare("INSERT INTO `$target` (`" . implode('`,`', $cols) . "`) VALUES ("
-                    . implode(',', array_fill(0, count($cols), '?')) . ")")->execute(array_values($rec));
-                $ins++;
+                $set  = [];
+                foreach ($cols as $c) {
+                    if ($c === $keyF) continue; // non alterare la chiave del dataset
+                    // il confronto del vuoto è su CHAR: su colonne numeriche
+                    // `VALUES(col) = ''` forzerebbe '' a decimale e, in strict
+                    // mode, solleverebbe 1292. CAST(... AS CHAR) confronta stringa
+                    // con stringa: preserva il testo vuoto senza toccare i numeri.
+                    $set[] = "`$c` = IF(VALUES(`$c`) IS NULL OR CAST(VALUES(`$c`) AS CHAR) = '', `$c`, VALUES(`$c`))";
+                }
+                $sql = "INSERT INTO `$target` (`" . implode('`,`', $cols) . "`) VALUES ("
+                     . implode(',', array_fill(0, count($cols), '?')) . ")";
+                if ($set) $sql .= " ON DUPLICATE KEY UPDATE " . implode(',', $set);
+                $stIns = $this->pdo->prepare($sql);
+                $stIns->execute(array_values($rec));
+                // rowCount: 1 = inserita, 2 = aggiornata via ODKU (0 = nessuna
+                // modifica). Il conteggio resta onesto anche quando la UNIQUE
+                // composta trasforma l'insert in un aggiornamento.
+                if ($stIns->rowCount() >= 2) { $upd++; } else { $ins++; }
             }
 
             // riconciliazione dei segnaposto DGB

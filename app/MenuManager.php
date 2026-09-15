@@ -79,6 +79,7 @@ class MenuManager
                     ['page' => 'recruiting_agenzie',    'label' => 'Agenzie',              'icon' => 'fa-building-user'],
                     ['page' => 'recruiting_contratti',  'label' => 'Contratti agenzie',    'icon' => 'fa-file-contract'],
                     ['page' => 'cv_import',             'label' => 'Importa CV',           'icon' => 'fa-file-import'],
+                    ['page' => 'import_candidates_linkedin', 'label' => 'Importa candidati LinkedIn', 'icon' => 'fa-linkedin'],
                     ['page' => 'linkedin_sync',         'label' => 'Sync LinkedIn',        'icon' => 'fa-linkedin'],
                     ['page' => 'mass_upload',           'label' => 'Import massivo (multi)','icon' => 'fa-cloud-arrow-up'],
                 ],

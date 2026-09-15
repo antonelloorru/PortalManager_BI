@@ -2,6 +2,11 @@
 /**
  * ItServiceModel — letture per la Relazione di Servizio IT.
  *
+ * v1.9.42 — fix Riepilogo/Dettaglio per Codice Contratto: dgb_forms_contract e
+ * dgb_operator portati a LEFT JOIN (dgb_forms_contract e' vuota finche' non
+ * sincronizzata → l'INNER JOIN scartava tutte le righe). Identita' contratto
+ * spostata su a.id_contract; etichetta da cm_projects.project_code con fallback.
+ *
  * Ogni interrogazione passa da `v_cm_it_servizio`, che espone una riga per
  * intervento con tutte le sue dimensioni. Le aggregazioni sono costruite qui
  * perche' le combinazioni richieste — piu' linee, piu' settori, piu' modalita'
@@ -227,6 +232,8 @@ final class ItServiceModel
                     ROUND(SUM(s.`ore`), 2) AS ore,
                     ROUND(SUM(s.`ore_viaggio`), 2) AS ore_viaggio,
                     ROUND(SUM(CASE WHEN s.`fascia_oraria`='fuori orario' THEN s.`ore` ELSE 0 END), 2) AS ore_fuori,
+                    ROUND(SUM(CASE WHEN s.`modalita`='reperibilita' THEN s.`ore` ELSE 0 END), 2) AS ore_reperibilita,
+                    ROUND(SUM(CASE WHEN s.`fascia_oraria`='in orario' AND s.`modalita`<>'reperibilita' THEN s.`ore` ELSE 0 END), 2) AS ore_ordinarie,
                     COUNT(DISTINCT CONCAT(s.`incaricato`,'|',s.`giorno`)) AS giornate_uomo
                FROM `v_cm_it_servizio` s WHERE $w
               GROUP BY s.`anno_mese` ORDER BY s.`anno_mese`");
@@ -509,4 +516,108 @@ final class ItServiceModel
         } catch (Throwable $e) { return []; }
     }
 
+
+        
+    /* [PM_V1_9_36_APPLIED] Espressione data effettiva e filtri condivisi */
+    private function rsiWhere(array $f, array &$b): string {
+        $DT = "COALESCE(a.report_date, DATE(a.date_start), DATE(a.completed_at), DATE(a.closed_at))";
+        $w = ['COALESCE(a.deleted,0) <> 1'];
+        if (!empty($f['from']) && !empty($f['to'])) { $w[] = "$DT BETWEEN ? AND ?"; $b[]=$f['from']; $b[]=$f['to']; }
+        if (!empty($f['incaricati']) && is_array($f['incaricati'])) {
+            $ph = implode(',', array_fill(0, count($f['incaricati']), '?'));
+            $w[] = "(TRIM(CONCAT_WS(' ', op.first_name, op.second_name)) IN ($ph)
+                   OR TRIM(CONCAT_WS(' ', op.second_name, op.first_name)) IN ($ph))";
+            foreach ($f['incaricati'] as $v) $b[]=$v;
+            foreach ($f['incaricati'] as $v) $b[]=$v;
+        }
+        if (!empty($f['cliente'])) { $w[] = "cli.name LIKE ?"; $b[]='%'.$f['cliente'].'%'; }
+        return 'WHERE ' . implode(' AND ', $w);
+    }
+
+    /* [PM_V1_9_36_APPLIED] Dettaglio per Commessa (sorgente dgb_forms_activity diretta) */
+    public function dettaglioCommessa(array $f): array
+    {
+        $DT = "COALESCE(a.report_date, DATE(a.date_start), DATE(a.completed_at), DATE(a.closed_at))";
+        $b = []; $where = $this->rsiWhere($f, $b);
+        $ORE  = "COALESCE(ao.hours, a.human_resource_hours, 0)";
+        $COST = "COALESCE(ao.cost, a.human_resource_cost, a.total_cost, 0)";
+        $sql = "
+          SELECT a.id_contract AS contract_id,
+                 COALESCE(NULLIF(c.code,''), p.project_code, CONCAT('Contratto #', a.id_contract)) AS contract_code,
+                 c.code_x_installation,
+                 cli.name AS customer_name, c.description AS contract_description,
+                 p.project_code AS pm_project_code,
+                 DATE_FORMAT($DT, '%d/%m/%Y') AS report_date, $DT AS report_iso,
+                 a.ticket,
+                 TRIM(CONCAT_WS(' ', op.second_name, op.first_name)) AS operator_name,
+                 COALESCE(rbb.band_name, op.type, 'Default') AS fascia,
+                 CASE WHEN COALESCE(ao.during_availability,0)=1 THEN 'Reperibilità'
+                      WHEN COALESCE(ao.extra_hours,0)>0          THEN 'Straordinario'
+                      ELSE 'Ordinario' END AS regime,
+                 ROUND($ORE,2) AS ore,
+                 ROUND($COST,2) AS costo_contratto,
+                 ROUND(CASE WHEN COALESCE(ao.during_availability,0)=1
+                            THEN COALESCE(rb_rep.rate_hour, op.hourly_cost, 0)*$ORE
+                            ELSE COALESCE(rb_ord.rate_hour, op.hourly_cost, 0)*$ORE END, 2) AS tot_costo_tab
+          FROM dgb_forms_activity a
+          LEFT JOIN dgb_operator op ON op.id = a.id_operator
+          LEFT JOIN dgb_forms_contract c ON c.id = a.id_contract
+          LEFT JOIN dgb_forms_activity_operator ao ON ao.id_activity = a.id AND ao.id_operator = a.id_operator
+          LEFT JOIN clients cli ON cli.id = COALESCE(c.id_customer_comp, a.id_customer_comp)
+          LEFT JOIN (SELECT dgb_contract_id, MIN(project_code) AS project_code
+                       FROM cm_projects GROUP BY dgb_contract_id) p
+                 ON p.dgb_contract_id = a.id_contract
+          LEFT JOIN cm_rate_bands rbb ON rbb.band_name = COALESCE(op.type,'Default')
+          LEFT JOIN cm_rate_band_rates rb_ord ON rb_ord.band_id=rbb.id AND rb_ord.cost_type='Aziendale' AND rb_ord.regime='Ordinario'
+          LEFT JOIN cm_rate_band_rates rb_rep ON rb_rep.band_id=rbb.id AND rb_rep.cost_type='Aziendale' AND rb_rep.regime='Reperibilità'
+          $where
+          ORDER BY contract_code, a.id_contract, $DT, a.id
+        ";
+        try { $st=$this->pdo->prepare($sql); $st->execute($b); return $st->fetchAll(PDO::FETCH_ASSOC); }
+        catch (Throwable $e) { return []; }
+    }
+
+    /* [PM_V1_9_36_APPLIED] Riepilogo aggregato per Codice Contratto */
+    public function riepilogoContratto(array $f): array
+    {
+        $DT = "COALESCE(a.report_date, DATE(a.date_start), DATE(a.completed_at), DATE(a.closed_at))";
+        $b = []; $where = $this->rsiWhere($f, $b);
+        $ORE  = "COALESCE(ao.hours, a.human_resource_hours, 0)";
+        $COST = "COALESCE(ao.cost, a.human_resource_cost, a.total_cost, 0)";
+        $sql = "
+          SELECT a.id_contract AS contract_id,
+                 COALESCE(
+                   NULLIF(MAX(CONCAT_WS(' | ', NULLIF(c.code,''), NULLIF(c.code_x_installation,''),
+                            NULLIF(cli.name,''), NULLIF(c.description,''))), ''),
+                   MAX(p.project_code),
+                   CONCAT('Contratto #', a.id_contract)
+                 ) AS codice_contratto,
+                 MAX(p.project_code) AS pm_project_code,
+                 ROUND(SUM(CASE WHEN COALESCE(ao.during_availability,0)=0 AND COALESCE(ao.extra_hours,0)=0
+                                THEN $ORE ELSE 0 END),2) AS ore_ordinarie,
+                 ROUND(SUM(COALESCE(ao.extra_hours,0)),2) AS ore_straordinario,
+                 ROUND(SUM(CASE WHEN COALESCE(ao.during_availability,0)=1 THEN $ORE ELSE 0 END),2) AS ore_reperibilita,
+                 COUNT(DISTINCT CONCAT($DT,'#',a.id_operator)) AS giorni_uomo,
+                 ROUND(SUM($COST),2) AS costo_contratto,
+                 ROUND(SUM(CASE WHEN COALESCE(ao.during_availability,0)=1
+                                THEN COALESCE(rb_rep.rate_hour, op.hourly_cost,0)*$ORE
+                                ELSE COALESCE(rb_ord.rate_hour, op.hourly_cost,0)*$ORE END),2) AS tot_costo_tab
+          FROM dgb_forms_activity a
+          LEFT JOIN dgb_operator op ON op.id = a.id_operator
+          LEFT JOIN dgb_forms_contract c ON c.id = a.id_contract
+          LEFT JOIN dgb_forms_activity_operator ao ON ao.id_activity = a.id AND ao.id_operator = a.id_operator
+          LEFT JOIN clients cli ON cli.id = COALESCE(c.id_customer_comp, a.id_customer_comp)
+          LEFT JOIN (SELECT dgb_contract_id, MIN(project_code) AS project_code
+                       FROM cm_projects GROUP BY dgb_contract_id) p
+                 ON p.dgb_contract_id = a.id_contract
+          LEFT JOIN cm_rate_bands rbb ON rbb.band_name = COALESCE(op.type,'Default')
+          LEFT JOIN cm_rate_band_rates rb_ord ON rb_ord.band_id=rbb.id AND rb_ord.cost_type='Aziendale' AND rb_ord.regime='Ordinario'
+          LEFT JOIN cm_rate_band_rates rb_rep ON rb_rep.band_id=rbb.id AND rb_rep.cost_type='Aziendale' AND rb_rep.regime='Reperibilità'
+          $where
+          GROUP BY a.id_contract
+          ORDER BY SUM($ORE) DESC
+        ";
+        try { $st=$this->pdo->prepare($sql); $st->execute($b); return $st->fetchAll(PDO::FETCH_ASSOC); }
+        catch (Throwable $e) { return []; }
+    }
 }

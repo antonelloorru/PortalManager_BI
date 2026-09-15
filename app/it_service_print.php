@@ -38,6 +38,9 @@ $cRie2 = $it->costiRiepilogo($f);
 // v1.9.19 — giorni lavorati, in entrambe le destinazioni
 $gQ   = $it->giorniQuadro($f);
 $gOp  = $it->giorniOperatore($f);
+// [PM_V1_9_34_APPLIED]
+$dettCommessa = $it->dettaglioCommessa($f);
+$riepContratto = $it->riepilogoContratto($f); // [PM_V1_9_35_APPLIED]
 $gAr  = $it->giorniArea($f);
 $gRic = $it->giorniRiconcilia($f);
 ?><!DOCTYPE html>
@@ -100,6 +103,7 @@ $gRic = $it->giorniRiconcilia($f);
   <div class="filtri"><strong>Filtri applicati:</strong> <?=h(implode(' · ', $filtri))?></div>
 <?php endif; ?>
 
+<?php if ($incOn('quadro')): ?>
 <div class="blocco">
   <div class="kpi">
     <?php foreach ([
@@ -141,11 +145,16 @@ $gRic = $it->giorniRiconcilia($f);
   </div>
 </div>
 
-<?php if (count($trend) > 1): ?>
+<?php endif; /* quadro */ ?>
+
+<?php if ($incOn('andamento') && count($trend) > 1): ?>
 <div class="blocco">
   <h2>Andamento mensile</h2>
   <?php
     $mx = 0.01; foreach ($trend as $t) $mx = max($mx, (float)$t['ore']);
+    $avgOrd = 0.0; if ($trend) { $sO=0.0; foreach ($trend as $t) $sO += (float)($t['ore_ordinarie'] ?? 0); $avgOrd = $sO / count($trend); }
+    $targetOrd = (isset($_GET['target']) && is_numeric($_GET['target'])) ? (float)$_GET['target'] : round($avgOrd);
+    if ($targetOrd > 0) $mx = max($mx, $targetOrd);
     $W=1000; $H=170; $pL=52; $pR=10; $pT=8; $pB=22;
     $pw=$W-$pL-$pR; $ph=$H-$pT-$pB; $nb=max(1,count($trend)); $bw=$pw/$nb;
   ?>
@@ -155,6 +164,12 @@ $gRic = $it->giorniRiconcilia($f);
       <text x="<?=$pL-4?>" y="<?=round($y+3,1)?>" text-anchor="end" font-size="8" fill="#94a3b8">
         <?=$hh(round($mx*$g/4))?></text>
     <?php endfor; ?>
+    <?php if($targetOrd>0): $yt=$pT+$ph-$targetOrd/$mx*$ph; ?>
+      <line x1="<?=$pL?>" y1="<?=round($yt,1)?>" x2="<?=$W-$pR?>" y2="<?=round($yt,1)?>"
+            stroke="#16a34a" stroke-width="1.3" stroke-dasharray="5 3"/>
+      <text x="<?=$W-$pR?>" y="<?=round($yt-2,1)?>" text-anchor="end" font-size="7.5" fill="#16a34a">
+        target ore ord. <?=$hh(round($targetOrd))?></text>
+    <?php endif; ?>
     <?php foreach($trend as $i=>$t):
       $ho=(float)$t['ore']/$mx*$ph; $hv=(float)$t['ore_fuori']/$mx*$ph;
       $x=$pL+$i*$bw+$bw*0.15; $bx=max(1.5,$bw*0.7); ?>
@@ -162,6 +177,10 @@ $gRic = $it->giorniRiconcilia($f);
             height="<?=round($ho,1)?>" fill="#2563eb"/>
       <rect x="<?=round($x,1)?>" y="<?=round($pT+$ph-$hv,1)?>" width="<?=round($bx,1)?>"
             height="<?=round($hv,1)?>" fill="#f59e0b"/>
+      <?php $hrep=(float)($t['ore_reperibilita'] ?? 0)/$mx*$ph; if($hrep>0): ?>
+        <rect x="<?=round($x+$bx*0.60,1)?>" y="<?=round($pT+$ph-$hrep,1)?>" width="<?=round($bx*0.40,1)?>"
+              height="<?=round($hrep,1)?>" fill="#7c3aed"/>
+      <?php endif; ?>
       <?php if($i % max(1,intdiv($nb,12))===0): ?>
         <text x="<?=round($x+$bx/2,1)?>" y="<?=$H-6?>" text-anchor="middle" font-size="7.5" fill="#64748b">
           <?=h(substr((string)$t['ym'],2))?></text>
@@ -170,11 +189,14 @@ $gRic = $it->giorniRiconcilia($f);
   </svg>
   <p class="nota">
     <span style="display:inline-block;width:9px;height:6px;background:#2563eb"></span> ore totali
-    <span style="display:inline-block;width:9px;height:6px;background:#f59e0b;margin-left:8px"></span> di cui fuori orario
+    <span style="display:inline-block;width:9px;height:6px;background:#f59e0b;margin-left:8px"></span> fuori orario
+    <span style="display:inline-block;width:9px;height:6px;background:#7c3aed;margin-left:8px"></span> reperibilità
+    <span style="display:inline-block;width:9px;height:0;border-top:2px dashed #16a34a;margin-left:8px;vertical-align:middle"></span> target ore ordinarie
   </p>
 </div>
 <?php endif; ?>
 
+<?php if ($incOn('dettaglio')): ?>
 <div style="page-break-before:always"></div>
 <h2>Dettaglio — <?=h(implode(' × ', array_map(fn($g) => ItServiceModel::DIM[$g], $f['gb'])))?></h2>
 <table>
@@ -217,9 +239,10 @@ $gRic = $it->giorniRiconcilia($f);
   indica dato assente, non distanza nulla. La modalità è esclusiva e assegnata per precedenza:
   reperibilità, smart working, da remoto, presso cliente, in sede.
 </p>
+<?php endif; /* dettaglio */ ?>
 
 <?php // v1.9.19 — giorni lavorati per persona, in entrambe le destinazioni ?>
-<?php if ($gOp): ?>
+<?php if ($incOn('giorni') && $gOp): ?>
   <?php $areeOp2 = []; foreach ($gAr as $x) $areeOp2[$x['operatore']][] = $x; ?>
   <div class="blocco">
     <h2>Giorni lavorati<?= $isPers ? ' — ' . h($persona) : ' per persona' ?></h2>
@@ -321,7 +344,7 @@ $gRic = $it->giorniRiconcilia($f);
       //
       // Nel report generale sono i costi del perimetro, nel personale quelli
       // della persona: la query e' la stessa, cambia il filtro gia' applicato. ?>
-<?php if (!empty($cRie2)): ?>
+<?php if ($incOn('costi') && !empty($cRie2)): ?>
   <?php $perL4 = []; foreach ($cRie2 as $x) $perL4[$x['codice_linea']][] = $x; ?>
   <div class="blocco">
     <h2>Riepilogo costi per fascia e contratto<?= $isPers ? ' — ' . h($persona) : '' ?></h2>
@@ -374,4 +397,76 @@ $gRic = $it->giorniRiconcilia($f);
   </div>
 <?php endif; ?>
 
+
+
+<?php // [PM_V1_9_35_APPLIED] Sezione 2 stampa ?>
+<?php if ($incOn('contratti') && !empty($riepContratto)): ?>
+<style>
+  .p35-h2{margin:16px 0 6px;font-size:14px}
+  .p35-tbl{width:100%;border-collapse:collapse;margin:3px 0 12px}
+  .p35-tbl th,.p35-tbl td{padding:3px 6px;border-bottom:1px solid #d0d5dd;font-size:10.5px;text-align:right}
+  .p35-tbl th:first-child,.p35-tbl td:first-child,.p35-tbl th:nth-child(2),.p35-tbl td:nth-child(2){text-align:left}
+  .p35-tbl thead th{background:#f0f2f7}
+</style>
+<h2 class="p35-h2">Riepilogo per Codice Contratto</h2>
+<table class="p35-tbl">
+  <thead><tr><th>Codice contratto</th><th>PM</th><th>Ord.</th><th>Str.</th><th>Rep.</th><th>Gg-uomo</th><th>Costo (€)</th><th>Tab (€)</th></tr></thead>
+  <tbody>
+  <?php foreach ($riepContratto as $r): ?>
+    <tr>
+      <td><?= htmlspecialchars($r['codice_contratto'],ENT_QUOTES,'UTF-8') ?></td>
+      <td><?= htmlspecialchars((string)($r['pm_project_code']??''),ENT_QUOTES,'UTF-8') ?></td>
+      <td><?= number_format((float)$r['ore_ordinarie'],2,',','.') ?></td>
+      <td><?= number_format((float)$r['ore_straordinario'],2,',','.') ?></td>
+      <td><?= number_format((float)$r['ore_reperibilita'],2,',','.') ?></td>
+      <td><?= number_format((float)$r['giorni_uomo'],0,',','.') ?></td>
+      <td><?= number_format((float)$r['costo_contratto'],2,',','.') ?></td>
+      <td><?= number_format((float)$r['tot_costo_tab'],2,',','.') ?></td>
+    </tr>
+  <?php endforeach; ?>
+  </tbody>
+</table>
+<?php endif; ?>
+
+<?php // [PM_V1_9_34_APPLIED] Dettaglio per Commessa (stampa) ?>
+<?php if ($incOn('commesse') && !empty($dettCommessa)):
+    $__byC = [];
+    foreach ($dettCommessa as $r) $__byC[$r['contract_id']][] = $r;
+?>
+<style>
+  .pr34-h2 { margin:18px 0 6px; font-size:14px; }
+  .pr34-h3 { margin:10px 0 3px; font-size:12px; background:#e5e7eb; color:#111; padding:6px 10px; border-radius:3px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .pr34-tbl { width:100%; border-collapse:collapse; margin:3px 0 12px; page-break-inside:avoid; }
+  .pr34-tbl th, .pr34-tbl td { padding:3px 6px; border-bottom:1px solid #d0d5dd; font-size:10.5px; text-align:right; }
+  .pr34-tbl th:nth-child(-n+3), .pr34-tbl td:nth-child(-n+3) { text-align:left; }
+  .pr34-tbl thead th { background:#f0f2f7; }
+</style>
+<h2 class="pr34-h2">Dettaglio per Commessa</h2>
+<?php foreach ($__byC as $cid => $rows):
+    $first = $rows[0];
+    $intest = implode(' | ', array_filter([$first['contract_code'], $first['code_x_installation'], $first['customer_name'], $first['contract_description']], fn($v)=>$v!==null && $v!==''));
+    $tOre = array_sum(array_map(fn($r)=>(float)$r['ore'], $rows));
+    $tTab = array_sum(array_map(fn($r)=>(float)$r['tot_costo_tab'], $rows));
+?>
+  <h3 class="pr34-h3"><?= htmlspecialchars($intest, ENT_QUOTES, 'UTF-8') ?>
+    <span style="float:right;font-weight:normal"><?= count($rows) ?> · <?= number_format($tOre,2,',','.') ?>h · € <?= number_format($tTab,2,',','.') ?></span></h3>
+  <table class="pr34-tbl">
+    <thead><tr><th>Data</th><th>Operatore</th><th>Ticket</th><th>Fascia</th><th>Regime</th><th>Ore</th><th>Costo (€)</th><th>Tab (€)</th></tr></thead>
+    <tbody>
+    <?php foreach ($rows as $r): ?>
+      <tr>
+        <td><?= htmlspecialchars((string)$r['report_date'], ENT_QUOTES, 'UTF-8') ?></td>
+        <td><?= htmlspecialchars($r['operator_name'], ENT_QUOTES, 'UTF-8') ?></td>
+        <td><?= htmlspecialchars((string)$r['ticket'], ENT_QUOTES, 'UTF-8') ?: '—' ?></td>
+        <td><?= htmlspecialchars($r['fascia'], ENT_QUOTES, 'UTF-8') ?></td>
+        <td><?= htmlspecialchars($r['regime'], ENT_QUOTES, 'UTF-8') ?></td>
+        <td><?= number_format((float)$r['ore'],2,',','.') ?></td>
+        <td><?= number_format((float)$r['costo_contratto'],2,',','.') ?></td>
+        <td><?= number_format((float)$r['tot_costo_tab'],2,',','.') ?></td>
+      </tr>
+    <?php endforeach; ?>
+    </tbody>
+  </table>
+<?php endforeach; ?>
+<?php endif; ?>
 </body></html>

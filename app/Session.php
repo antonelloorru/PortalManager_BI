@@ -146,6 +146,41 @@ final class Session
         ];
     }
 
+    /**
+     * v1.9.49 — Riallinea l'identità di sessione all'assegnazione corrente a DB.
+     *
+     * Il ruolo (`role_id`) viene fissato al login e, senza questa sincronizzazione,
+     * un cambio ruolo effettuato dall'amministratore NON ha effetto finché l'utente
+     * non rifà login: la validazione RBAC a runtime continua a usare il ruolo vecchio
+     * (utente con assegnazione corretta a DB ma bloccato con "Accesso negato").
+     *
+     * Va invocata dal middleware a ogni richiesta per un utente loggato. Esegue una
+     * sola volta per richiesta. Se l'utente non esiste più o è disattivato, distrugge
+     * la sessione (il middleware reindirizza poi al login).
+     */
+    public static function syncRole(\PDO $pdo): void
+    {
+        static $done = false;
+        if ($done) return;
+        $done = true;
+        if (empty($_SESSION['user_id'])) return;
+
+        try {
+            $st = $pdo->prepare('SELECT role_id, status FROM users WHERE id = ?');
+            $st->execute([(int)$_SESSION['user_id']]);
+            $row = $st->fetch(\PDO::FETCH_ASSOC);
+            $st->closeCursor();
+        } catch (\Throwable $e) {
+            return; // in caso di errore DB non blocchiamo la richiesta
+        }
+
+        if (!$row) { self::destroy(); return; }                    // utente rimosso
+        if (($row['status'] ?? 'active') !== 'active') {           // utente disattivato
+            self::destroy(); return;
+        }
+        $_SESSION['role_id'] = (int)$row['role_id'];               // allinea al DB
+    }
+
     private static function redirectLogin(string $reason): void
     {
         // Usiamo un URL opaco se il router è già caricato
