@@ -1,43 +1,140 @@
-# certV 2.4 — Portale Integrato Governance, Competenze & Recruiting
+# PortalManager v1.9.27 — FIX FINALE employee_profile.php
 
-## Installazione Rapida
+## Diagnosi
+Il repo dichiara `VERSION=1.9.27` ma **il file `employee_profile.php` non è stato patchato**:
+non contiene il marker `PM_V1_9_27_APPLIED` e `$emp` è ancora assegnato una sola
+volta alla riga ~520, dopo il ramo POST che lo usa alle righe 90-100.
 
-### Requisiti
-- PHP 8.1+ (estensioni: PDO, pdo_mysql, mbstring, json, session, fileinfo)
-- MySQL 8.0+ / MariaDB 10.4+
-- Apache 2.4+
+Effetto:
+- Warning `Undefined variable $emp` alle righe 90-100.
+- **Data-loss silenzioso**: contract_type, hire_date, end_date, badge_number,
+  badge_issue_date, gender, ccnl, qualification, contract_level, agency,
+  part_time, part_time_pct, notes vengono AZZERATI ad ogni salvataggio Anagrafica.
 
-### Metodo 1: Installer automatico
-1. Estrarre `certV-2.4-completo.zip` nella document root (`C:\xampp\htdocs\certV\`)
-2. Aprire `http://localhost/certV/install.php`
-3. Seguire il wizard a 6 step
+## Fix — 3 modi di applicarlo (scegli uno)
 
-### Metodo 2: Manuale
-1. Copiare i file, rinominare `Config.php.dist` → `Config.php`
-2. Creare DB `cert_management` (utf8mb4_unicode_ci)
-3. Importare in ordine: `cert_management.sql`, poi le 3 migration
-4. Accedere: `admin@certv.local` / `Admin@certV2!`
+### A. Auto-patch PHP (raccomandato)
+```powershell
+cd P:\xampp\htdocs\portalmanager
+P:\xampp\php\php.exe tools\apply_v1_9_27_patch.php employee_profile.php
+```
+Output atteso:
+```
+→ Inserimento pre-fetch dopo la riga 32 (offset ~950)
+→ Backup: employee_profile.php.bak_v1_9_27_YYYYMMDD_HHMMSS
+[OK] Patch v1.9.27 applicata. php -l pulito.
+```
 
-## Struttura (51 file PHP + 6 SQL)
+### B. git apply (se lavori dal repo GitHub)
+```powershell
+cd P:\xampp\htdocs\portalmanager
+git apply patch\employee_profile_v1_9_27.patch
+git status                        # employee_profile.php modificato
+git diff employee_profile.php     # rivedi la modifica
+git add employee_profile.php
+git commit -m "v1.9.27: pre-fetch \$emp per prevenire data-loss silenzioso"
+git push origin main
+```
 
-| Area | File principali |
-|------|----------------|
-| Core | Config.php, functions.php, access_control.php, header.php, db_helpers.php |
-| Auth | login.php, logout.php, unauthorized.php |
-| Dashboard | index.php |
-| Brand | brand.php, brand_referents.php, gap_analysis.php, brand_technologies.php |
-| Competenze | upload_certificato.php, report_certificazioni.php, visualizza_storico.php, training_plans.php, programmazione.php |
-| Recruiting | recruiting_posizioni.php, recruiting_candidati.php, candidato_profilo.php, publish_posizione.php, recruiting_agenzie.php, recruiting_contratti.php |
-| Admin | manage_employees.php, manager_users.php, manage_companies.php, manage_roles.php, manage_permissions.php, mass_upload.php, settings.php, smtp_settings.php, config_notifiche.php |
-| Sistema | SmtpMailer.php, cron_notifications.php, notifications.php, view_logs.php, health_check.php, schema_check_upgrade.php |
+### C. Modifica manuale (30 secondi)
+Apri `employee_profile.php`, vai alla **riga 32** (subito dopo
+`if (!$emp_id) { redirect('manage_employees'); }`), incolla:
+```php
 
-## Documentazione (nella cartella docs/)
-- **Guida_Installazione_certV_2.4.docx** — Setup completo passo-passo
-- **Guida_Utente_certV_2.4.docx** — Manuale operativo per tutti i ruoli
-- **Guida_Amministratore_certV_2.4.docx** — Manuale tecnico con logiche di flusso
+// [PM_V1_9_27_APPLIED] Pre-fetch $emp per il branch POST che preserva i campi
+// non modificati dal form (evita data-loss silenzioso). Il fetch principale
+// piu' in basso sovrascrive $emp con la versione arricchita di JOIN per il render.
+try {
+    $__pm_pre = $pdo->prepare("SELECT * FROM employees WHERE id = ?");
+    $__pm_pre->execute([$emp_id]);
+    $emp = $__pm_pre->fetch(PDO::FETCH_ASSOC) ?: [];
+} catch (Throwable $__pm_e) {
+    $emp = [];
+}
+```
 
-## Novità v2.4
-- **SMTP OS-independent** — Motore email PHP puro senza dipendenze dal SO
-- **Classificazione Brand** — Priorità 1-5 con codifica cromatica
-- **Catalogo Tecnologie** — Tecnologie, Servizi e Prodotti per brand
-- **Zero information_schema** — Compatibile con qualsiasi livello permessi MySQL
+## Verifica installazione
+```powershell
+P:\xampp\php\php.exe tools\verify_v1_9_27.php employee_profile.php
+```
+Output atteso:
+```
+Marker presente:   SI
+Pre-fetch riga:    41 (o simile)
+POST branch riga:  53
+Pre-fetch PRIMA di POST: SI
+
+[OK] Patch v1.9.27 correttamente installata.
+```
+
+## Svuota OPcache (obbligatorio)
+Dopo la patch, PHP-OPcache serve la versione precedente finché il worker Apache
+non viene riciclato:
+```powershell
+net stop Apache2.4 ; net start Apache2.4
+```
+o via richiesta HTTP se hai `opcache_reset.php` esposto.
+
+## Migration di log
+```powershell
+mysql -uroot portalmanager < sql\migration_v1_9_27.sql
+```
+
+## Test funzionale
+1. Apri Anagrafica dipendente su un profilo con dati completi
+   (contract_type, hire_date, badge_*, gender valorizzati).
+2. Modifica SOLO il campo Nome o Cognome, salva.
+3. Verifica che gli altri campi siano invariati:
+```sql
+SELECT id, first_name, contract_type, hire_date, end_date,
+       badge_number, badge_issue_date, gender, ccnl, qualification, contract_level
+FROM employees WHERE id = <ID_TEST>;
+```
+
+## Rollback
+```powershell
+copy employee_profile.php.bak_v1_9_27_YYYYMMDD_HHMMSS employee_profile.php
+net stop Apache2.4 ; net start Apache2.4
+```
+
+## Recupero dati persi da salvataggi pre-fix
+Se hai salvataggi dell'Anagrafica dopo il bug, i campi preservati potrebbero
+essere stati azzerati. Ripristina dal dump DB precedente:
+```sql
+UPDATE employees e JOIN backup.employees b ON b.id = e.id
+   SET e.contract_type = COALESCE(e.contract_type, b.contract_type),
+       e.hire_date     = COALESCE(e.hire_date,     b.hire_date),
+       e.end_date      = COALESCE(e.end_date,      b.end_date),
+       e.badge_number  = COALESCE(e.badge_number,  b.badge_number),
+       e.badge_issue_date = COALESCE(e.badge_issue_date, b.badge_issue_date),
+       e.gender        = COALESCE(e.gender,        b.gender),
+       e.ccnl          = COALESCE(e.ccnl,          b.ccnl),
+       e.qualification = COALESCE(e.qualification, b.qualification),
+       e.contract_level = COALESCE(e.contract_level, b.contract_level),
+       e.agency        = COALESCE(e.agency,        b.agency),
+       e.part_time     = COALESCE(NULLIF(e.part_time,0), b.part_time),
+       e.part_time_pct = COALESCE(e.part_time_pct, b.part_time_pct)
+ WHERE e.updated_at >= '<DATA_PRIMO_BUG>';
+```
+
+## Contenuto pacchetto
+```
+pm_v1_9_27_fix/
+├── VERSION                                     1.9.27
+├── README.md                                   questa guida
+├── patch/
+│   └── employee_profile_v1_9_27.patch          diff per git apply
+├── tools/
+│   ├── apply_v1_9_27_patch.php                 auto-patch PHP idempotente + backup + lint
+│   └── verify_v1_9_27.php                      verifica stato installazione
+└── sql/
+    └── migration_v1_9_27.sql                   log migration + bump app_version
+```
+
+## Test in laboratorio effettuati
+- `git apply` sul file layout GitHub attuale: OK
+- `git apply` sul file ZIP originale (layout con header su riga 10): OK
+- Auto-patch PHP idempotente: RUN2 rileva marker e salta
+- Verify script: OK sul file patchato, KO sul file originale
+- `php -l` pulito post-patch
+- Rollback automatico su fallimento lint

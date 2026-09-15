@@ -23,6 +23,7 @@ $cols_to_add = [
     'soft_skills'       => "ALTER TABLE job_positions ADD COLUMN soft_skills TEXT DEFAULT NULL",
     'we_offer'          => "ALTER TABLE job_positions ADD COLUMN we_offer TEXT DEFAULT NULL",
     'master_version_id' => "ALTER TABLE job_positions ADD COLUMN master_version_id INT DEFAULT NULL",
+    'linkedin_code'     => "ALTER TABLE job_positions ADD COLUMN linkedin_code VARCHAR(100) DEFAULT NULL",
 ];
 foreach ($cols_to_add as $col => $sql) {
     try { $pdo->query("SELECT `$col` FROM job_positions LIMIT 0")->closeCursor(); }
@@ -127,12 +128,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $can_edit) {
             $benefits,
             $positions_expected,
             $mv,
+            !empty($_POST['linkedin_code']) ? trim((string)$_POST['linkedin_code']) : null,
         ];
         try {
             if ($pos_id > 0) {
                 $pdo->prepare(
                     "UPDATE job_positions SET title=?,department=?,brand_id=?,requested_by=?,team_leader_id=?,status=?,priority=?,description=?,required_skills=?,nice_to_have=?,contract_type=?,location=?,remote_policy=?,target_date=?,
-                     presentation_text=?,gender_disclaimer=?,offer_info=?,hard_skills=?,soft_skills=?,we_offer=?,ral_min=?,ral_max=?,benefits=?,positions_expected=?,master_version_id=? WHERE id=?"
+                     presentation_text=?,gender_disclaimer=?,offer_info=?,hard_skills=?,soft_skills=?,we_offer=?,ral_min=?,ral_max=?,benefits=?,positions_expected=?,master_version_id=?,linkedin_code=? WHERE id=?"
                 )->execute([...$data, $pos_id]);
 
                 // ── v5: registra storico se status o compenso sono cambiati ──
@@ -162,8 +164,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $can_edit) {
             } else {
                 $pdo->prepare(
                     "INSERT INTO job_positions (title,department,brand_id,requested_by,team_leader_id,status,priority,description,required_skills,nice_to_have,contract_type,location,remote_policy,target_date,
-                     presentation_text,gender_disclaimer,offer_info,hard_skills,soft_skills,we_offer,ral_min,ral_max,benefits,positions_expected,master_version_id,opened_at)
-                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURDATE())"
+                     presentation_text,gender_disclaimer,offer_info,hard_skills,soft_skills,we_offer,ral_min,ral_max,benefits,positions_expected,master_version_id,linkedin_code,opened_at)
+                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURDATE())"
                 )->execute($data);
                 $new_id = (int)$pdo->lastInsertId();
 
@@ -512,6 +514,7 @@ $prio_style = ['Bassa'=>['#e0f2fe','#0369a1'],'Media'=>['#dbeafe','#1d4ed8'],'Al
       <?php if($p['tl_fn']): ?><i class="fa-solid fa-user-tie" style="width:14px"></i> <?=h($p['tl_fn'].' '.$p['tl_ln'])?><br><?php endif; ?>
       <i class="fa-solid fa-house-laptop" style="width:14px"></i> <?=h($p['remote_policy'])?>
       <?php if($p['target_date']): ?> · Target: <?=format_date($p['target_date'])?><?php endif; ?>
+      <?php if(!empty($p['linkedin_code'])): ?> · <i class="fa-brands fa-linkedin" style="color:#0a66c2"></i> <?=h($p['linkedin_code'])?><?php endif; ?>
     </div>
   </div>
   <div style="padding:11px 18px;border-top:1px solid var(--border);display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap">
@@ -597,6 +600,7 @@ $prio_style = ['Bassa'=>['#e0f2fe','#0369a1'],'Media'=>['#dbeafe','#1d4ed8'],'Al
           </select></div>
           <div class="form-group"><label>Sede</label><input type="text" name="location" id="p_loc"></div>
           <div class="form-group"><label>Data target</label><input type="date" name="target_date" id="p_td"></div>
+          <div class="form-group"><label>Codice Posizione LinkedIn <span style="color:#94a3b8;font-weight:400;font-size:10px">(ID annuncio LinkedIn)</span></label><input type="text" name="linkedin_code" id="p_linkedin_code" placeholder="es. 4012345678"></div>
         </div>
       </div>
 
@@ -880,7 +884,7 @@ function loadTpl(targetId, content) {
 function openPosModal(d=null){
   const fields={id:'id',title:'title',dept:'department',brand:'brand_id',tl:'team_leader_id',
                 prio:'priority',st:'status',ct:'contract_type',rp:'remote_policy',
-                loc:'location',td:'target_date',sk:'required_skills',nth:'nice_to_have',desc:'description',
+                loc:'location',td:'target_date',linkedin_code:'linkedin_code',sk:'required_skills',nth:'nice_to_have',desc:'description',
                 pres:'presentation_text',gen:'gender_disclaimer',offer:'offer_info',
                 hard:'hard_skills',soft:'soft_skills',weoff:'we_offer',
                 /* v5: campi compenso storicizzati */

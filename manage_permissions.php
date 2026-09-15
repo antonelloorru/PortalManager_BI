@@ -131,6 +131,7 @@ $page_map = [
         'documenti.php'              => ['Archivio documenti', 'Gestione documentale con ACL'],
         'publish_posizione.php'      => ['Pubblicazione posizioni', 'Multi-channel posting'],
         'cv_import.php'              => ['Importa CV', 'Upload e parsing CV PDF/DOCX'],
+        'import_candidates_linkedin.php' => ['Importa candidati LinkedIn', 'Report candidati LinkedIn -> anagrafiche + candidature'],
         'candidate_hire.php'         => ['↳ Assumi candidato', 'Sub-route: accesso via dossier candidato (azione finale pipeline)'],
         'position_history.php'       => ['↳ Storico posizioni', 'Sub-route: accesso via Profilo dipendente'],
         'export_positions_pdf.php'   => ['↳ Export posizioni PDF', 'Sub-route: azione export dalla lista Posizioni'],

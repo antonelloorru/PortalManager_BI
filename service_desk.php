@@ -1200,6 +1200,14 @@ if ($pronto && ($_GET['print'] ?? '') === '1') {
 }
 
 require_once('header.php');
+// [PM_V1_9_34_APPLIED] pm-ui-boost
+if (!isset($GLOBALS['__pm_boost_v1934'])) {
+    $GLOBALS['__pm_boost_v1934'] = true;
+    echo '<link rel="stylesheet" href="assets/css/pm-ui-boost.css">' . "\n";
+    echo '<script src="assets/js/pm-ui-boost.js" defer></script>' . "\n";
+    echo '<meta name="pm-ui-boost" content=\'form select\'>' . "\n";
+}
+
 
 $qs = function (array $over = []) use ($f, $tec) {
     $p = array_filter(['from' => $f['from'], 'to' => $f['to'], 'queue' => $f['queue'],
@@ -1278,7 +1286,7 @@ $colClasse = [
         <h4>Selezione</h4>
         <div class="pm-grid-auto">
           <div class="form-group"><label>Componente del team</label>
-            <select name="tec"><option value="">— tutta la squadra —</option>
+            <select name="tec" class="pm-ms"><option value="">— tutta la squadra —</option>
               <?php foreach ($elencoTeam as $t): ?>
                 <option value="<?=h($t['nome'])?>" <?=$tec===$t['nome']?'selected':''?>>
                   <?=h($t['etichetta'])?></option>
@@ -1288,19 +1296,19 @@ $colClasse = [
               <?php endif; ?>
             </select></div>
           <div class="form-group"><label>Coda</label>
-            <select name="queue"><option value="">— tutte —</option>
+            <select name="queue" class="pm-ms"><option value="">— tutte —</option>
               <?php foreach ($elencoCode as $c): ?>
                 <option value="<?=h($c)?>" <?=$f['queue']===$c?'selected':''?>><?=h($c)?></option>
               <?php endforeach; ?></select></div>
           <div class="form-group"><label>Livello coinvolto</label>
-            <select name="level"><option value="">— tutti —</option>
+            <select name="level" class="pm-ms"><option value="">— tutti —</option>
               <option value="L1" <?=$f['level']==='L1'?'selected':''?>>L1 — Service Desk</option>
               <option value="L2" <?=$f['level']==='L2'?'selected':''?>>L2 — specialisti</option>
             </select></div>
           <?php // v1.9.8 — la classe di gestione esisteva nel modello ma non nel
                 // pannello: si poteva filtrare solo modificando l'URL a mano ?>
           <div class="form-group"><label>Classe di gestione</label>
-            <select name="gest"><option value="">— tutte —</option>
+            <select name="gest" class="pm-ms"><option value="">— tutte —</option>
               <?php foreach ([
                 'risolto dal Service Desk',
                 'escalation di 2 livello verso specialisti',

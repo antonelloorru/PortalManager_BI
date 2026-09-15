@@ -1,36 +1,31 @@
 <?php
 declare(strict_types=1);
 /**
- * PortalManager v1.9.32 — Relazione di Servizio IT (pagina autoconsistente)
+ * PortalManager v1.9.41 — Relazione di Servizio IT (cruscotto performance personale)
  *
- * Modulo standalone. Se hai una voce di menu che punta a un file diverso:
- *   1) rinomina l'esistente in .bak
- *   2) rinomina QUESTO file con lo stesso nome dell'originale
- *   3) ricarica la pagina.
+ * Target: Direttore IT. Raggruppamento PER PERSONA, quattro metriche:
+ *   1. Giorni lavorati su commesse ATTIVE nel periodo   (COUNT DISTINCT giorno)
+ *   2. Conteggio per Fascia professionale, focus C e D
+ *   3. Area Tecnologica dai rapportini                  (linea/modello del contratto)
+ *   4. Produzione attiva teorica                        (ore × tariffa di listino della fascia)
  *
- * Contiene le 3 sezioni:
- *   1. Giorni lavorati per persona (COUNT DISTINCT report_date; Cognome Nome)
- *   2. Riepilogo per Codice Contratto (formato "WTS_3670 | WTS_CSS | CLIENTE | DESCR")
- *   3. Dettaglio per Commessa (righe raggruppate per contratto; ticket, fascia,
- *      ore, costo contratto, TotCostoTab)
+ * Fonte dati: la vista SD canonica `v_cm_sd_moduli` (rapportini: costruita su
+ * dgb_forms_activity + cm_intervention_reports, con _operator in LEFT JOIN, quindi
+ * popolata anche con la tabella operatori vuota). Sostituisce le query dirette in
+ * INNER JOIN su dgb_forms_activity_operator della versione precedente, che in
+ * produzione (tabella vuota) restituivano 0 righe.
  *
- * Fallback intelligenti:
- *   - Se la vista v_rsi_dettaglio_commessa esiste la usa (fast path).
- *   - Altrimenti esegue query dirette sulle tabelle dgb_forms_* e cm_*.
- *   - Se le tabelle DGB non esistono, mostra un banner diagnostico invece
- *     di una pagina vuota (l'utente sa esattamente cosa manca).
+ * Fascia professionale (A–F): risolta da `v_rsi_report_fascia` con le tre mappature
+ * del portale in cascata — band_id del rapportino, alias cm_alias_band su band_raw,
+ * catalogo tariffe di commessa — con traccia dell'origine.
  *
- * Include multi-select con search sul filtro Incaricato/Contratto/Cliente
- * (pm-ui-boost auto-caricato da questo file, no dipendenze esterne).
- *
- * Esportazione CSV via ?export=csv (rispetta filtri correnti).
- * Vista stampabile via ?print=1 (nasconde form + KPI, mostra solo tabelle).
+ * Listino: `cm_rate_band_rates.cost_type='Cliente'` (regime 'Ordinario').
+ * Export CSV via ?export=csv, stampa via ?print=1 (rispettano i filtri correnti).
  */
 
 require_once('access_control.php');
 require_once('functions.php');
 
-// Permesso RBAC: se non esiste crealo, altrimenti fallback su ruoli admin/HR
 if (function_exists('can') && !can('view', 'relazione_servizio_it.php')) {
     if (!in_array((int)($_SESSION['role_id'] ?? 99), [1, 2, 3, 9], true)) {
         redirect('manage_projects');
@@ -40,30 +35,27 @@ if (function_exists('can') && !can('view', 'relazione_servizio_it.php')) {
 $isPrint = ($_GET['print']  ?? '') === '1';
 $export  = ($_GET['export'] ?? '') === 'csv';
 
-// ── Filtri ──────────────────────────────────────────────────────────────
-function _pm_ints($x): array {
-    if ($x === null || $x === '' || $x === 0 || $x === '0') return [];
-    if (!is_array($x)) $x = preg_split('/[,\s]+/', (string)$x, -1, PREG_SPLIT_NO_EMPTY);
+/* Stati di commessa considerati "attivi" per la metrica 1.
+   Valori reali presenti a schema: APERTA / CHIUSA / SOSPESA.
+   Assunzione corrente: attiva = APERTA. Per includere anche SOSPESA aggiungere
+   'SOSPESA' a questa lista (unico punto da toccare). */
+const RSI_STATI_ATTIVI = ['APERTA'];
+
+/* ── Filtri ─────────────────────────────────────────────────────────────── */
+function _pm_strs($x): array {
+    if ($x === null || $x === '') return [];
+    if (!is_array($x)) $x = [$x];
     $out = [];
-    foreach ($x as $v) { $n = (int)$v; if ($n > 0) $out[$n] = true; }
+    foreach ($x as $v) { $v = trim((string)$v); if ($v !== '') $out[$v] = true; }
     return array_keys($out);
 }
-function _pm_in(string $col, $x): array {
-    $ids = _pm_ints($x);
-    if (!$ids) return ['', []];
-    return [$col . ' IN (' . implode(',', array_fill(0, count($ids), '?')) . ')', $ids];
-}
-
 $f = [
     'from'     => trim((string)($_GET['from'] ?? date('Y-m-01'))),
     'to'       => trim((string)($_GET['to']   ?? date('Y-m-d'))),
-    'operator' => _pm_ints($_GET['operator'] ?? []),
-    'contract' => _pm_ints($_GET['contract'] ?? []),
-    'customer' => _pm_ints($_GET['customer'] ?? []),
-    'regime'   => in_array($_GET['regime'] ?? '', ['ord','str','rep'], true) ? $_GET['regime'] : '',
+    'tecnico'  => _pm_strs($_GET['tecnico']  ?? []),
+    'contract' => _pm_strs($_GET['contract'] ?? []),
 ];
 
-// ── Guardia: le tabelle DGB esistono? ───────────────────────────────────
 function _pm_table_exists(PDO $pdo, string $t): bool {
     try {
         $s = $pdo->prepare("SELECT 1 FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name=? LIMIT 1");
@@ -71,353 +63,337 @@ function _pm_table_exists(PDO $pdo, string $t): bool {
         return (bool)$s->fetchColumn();
     } catch (Throwable) { return false; }
 }
-$required = ['dgb_forms_activity', 'dgb_forms_activity_operator', 'dgb_operator', 'dgb_forms_contract', 'clients'];
-$missing = array_values(array_filter($required, fn($t) => !_pm_table_exists($pdo, $t)));
+$required = ['v_cm_sd_moduli', 'v_rsi_report_fascia', 'cm_rate_bands', 'cm_rate_band_rates', 'cm_projects'];
+$missing  = array_values(array_filter($required, fn($t) => !_pm_table_exists($pdo, $t)));
 
-// ── WHERE dinamico ──────────────────────────────────────────────────────
-$w = ['COALESCE(a.deleted,0) <> 1'];
-$b = [];
-if ($f['from']) { $w[] = 'a.report_date >= ?'; $b[] = $f['from']; }
-if ($f['to'])   { $w[] = 'a.report_date <= ?'; $b[] = $f['to']; }
-[$s, $bb] = _pm_in('ao.id_operator',     $f['operator']); if ($s) { $w[] = $s; $b = array_merge($b, $bb); }
-[$s, $bb] = _pm_in('a.id_contract',      $f['contract']); if ($s) { $w[] = $s; $b = array_merge($b, $bb); }
-[$s, $bb] = _pm_in('a.id_customer_comp', $f['customer']); if ($s) { $w[] = $s; $b = array_merge($b, $bb); }
-if ($f['regime'] === 'rep') $w[] = 'COALESCE(ao.during_availability,0) = 1';
-if ($f['regime'] === 'str') $w[] = 'COALESCE(ao.extra_hours,0) > 0';
-if ($f['regime'] === 'ord') $w[] = 'COALESCE(ao.during_availability,0)=0 AND COALESCE(ao.extra_hours,0)=0';
+/* ── WHERE dinamico sui moduli ──────────────────────────────────────────── */
+$w = ['1=1']; $b = [];
+if ($f['from']) { $w[] = 'm.giorno >= ?'; $b[] = $f['from']; }
+if ($f['to'])   { $w[] = 'm.giorno <= ?'; $b[] = $f['to']; }
+if ($f['tecnico']) {
+    $w[] = 'm.tecnico IN (' . implode(',', array_fill(0, count($f['tecnico']), '?')) . ')';
+    $b   = array_merge($b, $f['tecnico']);
+}
+if ($f['contract']) {
+    $w[] = 'm.contratto IN (' . implode(',', array_fill(0, count($f['contract']), '?')) . ')';
+    $b   = array_merge($b, $f['contract']);
+}
 $whereSql = 'WHERE ' . implode(' AND ', $w);
 
-// Cognome Nome (server-side, rigoroso)
-$OPNAME = "TRIM(CONCAT_WS(' ', op.second_name, op.first_name))";
+/* Stati attivi come lista di placeholder (per COUNT condizionale) */
+$statiPh = implode(',', array_fill(0, count(RSI_STATI_ATTIVI), '?'));
 
-// ── Query — se tutte le tabelle esistono ────────────────────────────────
-$rowsPersona = $rowsContract = $rowsDettaglio = [];
-$vOp = $vCtr = $vCli = [];
-
+/* ── Query per persona ──────────────────────────────────────────────────── */
+$rows = []; $vTec = []; $vCtr = []; $perFascia = []; $rowsCommessa = [];
 if (!$missing) {
-    // SEZIONE 3: dettaglio
-    $sqlDettaglio = "
-      SELECT c.id AS contract_id, c.code AS contract_code, c.code_x_installation,
-             cli.name AS customer_name, c.description AS contract_description,
-             p.project_code AS pm_project_code,
-             a.report_date, a.ticket, $OPNAME AS operator_name,
-             COALESCE(rbb.band_name, op.type, 'Default') AS fascia,
-             CASE WHEN COALESCE(ao.during_availability,0)=1 THEN 'Reperibilità'
-                  WHEN COALESCE(ao.extra_hours,0)>0          THEN 'Straordinario'
-                  ELSE 'Ordinario' END AS regime,
-             ROUND(COALESCE(ao.hours,0), 2) AS ore,
-             ROUND(COALESCE(ao.cost,0), 2)  AS costo_contratto,
-             ROUND(CASE WHEN COALESCE(ao.during_availability,0)=1
-                        THEN COALESCE(rb_rep.rate_hour, op.hourly_cost, 0)*COALESCE(ao.hours,0)
-                        ELSE COALESCE(rb_ord.rate_hour, op.hourly_cost, 0)*COALESCE(ao.hours,0) END, 2) AS tot_costo_tab
-      FROM dgb_forms_activity a
-      JOIN dgb_forms_activity_operator ao ON ao.id_activity=a.id
-      JOIN dgb_operator op ON op.id=ao.id_operator
-      JOIN dgb_forms_contract c ON c.id=a.id_contract
-      LEFT JOIN clients cli ON cli.id=c.id_customer_comp
-      LEFT JOIN cm_projects p ON p.dgb_contract_id=c.id
-      LEFT JOIN cm_rate_bands rbb ON rbb.band_name=COALESCE(op.type,'Default')
-      LEFT JOIN cm_rate_band_rates rb_ord ON rb_ord.band_id=rbb.id AND rb_ord.cost_type='Aziendale' AND rb_ord.regime='Ordinario'
-      LEFT JOIN cm_rate_band_rates rb_rep ON rb_rep.band_id=rbb.id AND rb_rep.cost_type='Aziendale' AND rb_rep.regime='Reperibilità'
+    $sql = "
+      SELECT
+        m.tecnico,
+        COUNT(DISTINCT CASE WHEN UPPER(COALESCE(p.operational_status,'')) IN ($statiPh)
+                            THEN m.giorno END)                              AS giorni_attivi,
+        COUNT(DISTINCT m.report_id)                                         AS interventi,
+        COALESCE(SUM(rf.fascia = 'C'),0)                                    AS int_c,
+        COALESCE(SUM(rf.fascia = 'D'),0)                                    AS int_d,
+        COALESCE(SUM(rf.fascia IS NOT NULL AND rf.fascia NOT IN ('C','D')),0) AS int_altre,
+        COALESCE(SUM(rf.fascia IS NULL),0)                                  AS int_nd,
+        GROUP_CONCAT(DISTINCT COALESCE(NULLIF(m.modello,''), m.codice_linea)
+                     ORDER BY 1 SEPARATOR ', ')                             AS aree_tec,
+        ROUND(SUM(m.ore), 2)                                                AS ore_tot,
+        ROUND(SUM(CASE WHEN UPPER(COALESCE(p.operational_status,'')) IN ($statiPh)
+                       THEN m.ore * COALESCE(rc.rate_hour,0) ELSE 0 END), 2) AS prod_teorica,
+        ROUND(SUM(CASE WHEN rf.fascia IS NULL THEN m.ore ELSE 0 END), 2)    AS ore_senza_fascia
+      FROM v_cm_sd_moduli m
+      LEFT JOIN v_rsi_report_fascia rf ON rf.report_id = m.report_id
+      LEFT JOIN cm_rate_bands rb       ON rb.band_name = rf.fascia_etichetta
+      LEFT JOIN cm_rate_band_rates rc  ON rc.band_id = rb.id
+                                      AND rc.cost_type = 'Cliente' AND rc.regime = 'Ordinario'
+      LEFT JOIN cm_projects p          ON p.project_code = m.commessa
       $whereSql
-      ORDER BY c.code, c.id, a.report_date, a.id, ao.id
+      GROUP BY m.tecnico
+      ORDER BY giorni_attivi DESC, m.tecnico
     ";
     try {
-        $stmt = $pdo->prepare($sqlDettaglio); $stmt->execute($b);
-        $rowsDettaglio = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    } catch (Throwable $e) {
-        $missing[] = 'query_dettaglio: ' . $e->getMessage();
+        $st = $pdo->prepare($sql);
+        // due gruppi di placeholder per gli stati attivi (giorni_attivi + prod_teorica), poi i filtri WHERE
+        $st->execute(array_merge(RSI_STATI_ATTIVI, RSI_STATI_ATTIVI, $b));
+        $rows = $st->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Throwable $e) { $missing[] = 'query_persona: ' . $e->getMessage(); }
+
+    /* Dettaglio conteggio per (persona, fascia) — per la seconda tabella */
+    if (!$missing) {
+        $sqlF = "
+          SELECT m.tecnico,
+                 COALESCE(rf.fascia, 'N/D') AS fascia,
+                 COUNT(DISTINCT m.report_id) AS interventi,
+                 ROUND(SUM(m.ore), 2)        AS ore
+          FROM v_cm_sd_moduli m
+          LEFT JOIN v_rsi_report_fascia rf ON rf.report_id = m.report_id
+          $whereSql
+          GROUP BY m.tecnico, COALESCE(rf.fascia, 'N/D')
+          ORDER BY m.tecnico, fascia
+        ";
+        try {
+            $st = $pdo->prepare($sqlF); $st->execute($b);
+            foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r)
+                $perFascia[$r['tecnico']][$r['fascia']] = $r;
+        } catch (Throwable $e) { /* la tabella principale resta valida */ }
+
+        /* Liste filtri, dai moduli nel periodo */
+        try {
+            $vTec = $pdo->query("SELECT DISTINCT tecnico FROM v_cm_sd_moduli WHERE tecnico IS NOT NULL AND tecnico<>'' ORDER BY tecnico")->fetchAll(PDO::FETCH_COLUMN);
+            $vCtr = $pdo->query("SELECT DISTINCT contratto FROM v_cm_sd_moduli WHERE contratto IS NOT NULL AND contratto<>'' ORDER BY contratto")->fetchAll(PDO::FETCH_COLUMN);
+        } catch (Throwable) { $vTec = $vCtr = []; }
+
+        /* Riepilogo per Codice Contratto -> dettaglio per commessa.
+           Ripristina la sezione persa nel refactor v1.9.40 usando la sorgente
+           corretta (v_cm_sd_moduli): la versione storica faceva INNER JOIN sulla
+           tabella operatori vuota e non mostrava alcuna commessa. */
+        try {
+            $sqlC = "
+              SELECT m.contratto,
+                     m.commessa,
+                     COALESCE(NULLIF(m.modello,''), m.codice_linea) AS area,
+                     COUNT(DISTINCT m.report_id)                    AS interventi,
+                     COUNT(DISTINCT CONCAT(m.giorno,'#',m.tecnico)) AS giorni_uomo,
+                     ROUND(SUM(m.ore), 2)                           AS ore,
+                     ROUND(SUM(m.ore_extra), 2)                     AS ore_extra,
+                     ROUND(SUM(m.ore * COALESCE(rc.rate_hour,0)), 2) AS prod_teorica
+              FROM v_cm_sd_moduli m
+              LEFT JOIN v_rsi_report_fascia rf ON rf.report_id = m.report_id
+              LEFT JOIN cm_rate_bands rb       ON rb.band_name = rf.fascia_etichetta
+              LEFT JOIN cm_rate_band_rates rc  ON rc.band_id = rb.id
+                                              AND rc.cost_type='Cliente' AND rc.regime='Ordinario'
+              $whereSql
+              GROUP BY m.contratto, m.commessa, area
+              ORDER BY m.contratto, ore DESC
+            ";
+            $stC = $pdo->prepare($sqlC); $stC->execute($b);
+            foreach ($stC->fetchAll(PDO::FETCH_ASSOC) as $r)
+                $rowsCommessa[$r['contratto'] === null || $r['contratto']==='' ? '(senza contratto)' : $r['contratto']][] = $r;
+        } catch (Throwable $e) { $rowsCommessa = []; }
     }
 }
 
-// ── EXPORT CSV (uscita anticipata) ──────────────────────────────────────
+/* ── EXPORT CSV ─────────────────────────────────────────────────────────── */
 if ($export && !$missing) {
     while (ob_get_level()) ob_end_clean();
+    @ini_set('zlib.output_compression', '0');
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename="relazione_servizio_it_' . date('Ymd_His') . '.csv"');
     $fh = fopen('php://output', 'w');
     fwrite($fh, "\xEF\xBB\xBF");
-    fputcsv($fh, ['Codice','Installazione','Cliente','Descrizione','PM Project','Ticket','Fascia','Regime','Data','Operatore','Ore','Costo contratto','TotCostoTab'], ';');
-    foreach ($rowsDettaglio as $r) {
-        fputcsv($fh, [
-            $r['contract_code'], $r['code_x_installation'], $r['customer_name'], $r['contract_description'],
-            $r['pm_project_code'], $r['ticket'], $r['fascia'], $r['regime'],
-            $r['report_date'], $r['operator_name'],
-            number_format((float)$r['ore'], 2, ',', ''),
-            number_format((float)$r['costo_contratto'], 2, ',', ''),
-            number_format((float)$r['tot_costo_tab'], 2, ',', ''),
-        ], ';');
-    }
+    fputcsv($fh, ['Tecnico','Giorni su commesse attive','Interventi','Fascia C','Fascia D',
+                  'Altre fasce','Fascia N/D','Aree tecnologiche','Ore totali',
+                  'Produzione teorica (listino)','Ore senza fascia'], ';');
+    foreach ($rows as $r) fputcsv($fh, [
+        $r['tecnico'], (int)$r['giorni_attivi'], (int)$r['interventi'],
+        (int)$r['int_c'], (int)$r['int_d'], (int)$r['int_altre'], (int)$r['int_nd'],
+        $r['aree_tec'],
+        number_format((float)$r['ore_tot'], 2, ',', ''),
+        number_format((float)$r['prod_teorica'], 2, ',', ''),
+        number_format((float)$r['ore_senza_fascia'], 2, ',', ''),
+    ], ';');
     fclose($fh);
     exit;
 }
 
 require_once('header.php');
-
-// Include pm-ui-boost se esiste; altrimenti fallback su select standard
 if (is_file(__DIR__ . '/assets/js/pm-ui-boost.js')) {
     echo '<link rel="stylesheet" href="assets/css/pm-ui-boost.css">' . "\n";
     echo '<script src="assets/js/pm-ui-boost.js" defer></script>' . "\n";
 }
 
-if ($missing) {
-    echo '<div style="background:#fef2f2;border:1px solid #f87171;color:#7f1d1d;padding:14px;border-radius:6px;margin:16px 0">'
-       . '<b>Diagnostica</b>: la pagina non può mostrare i dati perché mancano oggetti nello schema.<br>'
-       . 'Elementi mancanti: <code>' . h(implode(', ', $missing)) . '</code><br>'
-       . 'Verifica: <code>SHOW TABLES LIKE \'dgb_forms_%\';</code><br>'
-       . 'Il modulo DGB deve essere sincronizzato (v1.8.13+): consulta db_upgrade e il registro <code>pm_migration_sql</code>.'
-       . '</div>';
-    require_once('footer.php');
-    exit;
+/* Totali per il quadro */
+$T = ['giorni'=>0,'interventi'=>0,'c'=>0,'d'=>0,'nd'=>0,'ore'=>0,'prod'=>0];
+foreach ($rows as $r) {
+    $T['giorni'] += (int)$r['giorni_attivi']; $T['interventi'] += (int)$r['interventi'];
+    $T['c'] += (int)$r['int_c']; $T['d'] += (int)$r['int_d']; $T['nd'] += (int)$r['int_nd'];
+    $T['ore'] += (float)$r['ore_tot']; $T['prod'] += (float)$r['prod_teorica'];
 }
-
-if (!$missing) {
-    // SEZIONE 1
-    $sqlPersona = "
-      SELECT op.id AS operator_id, $OPNAME AS operator_name, map.employee_id,
-             COUNT(DISTINCT a.report_date) AS giornate,
-             ROUND(SUM(COALESCE(ao.hours,0)),2) AS ore_tot,
-             ROUND(SUM(COALESCE(ao.hours,0)) / NULLIF(COUNT(DISTINCT a.report_date),0),2) AS media_h_giorno,
-             ROUND(SUM(COALESCE(ao.extra_hours,0)),2) AS ore_straordinario,
-             ROUND(SUM(CASE WHEN ao.during_availability=1 THEN COALESCE(ao.hours,0) ELSE 0 END),2) AS ore_reperibilita,
-             ROUND(SUM(COALESCE(ao.cost,0)),2) AS costo_dgb
-      FROM dgb_forms_activity a
-      JOIN dgb_forms_activity_operator ao ON ao.id_activity=a.id
-      JOIN dgb_operator op ON op.id=ao.id_operator
-      LEFT JOIN dgb_operator_map map ON map.dgb_operator_id=op.id
-      $whereSql
-      GROUP BY op.id, op.first_name, op.second_name, map.employee_id
-      ORDER BY op.second_name, op.first_name
-    ";
-    $stmt = $pdo->prepare($sqlPersona); $stmt->execute($b);
-    $rowsPersona = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-    // SEZIONE 2
-    $sqlContract = "
-      SELECT c.id AS contract_id,
-             CONCAT_WS(' | ', NULLIF(c.code,''), NULLIF(c.code_x_installation,''), NULLIF(cli.name,''), NULLIF(c.description,'')) AS codice_contratto,
-             p.project_code AS pm_project_code,
-             ROUND(SUM(CASE WHEN COALESCE(ao.during_availability,0)=0 AND COALESCE(ao.extra_hours,0)=0 THEN COALESCE(ao.hours,0) ELSE 0 END),2) AS ore_ordinarie,
-             ROUND(SUM(COALESCE(ao.extra_hours,0)),2) AS ore_straordinario,
-             ROUND(SUM(CASE WHEN ao.during_availability=1 THEN COALESCE(ao.hours,0) ELSE 0 END),2) AS ore_reperibilita,
-             COUNT(DISTINCT CONCAT(a.report_date, '#', ao.id_operator)) AS giorni_uomo,
-             ROUND(SUM(COALESCE(ao.cost,0)),2) AS costo_contratto,
-             ROUND(SUM(CASE WHEN COALESCE(ao.during_availability,0)=1
-                            THEN COALESCE(rb_rep.rate_hour, op.hourly_cost, 0)*COALESCE(ao.hours,0)
-                            ELSE COALESCE(rb_ord.rate_hour, op.hourly_cost, 0)*COALESCE(ao.hours,0) END),2) AS tot_costo_tab
-      FROM dgb_forms_activity a
-      JOIN dgb_forms_activity_operator ao ON ao.id_activity=a.id
-      JOIN dgb_operator op ON op.id=ao.id_operator
-      JOIN dgb_forms_contract c ON c.id=a.id_contract
-      LEFT JOIN clients cli ON cli.id=c.id_customer_comp
-      LEFT JOIN cm_projects p ON p.dgb_contract_id=c.id
-      LEFT JOIN cm_rate_bands rbb ON rbb.band_name=COALESCE(op.type,'Default')
-      LEFT JOIN cm_rate_band_rates rb_ord ON rb_ord.band_id=rbb.id AND rb_ord.cost_type='Aziendale' AND rb_ord.regime='Ordinario'
-      LEFT JOIN cm_rate_band_rates rb_rep ON rb_rep.band_id=rbb.id AND rb_rep.cost_type='Aziendale' AND rb_rep.regime='Reperibilità'
-      $whereSql
-      GROUP BY c.id, c.code, c.code_x_installation, cli.name, c.description, p.project_code
-      ORDER BY (SUM(COALESCE(ao.hours,0))) DESC
-    ";
-    $stmt = $pdo->prepare($sqlContract); $stmt->execute($b);
-    $rowsContract = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-    // Liste per filtri (Cognome Nome, ORDER BY cognome)
-    $vOp  = $pdo->query("SELECT id, $OPNAME AS nm FROM dgb_operator op WHERE COALESCE(deleted,0)=0 ORDER BY second_name, first_name")->fetchAll(PDO::FETCH_ASSOC);
-    $vCtr = $pdo->query("SELECT id, CONCAT_WS(' | ', code, code_x_installation, description) AS nm FROM dgb_forms_contract WHERE COALESCE(deleted,0)=0 ORDER BY code")->fetchAll(PDO::FETCH_ASSOC);
-    $vCli = $pdo->query("SELECT id, name FROM clients ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
-}
-
-$byContract = [];
-foreach ($rowsDettaglio as $r) $byContract[$r['contract_id']][] = $r;
-$tot = [
-    'giornate' => array_sum(array_column($rowsPersona, 'giornate')),
-    'ore'      => array_sum(array_column($rowsPersona, 'ore_tot')),
-    'costo'    => array_sum(array_column($rowsPersona, 'costo_dgb')),
-    'tab'      => array_sum(array_column($rowsContract, 'tot_costo_tab')),
-    'righe'    => count($rowsDettaglio),
-];
-$exportQs = http_build_query(['export'=>'csv','from'=>$f['from'],'to'=>$f['to'],'operator'=>$f['operator'],'contract'=>$f['contract'],'customer'=>$f['customer'],'regime'=>$f['regime']]);
-$printQs  = http_build_query(['print'=>'1','from'=>$f['from'],'to'=>$f['to'],'operator'=>$f['operator'],'contract'=>$f['contract'],'customer'=>$f['customer'],'regime'=>$f['regime']]);
+$n  = fn($v) => number_format((float)$v, 0, ',', '.');
+$n2 = fn($v) => number_format((float)$v, 2, ',', '.');
+$qs = fn(array $ov) => '?' . http_build_query(array_merge(
+    ['from'=>$f['from'],'to'=>$f['to'],'tecnico'=>$f['tecnico'],'contract'=>$f['contract']], $ov));
 ?>
 <style>
-  .rsi-kpi { display:grid; grid-template-columns:repeat(5,1fr); gap:10px; margin:14px 0; }
-  .rsi-kpi .card { background:#f7f8fb; border:1px solid #e4e7ee; border-radius:6px; padding:10px; }
+  .rsi-kpi { display:grid; grid-template-columns:repeat(6,1fr); gap:10px; margin:14px 0; }
+  .rsi-kpi .card { background:#f7f8fb; border:1px solid #e4e7ee; border-radius:6px; padding:10px; text-align:center; }
   .rsi-kpi .card b { font-size:18px; display:block; }
   .rsi-kpi .card small { color:#667085; font-size:11px; }
-  .rsi-filters { display:grid; grid-template-columns:repeat(6,1fr); gap:8px; margin-bottom:14px; }
+  .rsi-filters { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-bottom:14px; align-items:end; }
   .rsi-filters label { display:flex; flex-direction:column; font-size:12px; color:#667085; gap:4px; }
   .rsi-tbl { width:100%; border-collapse:collapse; margin:6px 0 22px; }
   .rsi-tbl th, .rsi-tbl td { padding:6px 8px; border-bottom:1px solid #e4e7ee; font-size:12.5px; text-align:right; }
-  .rsi-tbl th:first-child, .rsi-tbl td:first-child,
-  .rsi-tbl th:nth-child(2), .rsi-tbl td:nth-child(2) { text-align:left; }
-  .rsi-tbl thead th { background:#f0f2f7; }
+  .rsi-tbl th:first-child, .rsi-tbl td:first-child { text-align:left; }
+  .rsi-tbl td.area { text-align:left; color:#475569; font-size:11.5px; }
+  .rsi-tbl thead th { background:#f0f2f7; position:sticky; top:0; }
   .rsi-tbl tfoot td { font-weight:600; background:#f0f2f7; }
+  .rsi-cd { font-weight:700; }
+  .rsi-c  { color:#0f766e; } .rsi-d { color:#b45309; }
+  .rsi-nd { color:#94a3b8; }
   .rsi-h2 { margin-top:22px; font-size:16px; }
-  .rsi-h3 { margin:14px 0 4px; font-size:14px; background:#1e293b; color:#fff; padding:8px 12px; border-radius:5px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
   .rsi-actions { float:right; display:flex; gap:6px; }
   .rsi-actions a { background:#0f6cf6; color:#fff; padding:5px 10px; border-radius:4px; text-decoration:none; font-size:12.5px; }
   .rsi-actions a.alt { background:#64748b; }
-  @media print {
-    .rsi-filters, .rsi-actions, form { display:none !important; }
-    .rsi-h3 { background:#e5e7eb; color:#000; }
-    .rsi-tbl { page-break-inside:auto; }
-    .rsi-tbl tr { page-break-inside:avoid; }
-  }
+  .rsi-note { font-size:11.5px; color:#667085; margin:4px 0 14px; }
+  .rsi-badge { font-size:9px; padding:1px 6px; border-radius:8px; background:#e2e8f0; color:#334155; }
+  @media print { .rsi-filters, .rsi-actions, form { display:none !important; } .rsi-tbl tr { page-break-inside:avoid; } }
 </style>
 
 <h1 style="display:flex;align-items:center;justify-content:space-between">
-  <span>Relazione di Servizio IT</span>
+  <span>Relazione di Servizio IT — Performance personale</span>
   <span class="rsi-actions">
-    <a href="?<?= h($exportQs) ?>">⬇ Esporta CSV</a>
-    <a class="alt" href="?<?= h($printQs) ?>" target="_blank">🖨 Stampa</a>
+    <a href="<?= h($qs(['export'=>'csv'])) ?>">⬇ Esporta CSV</a>
+    <a class="alt" target="_blank" href="<?= h($qs(['print'=>'1'])) ?>">🖨 Stampa</a>
   </span>
 </h1>
+
+<?php if ($missing): ?>
+  <div style="background:#fef2f2;border:1px solid #f87171;color:#7f1d1d;padding:14px;border-radius:6px;margin:16px 0">
+    <b>Diagnostica</b>: mancano oggetti nello schema: <code><?= h(implode(', ', $missing)) ?></code>.<br>
+    Applicare la migrazione della release (crea/riallinea <code>v_rsi_report_fascia</code>) e verificare
+    che le viste SD (<code>v_cm_sd_moduli</code>) siano presenti.
+  </div>
+  <?php require_once('footer.php'); exit; ?>
+<?php endif; ?>
 
 <form method="get">
   <?= function_exists('route_slug_field') ? route_slug_field() : '' ?>
   <div class="rsi-filters">
     <label>Dal <input type="date" name="from" value="<?= h($f['from']) ?>"></label>
     <label>Al  <input type="date" name="to"   value="<?= h($f['to']) ?>"></label>
-    <label>Incaricati
-      <select name="operator[]" multiple class="pm-ms" data-placeholder="Cerca incaricato…" data-allow-clear>
-        <?php foreach ($vOp as $o): ?>
-          <option value="<?= (int)$o['id'] ?>" <?= in_array((int)$o['id'], $f['operator'], true) ? 'selected' : '' ?>><?= h($o['nm']) ?></option>
+    <label>Tecnici
+      <select name="tecnico[]" multiple class="pm-ms" data-placeholder="Cerca tecnico…" data-allow-clear>
+        <?php foreach ($vTec as $t): ?>
+          <option value="<?= h($t) ?>" <?= in_array($t, $f['tecnico'], true) ? 'selected' : '' ?>><?= h($t) ?></option>
         <?php endforeach; ?>
       </select>
     </label>
     <label>Contratti
       <select name="contract[]" multiple class="pm-ms" data-placeholder="Cerca contratto…" data-allow-clear data-no-reorder>
         <?php foreach ($vCtr as $c): ?>
-          <option value="<?= (int)$c['id'] ?>" <?= in_array((int)$c['id'], $f['contract'], true) ? 'selected' : '' ?>><?= h($c['nm']) ?></option>
+          <option value="<?= h($c) ?>" <?= in_array($c, $f['contract'], true) ? 'selected' : '' ?>><?= h($c) ?></option>
         <?php endforeach; ?>
       </select>
     </label>
-    <label>Clienti
-      <select name="customer[]" multiple class="pm-ms" data-placeholder="Cerca cliente…" data-allow-clear data-no-reorder>
-        <?php foreach ($vCli as $c): ?>
-          <option value="<?= (int)$c['id'] ?>" <?= in_array((int)$c['id'], $f['customer'], true) ? 'selected' : '' ?>><?= h($c['name']) ?></option>
-        <?php endforeach; ?>
-      </select>
-    </label>
-    <label>Regime
-      <select name="regime" class="pm-ms" data-no-reorder>
-        <option value=""    <?= $f['regime']===''    ?'selected':'' ?>>— tutti —</option>
-        <option value="ord" <?= $f['regime']==='ord' ?'selected':'' ?>>Ordinario</option>
-        <option value="str" <?= $f['regime']==='str' ?'selected':'' ?>>Straordinario</option>
-        <option value="rep" <?= $f['regime']==='rep' ?'selected':'' ?>>Reperibilità</option>
-      </select>
-    </label>
-    <label>&nbsp;<button type="submit">Applica filtri</button></label>
   </div>
+  <div><button class="btn btn-primary btn-sm">Applica</button>
+       <a class="btn btn-sm" href="?">Azzera</a></div>
 </form>
 
 <div class="rsi-kpi">
-  <div class="card"><small>Giornate uniche</small><b><?= number_format((float)$tot['giornate'],0,',','.') ?></b></div>
-  <div class="card"><small>Ore totali</small><b><?= number_format((float)$tot['ore'],2,',','.') ?></b></div>
-  <div class="card"><small>Righe dettaglio</small><b><?= (int)$tot['righe'] ?></b></div>
-  <div class="card"><small>Costo contratto (DGB)</small><b>€ <?= number_format((float)$tot['costo'],2,',','.') ?></b></div>
-  <div class="card"><small>TotCostoTab</small><b>€ <?= number_format((float)$tot['tab'],2,',','.') ?></b></div>
+  <div class="card"><b><?= $n(count($rows)) ?></b><small>Tecnici</small></div>
+  <div class="card"><b><?= $n($T['giorni']) ?></b><small>Giorni su commesse attive</small></div>
+  <div class="card"><b><?= $n($T['interventi']) ?></b><small>Interventi</small></div>
+  <div class="card"><b class="rsi-c"><?= $n($T['c']) ?></b><small>Interventi Fascia C</small></div>
+  <div class="card"><b class="rsi-d"><?= $n($T['d']) ?></b><small>Interventi Fascia D</small></div>
+  <div class="card"><b><?= $n2($T['prod']) ?> €</b><small>Produzione teorica</small></div>
 </div>
+<p class="rsi-note">
+  Giorni su commesse attive = giornate distinte su commesse in stato
+  <?= h(implode('/', RSI_STATI_ATTIVI)) ?>. Produzione teorica = ore × tariffa di listino
+  della fascia (<code>cost_type='Cliente'</code>). Gli interventi senza fascia risolta
+  (<span class="rsi-nd">N/D</span>) non producono valore teorico:
+  <b><?= $n($T['nd']) ?></b> interventi.
+</p>
 
-<h2 class="rsi-h2">1. Giorni lavorati per persona</h2>
+<h2 class="rsi-h2">Performance per persona</h2>
+<?php if (!$rows): ?>
+  <p class="rsi-note">Nessun dato nel periodo/filtri selezionati.</p>
+<?php else: ?>
 <table class="rsi-tbl">
   <thead><tr>
-    <th>Incaricato</th><th>Emp. ID</th>
-    <th>Giornate</th><th>Ore tot</th><th>Media h/giorno</th>
-    <th>Straord.</th><th>Reperib.</th><th>Costo DGB (€)</th>
+    <th>Tecnico</th><th>Giorni attivi</th><th>Interventi</th>
+    <th class="rsi-c">Fascia C</th><th class="rsi-d">Fascia D</th><th>Altre</th><th>N/D</th>
+    <th>Area tecnologica</th><th>Ore</th><th>Produzione teorica</th>
   </tr></thead>
   <tbody>
-  <?php if (!$rowsPersona): ?>
-    <tr><td colspan="8" style="text-align:center;color:#667085">Nessun dato per i filtri selezionati</td></tr>
-  <?php else: foreach ($rowsPersona as $r): ?>
-    <tr>
-      <td><?= h($r['operator_name']) ?: '—' ?></td>
-      <td><?= h((string)($r['employee_id'] ?? '')) ?></td>
-      <td><?= number_format((float)$r['giornate'],0,',','.') ?></td>
-      <td><?= number_format((float)$r['ore_tot'],2,',','.') ?></td>
-      <td><?= number_format((float)$r['media_h_giorno'],2,',','.') ?></td>
-      <td><?= number_format((float)$r['ore_straordinario'],2,',','.') ?></td>
-      <td><?= number_format((float)$r['ore_reperibilita'],2,',','.') ?></td>
-      <td><?= number_format((float)$r['costo_dgb'],2,',','.') ?></td>
-    </tr>
-  <?php endforeach; endif; ?>
-  </tbody>
-</table>
-
-<h2 class="rsi-h2">2. Riepilogo per Codice Contratto</h2>
-<table class="rsi-tbl">
-  <thead><tr>
-    <th>Codice contratto</th><th>PM Project</th>
-    <th>Ore ord.</th><th>Ore str.</th><th>Ore rep.</th>
-    <th>Giorni-uomo</th><th>Costo contratto (€)</th><th>TotCostoTab (€)</th>
-  </tr></thead>
-  <tbody>
-  <?php if (!$rowsContract): ?>
-    <tr><td colspan="8" style="text-align:center;color:#667085">Nessun dato</td></tr>
-  <?php else: $sO=$sS=$sR=$sGU=$sC1=$sC2=0; foreach ($rowsContract as $r): ?>
-    <tr>
-      <td><?= h($r['codice_contratto']) ?></td>
-      <td><?= h((string)($r['pm_project_code'] ?? '')) ?></td>
-      <td><?= number_format((float)$r['ore_ordinarie'],2,',','.') ?></td>
-      <td><?= number_format((float)$r['ore_straordinario'],2,',','.') ?></td>
-      <td><?= number_format((float)$r['ore_reperibilita'],2,',','.') ?></td>
-      <td><?= number_format((float)$r['giorni_uomo'],0,',','.') ?></td>
-      <td><?= number_format((float)$r['costo_contratto'],2,',','.') ?></td>
-      <td><?= number_format((float)$r['tot_costo_tab'],2,',','.') ?></td>
-    </tr>
-  <?php $sO+=(float)$r['ore_ordinarie'];$sS+=(float)$r['ore_straordinario'];$sR+=(float)$r['ore_reperibilita'];$sGU+=(int)$r['giorni_uomo'];$sC1+=(float)$r['costo_contratto'];$sC2+=(float)$r['tot_costo_tab']; endforeach; endif; ?>
-  </tbody>
-  <?php if ($rowsContract): ?>
-  <tfoot><tr><td colspan="2">Totali</td>
-    <td><?= number_format($sO,2,',','.') ?></td><td><?= number_format($sS,2,',','.') ?></td>
-    <td><?= number_format($sR,2,',','.') ?></td><td><?= number_format($sGU,0,',','.') ?></td>
-    <td><?= number_format($sC1,2,',','.') ?></td><td><?= number_format($sC2,2,',','.') ?></td>
-  </tr></tfoot>
-  <?php endif; ?>
-</table>
-
-<h2 class="rsi-h2">3. Dettaglio per Commessa</h2>
-<?php if (!$byContract): ?>
-  <p style="color:#667085">Nessuna riga di dettaglio per i filtri selezionati.</p>
-<?php else: foreach ($byContract as $cid => $rows):
-    $first = $rows[0];
-    $intestazione = implode(' | ', array_filter([$first['contract_code'], $first['code_x_installation'], $first['customer_name'], $first['contract_description']], fn($v)=>$v!==null && $v!==''));
-    $tOre = array_sum(array_map(fn($r)=>(float)$r['ore'], $rows));
-    $tCC  = array_sum(array_map(fn($r)=>(float)$r['costo_contratto'], $rows));
-    $tTab = array_sum(array_map(fn($r)=>(float)$r['tot_costo_tab'], $rows));
-?>
-  <h3 class="rsi-h3"><?= h($intestazione) ?>
-    <?php if ($first['pm_project_code']): ?> · PM: <?= h($first['pm_project_code']) ?><?php endif; ?>
-    <span style="float:right;font-weight:normal">
-      <?= count($rows) ?> righe · <?= number_format($tOre,2,',','.') ?>h · € <?= number_format($tTab,2,',','.') ?>
-    </span>
-  </h3>
-  <table class="rsi-tbl">
-    <thead><tr>
-      <th>Data</th><th>Operatore</th><th>Ticket</th>
-      <th>Fascia</th><th>Regime</th><th>Ore</th>
-      <th>Costo contratto (€)</th><th>TotCostoTab (€)</th>
-    </tr></thead>
-    <tbody>
     <?php foreach ($rows as $r): ?>
-      <tr>
-        <td><?= h((string)$r['report_date']) ?></td>
-        <td><?= h($r['operator_name']) ?></td>
-        <td><code><?= h((string)$r['ticket']) ?: '—' ?></code></td>
-        <td><?= h($r['fascia']) ?></td>
-        <td><?= h($r['regime']) ?></td>
-        <td><?= number_format((float)$r['ore'],2,',','.') ?></td>
-        <td><?= number_format((float)$r['costo_contratto'],2,',','.') ?></td>
-        <td><?= number_format((float)$r['tot_costo_tab'],2,',','.') ?></td>
+    <tr>
+      <td><?= h($r['tecnico']) ?></td>
+      <td><?= $n($r['giorni_attivi']) ?></td>
+      <td><?= $n($r['interventi']) ?></td>
+      <td class="rsi-cd rsi-c"><?= $n($r['int_c']) ?></td>
+      <td class="rsi-cd rsi-d"><?= $n($r['int_d']) ?></td>
+      <td><?= $n($r['int_altre']) ?></td>
+      <td class="rsi-nd"><?= $n($r['int_nd']) ?></td>
+      <td class="area"><?= h($r['aree_tec'] ?? '—') ?></td>
+      <td><?= $n2($r['ore_tot']) ?></td>
+      <td><?= $n2($r['prod_teorica']) ?> €</td>
+    </tr>
+    <?php endforeach; ?>
+  </tbody>
+  <tfoot><tr>
+    <td>Totale</td><td><?= $n($T['giorni']) ?></td><td><?= $n($T['interventi']) ?></td>
+    <td class="rsi-c"><?= $n($T['c']) ?></td><td class="rsi-d"><?= $n($T['d']) ?></td>
+    <td></td><td><?= $n($T['nd']) ?></td><td></td>
+    <td><?= $n2($T['ore']) ?></td><td><?= $n2($T['prod']) ?> €</td>
+  </tr></tfoot>
+</table>
+
+<h2 class="rsi-h2">Conteggio per Fascia (dettaglio)</h2>
+<p class="rsi-note">Interventi e ore per fascia professionale, per persona. Focus su C e D.</p>
+<table class="rsi-tbl">
+  <thead><tr><th>Tecnico</th>
+    <?php $fasceCol = ['A','B','C','D','E','F','N/D']; foreach ($fasceCol as $fc): ?>
+      <th class="<?= $fc==='C'?'rsi-c':($fc==='D'?'rsi-d':($fc==='N/D'?'rsi-nd':'')) ?>"><?= h($fc) ?></th>
+    <?php endforeach; ?>
+  </tr></thead>
+  <tbody>
+    <?php foreach ($rows as $r): $tn=$r['tecnico']; ?>
+      <tr><td><?= h($tn) ?></td>
+        <?php foreach ($fasceCol as $fc):
+          $cell = $perFascia[$tn][$fc] ?? null;
+          $cls  = $fc==='C'?'rsi-c':($fc==='D'?'rsi-d':($fc==='N/D'?'rsi-nd':'')); ?>
+          <td class="<?= $cls ?>"><?= $cell ? $n($cell['interventi']) . '<span class="rsi-badge">' . $n2($cell['ore']) . 'h</span>' : '—' ?></td>
+        <?php endforeach; ?>
       </tr>
     <?php endforeach; ?>
-    </tbody>
-    <tfoot><tr><td colspan="5">Totali commessa</td>
-      <td><?= number_format($tOre,2,',','.') ?></td>
-      <td><?= number_format($tCC,2,',','.') ?></td>
-      <td><?= number_format($tTab,2,',','.') ?></td>
-    </tr></tfoot>
-  </table>
-<?php endforeach; endif; ?>
+  </tbody>
+</table>
+
+<p class="rsi-note">
+  Fascia risolta con tre fonti in cascata (origine tracciata in <code>v_rsi_report_fascia</code>):
+  <span class="rsi-badge">report</span> band del rapportino ·
+  <span class="rsi-badge">alias</span> normalizzazione <code>band_raw</code> ·
+  <span class="rsi-badge">catalogo</span> fascia unica di listino della commessa.
+  Dove nessuna fonte risolve, la fascia è <span class="rsi-nd">N/D</span> (non inventata).
+</p>
+<?php endif; ?>
+
+<h2 class="rsi-h2">Riepilogo per Codice Contratto</h2>
+<p class="rsi-note">Dettaglio per commessa: interventi, giorni-uomo, ore e produzione teorica a listino.</p>
+<?php if (!$rowsCommessa): ?>
+  <p class="rsi-note">Nessun rapportino nel periodo/filtri selezionati.</p>
+<?php else: ?>
+<table class="rsi-tbl">
+  <thead><tr><th>Contratto / Commessa</th><th>Area tecnologica</th><th>Interventi</th>
+    <th>Giorni-uomo</th><th>Ore</th><th>Ore extra</th><th>Produzione teorica</th></tr></thead>
+  <tbody>
+  <?php foreach ($rowsCommessa as $contr => $cs):
+    $sI=$sGu=0; $sO=$sOe=$sP=0.0;
+    foreach ($cs as $c){ $sI+=(int)$c['interventi']; $sGu+=(int)$c['giorni_uomo'];
+      $sO+=(float)$c['ore']; $sOe+=(float)$c['ore_extra']; $sP+=(float)$c['prod_teorica']; } ?>
+    <tr style="background:#eef2f7;font-weight:600">
+      <td style="font-family:ui-monospace,Menlo,monospace"><?= h($contr) ?></td>
+      <td></td>
+      <td><?= $n($sI) ?></td><td><?= $n($sGu) ?></td>
+      <td><?= $n2($sO) ?></td><td><?= $n2($sOe) ?></td><td><?= $n2($sP) ?> &euro;</td>
+    </tr>
+    <?php foreach ($cs as $c): ?>
+      <tr>
+        <td style="padding-left:22px"><?= h(($c['commessa'] ?? '') !== '' ? $c['commessa'] : '—') ?></td>
+        <td class="area"><?= h($c['area'] ?? '—') ?></td>
+        <td><?= $n($c['interventi']) ?></td>
+        <td><?= $n($c['giorni_uomo']) ?></td>
+        <td><?= $n2($c['ore']) ?></td>
+        <td><?= $n2($c['ore_extra']) ?></td>
+        <td><?= $n2($c['prod_teorica']) ?> &euro;</td>
+      </tr>
+    <?php endforeach; ?>
+  <?php endforeach; ?>
+  </tbody>
+</table>
+<?php endif; ?>
 
 <?php require_once('footer.php'); ?>

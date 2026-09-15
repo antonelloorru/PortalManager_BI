@@ -1,6 +1,6 @@
 <?php
 /**
- * system_console.php — Console di sistema unificata (v1.7.70)
+ * system_console.php — Console di sistema unificata (v1.9.37)
  *
  * Riunisce in un'unica pagina, a schede, le tre funzioni prima separate:
  *   • Aggiornamento (ZIP)  — ex system_update.php  (analisi + applicazione pacchetti)
@@ -112,7 +112,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$saved_zip || !file_exists($saved_zip)) {
             $msg = "<div class='alert alert-danger'>File ZIP non trovato. Ricaricare il pacchetto.</div>";
         } else {
-            set_time_limit(300);
+            // v1.9.37 — Fix timeout backup/aggiornamento.
+            // Il backup del DB include le tabelle DGB (centinaia di MB): con il
+            // cap a 300s la fase di backup veniva interrotta a meta', lasciando
+            // l'aggiornamento bloccato. Rimuoviamo il limite di tempo PHP e
+            // disattiviamo l'interruzione su abort del client, cosi' un reset
+            // del browser o del proxy non aborta un backup gia' in corso.
+            @set_time_limit(0);
+            @ini_set('max_execution_time', '0');
+            @ini_set('memory_limit', '1024M');
+            ignore_user_abort(true);
+            // Chiudo eventuali buffer: su backup lunghi evita che l'accumulo di
+            // output tenga occupata memoria e ritardi il flush della pagina esito.
+            while (ob_get_level() > 0) { @ob_end_flush(); }
             $report = apply_update($saved_zip, $app_root, $backup_dir, $temp_dir, $current_ver, $pdo, $u_id);
             unset($_SESSION['pending_update_zip']);
             $phase = 'result';
