@@ -1,24 +1,27 @@
 <?php
 declare(strict_types=1);
 /**
- * PortalManager v1.9.32 — Pagina diagnostica.
- * Apri nel browser: http://<host>/portalmanager/pm_diagnostic.php
- * Mostra: file candidati, vista v_rsi_dettaglio_commessa, tabelle DGB, righe.
+ * PortalManager v1.9.34 — Pagina diagnostica (versione tools-safe).
+ * Path assoluti ai file di base: funziona anche se il file è in tools/.
+ *
+ * Apri: http://<host>/portalmanager/tools/pm_diagnostic.php
  */
-require_once('access_control.php');
-require_once('functions.php');
+$ROOT = dirname(__DIR__);   // sale da tools/ a webroot
+require_once $ROOT . '/access_control.php';
+require_once $ROOT . '/functions.php';
+
 if (!in_array((int)($_SESSION['role_id'] ?? 99), [1], true)) {
     echo '<p>Solo Super Admin.</p>'; exit;
 }
-require_once('header.php');
+require_once $ROOT . '/header.php';
 
-echo '<h1>Diagnostica Relazione di Servizio IT</h1>';
+echo '<h1>Diagnostica Relazione di Servizio IT · v1.9.34</h1>';
 
 // 1) File candidati in webroot
-echo '<h2>File PHP con "servizi"/"relazion"/"dgb"/"report" nel nome</h2><ul>';
-foreach (glob(__DIR__ . '/*.php') as $f) {
+echo '<h2>File PHP nel gestionale con "servizi"/"relazion"/"dgb"/"report"/"desk"</h2><ul>';
+foreach (glob($ROOT . '/*.php') as $f) {
     $b = basename($f);
-    if (preg_match('/(servizi|relazion|dgb|report|desk|kpi)/i', $b)) {
+    if (preg_match('/(servizi|relazion|dgb|report|desk|kpi|it_)/i', $b)) {
         printf('<li><code>%s</code> — %d KB</li>', h($b), (int)(filesize($f)/1024));
     }
 }
@@ -30,10 +33,10 @@ try {
     $c = (int)$pdo->query("SELECT COUNT(*) FROM v_rsi_dettaglio_commessa")->fetchColumn();
     echo "<p>✔ presente — <b>$c</b> righe totali.</p>";
     $r = $pdo->query("SELECT riga_formattata FROM v_rsi_dettaglio_commessa LIMIT 3")->fetchAll(PDO::FETCH_COLUMN);
-    if ($r) { echo '<pre>' . h(implode("\n", $r)) . '</pre>'; }
+    if ($r) echo '<pre>' . h(implode("\n", $r)) . '</pre>';
 } catch (Throwable $e) {
     echo '<p style="color:#a00">✘ vista mancante: ' . h($e->getMessage()) . '</p>';
-    echo '<p>Fix: <code>mysql -uroot ' . h(defined('DB_NAME')?DB_NAME:'portalmanager') . ' &lt; sql/migration_v1_9_29.sql</code></p>';
+    echo '<p>Fix: <code>mysql -uroot portalmanager &lt; sql/migration_v1_9_34.sql</code></p>';
 }
 
 // 3) Tabelle DGB
@@ -49,7 +52,7 @@ foreach (['dgb_forms_activity','dgb_forms_activity_operator','dgb_operator','dgb
 echo '</table>';
 
 // 4) Migration log
-echo '<h2>Migration log</h2>';
+echo '<h2>Migration log (ultime 15)</h2>';
 try {
     $rows = $pdo->query("SELECT version, filename, applied_at FROM pm_migration_sql ORDER BY id DESC LIMIT 15")->fetchAll(PDO::FETCH_ASSOC);
     echo '<table border=1 cellpadding=6 style=border-collapse:collapse>';
@@ -65,13 +68,35 @@ try {
     echo '<p><code>' . h((string)$v) . '</code></p>';
 } catch (Throwable) {}
 
-// 6) Ultime pagine chiamate (se log presente)
-echo '<h2>Voci menu contenenti "servizi"/"relazion"</h2>';
+// 6) Marker patch v1.9.34 nei file interessati
+echo '<h2>Marker patch v1.9.34</h2><table border=1 cellpadding=6 style=border-collapse:collapse>';
+echo '<tr><th>File</th><th>Marker PM_V1_9_34_APPLIED</th></tr>';
+foreach (['it_service.php', 'app/ItServiceModel.php', 'app/it_service_print.php', 'service_desk.php'] as $rel) {
+    $p = $ROOT . '/' . $rel;
+    if (is_file($p)) {
+        $has = strpos((string)@file_get_contents($p), 'PM_V1_9_34_APPLIED') !== false;
+        echo '<tr><td><code>' . h($rel) . '</code></td><td style="color:' . ($has ? '#080' : '#a00') . '">' . ($has ? '✔ presente' : '✘ ASSENTE (patch non applicata)') . '</td></tr>';
+    } else {
+        echo '<tr><td><code>' . h($rel) . '</code></td><td style="color:#a00">✘ file non trovato</td></tr>';
+    }
+}
+echo '</table>';
+
+// 7) Asset pm-ui-boost
+echo '<h2>Asset pm-ui-boost</h2><ul>';
+foreach (['assets/js/pm-ui-boost.js', 'assets/css/pm-ui-boost.css'] as $rel) {
+    $p = $ROOT . '/' . $rel;
+    echo '<li><code>' . h($rel) . '</code> — ' . (is_file($p) ? '✔ presente (' . filesize($p) . ' byte)' : '<span style="color:#a00">✘ ASSENTE</span>') . '</li>';
+}
+echo '</ul>';
+
+// 8) Voci menu correlate
+echo '<h2>Voci role_permissions correlate</h2>';
 try {
-    $rows = $pdo->query("SELECT page_name FROM role_permissions WHERE role_id=1 AND (page_name LIKE '%servizi%' OR page_name LIKE '%relazion%' OR page_name LIKE '%dgb%' OR page_name LIKE '%report%')")->fetchAll(PDO::FETCH_COLUMN);
+    $rows = $pdo->query("SELECT page_name FROM role_permissions WHERE role_id=1 AND (page_name LIKE '%servizi%' OR page_name LIKE '%relazion%' OR page_name LIKE '%dgb%' OR page_name LIKE '%report%' OR page_name LIKE '%desk%' OR page_name LIKE '%it_%')")->fetchAll(PDO::FETCH_COLUMN);
     echo '<ul>';
     foreach ($rows as $p) printf('<li><code>%s</code></li>', h($p));
     echo '</ul>';
 } catch (Throwable) { echo '<p>—</p>'; }
 
-require_once('footer.php');
+require_once $ROOT . '/footer.php';

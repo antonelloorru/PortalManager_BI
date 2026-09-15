@@ -1,24 +1,22 @@
 <?php
 declare(strict_types=1);
 /**
- * PortalManager v1.9.27 — Fix DATA-LOSS su employee_profile.php
+ * PortalManager v1.9.27 — Auto-patch employee_profile.php
+ * (Aggiornato: layout GitHub v1.9.27 + fallback ZIP; idempotente; validazione php -l)
  *
- * Bug reale (non solo warning):
- *   Il ramo POST 'save_anagrafica' usa $emp['contract_type'], $emp['hire_date'],
- *   $emp['end_date'], $emp['apprenticeship_end_date'], $emp['badge_number'],
- *   $emp['badge_issue_date'], ... per PRESERVARE i campi non modificati dal form.
- *   Ma $emp viene caricato PIÙ IN BASSO (linea ~671, dopo la chiusura del POST).
- *   Risultato: quei campi vengono AZZERATI nell'UPDATE → data-loss silenzioso.
+ * Bug: il ramo POST 'save_anagrafica' usa $emp[...] per preservare campi non
+ * modificati dal form, ma $emp e' caricato solo alla riga ~671. Risultato:
+ *   - Warning "Undefined variable $emp"
+ *   - Data-loss: contract_type, hire_date, end_date, badge_*, gender,
+ *     ccnl, qualification, contract_level, agency, part_time, notes AZZERATI.
  *
- * Fix: pre-fetch di $emp SUBITO DOPO la riga `if (!$emp_id) { redirect(...); }`.
- * Il fetch grande più in basso viene mantenuto e sovrascrive $emp con la versione
- * arricchita di JOIN per il rendering.
- *
- * Idempotente (marker PM_V1_9_27_APPLIED). Backup + validazione php -l + rollback.
+ * Fix: pre-fetch di $emp subito dopo la riga `if (!$emp_id) { redirect(...); }`.
+ * Il fetch principale piu' in basso sovrascrive $emp con la versione arricchita
+ * di JOIN per il rendering.
  *
  * Uso:
- *   php tools\apply_v1_9_27_patch.php                       (target ..\employee_profile.php)
- *   php tools\apply_v1_9_27_patch.php <path\employee_profile.php>
+ *   php tools\apply_v1_9_27_patch.php                       (default ..\employee_profile.php)
+ *   php tools\apply_v1_9_27_patch.php <path>
  *   php tools\apply_v1_9_27_patch.php <path> --dry-run
  */
 
@@ -35,12 +33,13 @@ $src = file_get_contents($target);
 if ($src === false) { fwrite(STDERR, "[ERRORE] Lettura fallita\n"); exit(1); }
 
 if (strpos($src, 'PM_V1_9_27_APPLIED') !== false) {
-    echo "[SKIP] Patch v1.9.27 già applicata a $target\n"; exit(0);
+    echo "[SKIP] Patch v1.9.27 gia' applicata a $target\n"; exit(0);
 }
 
 echo "→ Target: $target (" . strlen($src) . " byte)\n";
 
 $block = <<<'PHP'
+
 
 // [PM_V1_9_27_APPLIED] Pre-fetch $emp per il branch POST che preserva i campi
 // non modificati dal form (evita data-loss silenzioso). Il fetch principale
@@ -54,29 +53,22 @@ try {
 }
 PHP;
 
-// Ancora: la riga "if (!$emp_id) { redirect('manage_employees'); }"
-// (tolleranza per virgolette e spazi).
-$rx = '/(if\s*\(\s*!\s*\$emp_id\s*\)\s*\{\s*redirect\s*\(\s*[\'"]manage_employees[\'"]\s*\)\s*;\s*\}\s*)/';
+// Ancora tollerante a varianti di spazi/virgolette
+$rx = '/(if\s*\(\s*!\s*\$emp_id\s*\)\s*\{\s*redirect\s*\(\s*[\'"]manage_employees[\'"]\s*\)\s*;\s*\}[^\n]*\n)/';
 if (!preg_match($rx, $src, $m, PREG_OFFSET_CAPTURE)) {
-    // Fallback: ancora sulla riga di assegnazione $emp_id
-    $rx2 = '/(\$emp_id\s*=\s*\(int\)\s*\(\s*\$_GET\s*\[\s*[\'"]id[\'"]\s*\]\s*\?\?\s*0\s*\)\s*;\s*)/';
-    if (!preg_match($rx2, $src, $m, PREG_OFFSET_CAPTURE)) {
-        fwrite(STDERR, "[ERRORE] Ancore non trovate. File probabilmente diverso dalla revisione attesa.\n");
-        fwrite(STDERR, "         Cerca manualmente la riga `if (!\$emp_id) { redirect('manage_employees'); }`\n");
-        fwrite(STDERR, "         e inserisci subito dopo il blocco stampato con --dry-run.\n");
-        exit(3);
-    }
-    $rx = $rx2;
+    fwrite(STDERR, "[ERRORE] Ancora non trovata: `if (!\$emp_id) { redirect('manage_employees'); }`\n");
+    fwrite(STDERR, "         Aprire il file, individuare quella riga (di solito ~32) e inserire\n");
+    fwrite(STDERR, "         SUBITO DOPO il blocco stampato con --dry-run.\n");
+    exit(3);
 }
 $pos = $m[0][1] + strlen($m[0][0]);
-$new = substr($src, 0, $pos) . "\n" . $block . "\n" . substr($src, $pos);
+$new = substr($src, 0, $pos) . $block . "\n" . substr($src, $pos);
 
-$offset = $pos;
-$line   = substr_count(substr($src, 0, $offset), "\n") + 1;
-echo "→ Inserimento pre-fetch dopo la riga $line (offset $offset)\n";
+$line = substr_count(substr($src, 0, $pos), "\n") + 1;
+echo "→ Inserimento pre-fetch dopo la riga " . ($line - 1) . " (offset $pos)\n";
 
 if ($dry) {
-    echo "\n[DRY-RUN] File NON scritto. Anteprima del blocco inserito:\n";
+    echo "\n[DRY-RUN] File NON scritto. Blocco che sarebbe inserito:\n";
     echo "----------------------------------------\n";
     echo $block . "\n";
     echo "----------------------------------------\n";
@@ -99,12 +91,7 @@ if (strpos((string)$lint, 'No syntax errors') === false) {
 }
 
 echo "[OK] Patch v1.9.27 applicata. php -l pulito.\n";
-echo "     Backup di sicurezza: $bak\n";
-echo "\nEffetto atteso:\n";
-echo "  - Warning `Undefined variable \$emp` alle righe 80-94: RISOLTI.\n";
-echo "  - Data-loss silenzioso sui campi preservati nell'UPDATE: RISOLTO.\n";
-echo "\nVerifica dal browser:\n";
-echo "  1) Apri Anagrafica dipendente e prova a salvare.\n";
-echo "  2) Controlla che contract_type / hire_date / end_date / badge_* rimangano invariati\n";
-echo "     dopo un salvataggio parziale.\n";
+echo "     Backup: $bak\n";
+echo "\nRicordati di svuotare OPcache o riavviare Apache perche' la nuova versione entri in servizio:\n";
+echo "  net stop Apache2.4 ; net start Apache2.4\n";
 exit(0);
