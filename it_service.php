@@ -3,7 +3,7 @@
  * it_service.php — Relazione di Servizio IT (v1.8.90)
  *
  * Filtri combinabili su tutte le dimensioni, raggruppamento libero, grafici,
- * export XLSX con foglio pivot e report di stampa a colori.
+ * export XLSX/DOCX, selezione dettagli per stampa/export, report a colori. (v1.9.46)
  *
  * La classificazione non e' calcolata qui: viene da `v_cm_it_servizio`
  * (v1.8.89), che espone un intervento con tutte le sue dimensioni.
@@ -17,6 +17,15 @@ $u_id = (int)$_SESSION['user_id'];
 
 $it = new ItServiceModel($pdo);
 $f  = $it->normFilters($_GET);
+
+// v1.9.46 — dettagli selezionabili prima di stampa/export
+$INC_ALL = ['quadro','andamento','dettaglio','giorni','costi','contratti','commesse'];
+$INC_LBL = ['quadro'=>'Quadro / KPI','andamento'=>'Andamento mensile','dettaglio'=>'Dettaglio interventi',
+            'giorni'=>'Giorni per operatore','costi'=>'Riepilogo costi',
+            'contratti'=>'Riepilogo per contratto','commesse'=>'Dettaglio per commessa'];
+$inc = isset($_GET['inc']) ? array_values(array_intersect($INC_ALL, (array)$_GET['inc'])) : $INC_ALL;
+if (!$inc) $inc = $INC_ALL;
+$incOn = fn(string $k): bool => in_array($k, $inc, true);
 
 $pronto = true; $errore = '';
 try {
@@ -47,6 +56,10 @@ try {
     $gOp   = $it->giorniOperatore($f);
     $gAr   = $it->giorniArea($f);
     $gRic  = $it->giorniRiconcilia($f);
+    // [PM_V1_9_34_APPLIED]
+    $dettCommessa = $it->dettaglioCommessa($f);
+    // [PM_V1_9_35_APPLIED]
+    $riepContratto = $it->riepilogoContratto($f);
 } catch (Throwable $e) {
     $pronto = false; $errore = $e->getMessage();
     $tot = $km = []; $righe = $trend = $gMod = $gLin = $gSet = $gDur = $gFas = [];
@@ -57,6 +70,7 @@ try {
     // normale le variabili restano indefinite. Il template le usa comunque, e
     // PHP produce un avviso su ogni riferimento.
     $cQ2 = $gQ = []; $cRie2 = $gOp = $gAr = $gRic = [];
+    $dettCommessa = []; $riepContratto = [];
     $vLin = $vSet = $vInc = $vSed = $vCod = $vAz = []; $gCod = $gAz = [];
 }
 
@@ -194,13 +208,181 @@ if ($pronto && ($_GET['print'] ?? '') === '1') {
     exit;
 }
 
-require_once('header.php');
+// v1.9.46 — export Word (.docx): stessa struttura e formattazione del report di stampa (PDF)
+if ($pronto && ($_GET['export'] ?? '') === 'docx') {
+    require_once(__DIR__ . '/app/DocxWriter.php');
+    write_log('Projects', 'info', "Report DOCX Relazione IT {$f['from']}..{$f['to']}", $u_id);
 
-$qs = function (array $over = []) use ($f) {
+    // stessa logica del report di stampa: scheda personale + filtri applicati
+    $isPers  = (count($f['incaricati'] ?? []) === 1);
+    $persona = $isPers ? $f['incaricati'][0] : '';
+    $filtri = [];
+    foreach ([['linee','Linee'],['settori','Settori'],['incaricati','Incaricati'],
+              ['sedi','Sedi'],['modalita','Modalità'],['fasce','Fasce'],['durate','Durate']] as [$fk,$fl]) {
+        if (!empty($f[$fk])) $filtri[] = $fl . ': ' . implode(', ', $f[$fk]);
+    }
+    if ($f['ricavo'] !== '') $filtri[] = 'Natura: ' . ($f['ricavo'] === '1' ? 'a ricavo' : 'interne');
+
+    $eur   = fn($v) => '€ ' . number_format((float)$v, 2, ',', '.');
+    $gbLbl = implode(' × ', array_map(fn($g) => ItServiceModel::DIM[$g], $f['gb']));
+
+    $doc = new DocxWriter('Relazione di Servizio IT' . ($isPers ? ' — scheda personale' : ''));
+    if ($isPers) $doc->paragraph($persona, ['size'=>26,'bold'=>true,'color'=>'0F766E','after'=>120]);
+    $doc->meta('Periodo ' . date('d/m/Y', strtotime($f['from'])) . ' – ' . date('d/m/Y', strtotime($f['to']))
+        . '   ·   generato il ' . date('d/m/Y H:i') . '   ·   raggruppamento: ' . $gbLbl);
+    if ($filtri) $doc->box('Filtri applicati: ' . implode('   ·   ', $filtri));
+
+    // QUADRO — KPI + Ripartizione dell'operatività
+    if ($incOn('quadro')) {
+        $oreTot = (float)($tot['ore'] ?? 0);
+        $doc->kpi([
+            ['label'=>'Interventi','value'=>$hh($tot['interventi'] ?? 0),'color'=>'334155','sub'=>$hh($tot['commesse'] ?? 0).' commesse'],
+            ['label'=>'Giornate-uomo','value'=>$hh($tot['giornate_uomo'] ?? 0),'color'=>'2563EB','sub'=>$hh($tot['incaricati'] ?? 0).' incaricati'],
+            ['label'=>'Ore','value'=>$hh1($tot['ore'] ?? 0),'color'=>'16A34A','sub'=>(($tot['ore_medie_giornata'] ?? null)!==null ? $hh1($tot['ore_medie_giornata']).' h/giornata' : '')],
+            ['label'=>'Ore a ricavo','value'=>$hh1($tot['ore_ricavo'] ?? 0),'color'=>'0D9488','sub'=>($oreTot>0 ? $hh1(100*(float)($tot['ore_ricavo'] ?? 0)/$oreTot).'%' : '')],
+            ['label'=>'Ore di viaggio','value'=>$hh1($tot['ore_viaggio'] ?? 0),'color'=>'F59E0B','sub'=>$hh($km['trasferte'] ?? 0).' trasferte'],
+            ['label'=>'Km percorsi','value'=>((float)($tot['km'] ?? 0)>0 ? $hh1($tot['km']) : '—'),'color'=>'7C3AED','sub'=>(($km['copertura_pct'] ?? null)!==null ? 'copertura '.$hh1($km['copertura_pct']).'%' : 'non rilevati')],
+        ]);
+        if ((int)($km['trasferte'] ?? 0) > 0 && (int)($km['con_km'] ?? 0) === 0) {
+            $doc->box('Chilometri non rilevati per le ' . $hh($km['trasferte']) . ' trasferte del periodo. Registrate ' . $hh1($km['ore_viaggio']) . ' ore di viaggio, che misurano lo stesso fenomeno con un dato reale.', 'F59E0B', 'FFFBEB');
+        }
+        $doc->heading('Ripartizione dell\'operatività', 1);
+        $mkOre = fn($rows) => array_map(fn($d) => [(string)$d['voce'], (float)$d['ore'], $hh1($d['ore']).' h'], $rows);
+        $mkInt = fn($rows) => array_map(fn($d) => [(string)$d['voce'], (float)$d['interventi'], $hh($d['interventi'])], $rows);
+        if ($gMod) $doc->bars($mkOre($gMod), ['title'=>'Ore per modalità','color'=>'2563EB']);
+        if ($gLin) $doc->bars($mkOre($gLin), ['title'=>'Ore per linea di servizio','color'=>'0D9488']);
+        if ($gSet) $doc->bars($mkOre($gSet), ['title'=>'Ore per settore tecnologico','color'=>'7C3AED']);
+        if ($gDur) $doc->bars($mkInt($gDur), ['title'=>'Interventi per durata','color'=>'2563EB']);
+        if ($gFas) $doc->bars($mkInt($gFas), ['title'=>'Interventi per fascia oraria','color'=>'16A34A']);
+    }
+
+    // ANDAMENTO MENSILE
+    if ($incOn('andamento') && count($trend) > 1) {
+        $doc->heading('Andamento mensile', 1);
+        $sO=0.0; foreach ($trend as $t) $sO += (float)($t['ore_ordinarie'] ?? 0);
+        $target = (isset($_GET['target']) && is_numeric($_GET['target'])) ? (float)$_GET['target'] : round($sO / max(1,count($trend)));
+        $doc->note('Target «ore ordinarie lavorative»: ' . $hh($target) . ' h/mese (media del periodo, salvo override).');
+        $segRows = array_map(function ($t) use ($hh1) {
+            $ore = (float)$t['ore']; $rep = (float)($t['ore_reperibilita'] ?? 0);
+            $fuori = min((float)$t['ore_fuori'], max(0.0, $ore - $rep));
+            $ord = max(0.0, $ore - $rep - $fuori);
+            return [(string)$t['ym'], [$ord, $fuori, $rep], $hh1($ore).' h'];
+        }, $trend);
+        $doc->stackedbars($segRows, [
+            ['label'=>'ore ordinarie','color'=>'2563EB'],
+            ['label'=>'fuori orario','color'=>'F59E0B'],
+            ['label'=>'reperibilità','color'=>'7C3AED'],
+        ]);
+        $rr = [];
+        foreach ($trend as $t) $rr[] = [$t['ym'], $hh1($t['ore']), $hh1($t['ore_ordinarie'] ?? 0), $hh1($t['ore_reperibilita'] ?? 0), $hh1($t['ore_fuori']), $hh($t['giornate_uomo'])];
+        $doc->table(['Mese','Ore','Ore ordinarie','Reperibilità','Fuori orario','Giornate-uomo'], $rr, ['right'=>[1,2,3,4,5]]);
+    }
+
+    // DETTAGLIO (pivot) — nuova pagina, come nel PDF
+    if ($incOn('dettaglio')) {
+        $doc->pageBreak();
+        $doc->heading('Dettaglio — ' . $gbLbl, 1);
+        $hdr = array_map(fn($g) => ItServiceModel::DIM[$g], $f['gb']);
+        $hdr = array_merge($hdr, ['Interv.','Giornate','Ore','Extra','Viaggio','Km','Giorn.','Mezze','Cliente','Remoto','Smart','Reper.','F.orario']);
+        $rr = [];
+        foreach (array_slice($righe, 0, 300) as $r) {
+            $row = [];
+            foreach ($f['gb'] as $g) $row[] = mb_strimwidth((string)$r[$g], 0, 30, '…');
+            $row = array_merge($row, [$hh($r['interventi']),$hh($r['giornate_uomo']),$hh1($r['ore']),$hh1($r['ore_extra']),$hh1($r['ore_viaggio']),
+                ((float)$r['km']>0?$hh1($r['km']):'—'),$hh($r['giornate']),$hh($r['mezze_giornate']),$hh($r['presso_cliente']),$hh($r['da_remoto']),$hh($r['smart_working']),$hh($r['reperibilita']),$hh($r['fuori_orario'])]);
+            $rr[] = $row;
+        }
+        $ng = count($f['gb']);
+        $doc->table($hdr, $rr, ['right'=>range($ng, $ng+12)]);
+        if (count($righe) > 300) $doc->note('Mostrate le prime 300 righe di ' . $hh(count($righe)) . '. L\'export XLSX le contiene tutte.');
+    }
+
+    // GIORNI LAVORATI
+    if ($incOn('giorni') && $gOp) {
+        $doc->heading('Giorni lavorati' . ($isPers ? ' — '.$persona : ' per persona'), 1);
+        $doc->kpi([
+            ['label'=>'Operatori','value'=>$hh($gQ['operatori'] ?? 0),'color'=>'0F766E'],
+            ['label'=>'Giorni-uomo','value'=>$hh($gQ['giorni_uomo'] ?? 0),'color'=>'2563EB'],
+            ['label'=>'Ore','value'=>$hh1($gQ['ore'] ?? 0),'color'=>'334155'],
+            ['label'=>'Giornate eq.','value'=>$hh1($gQ['giornate_equiv'] ?? 0),'color'=>'64748B'],
+            ['label'=>'Fascia C','value'=>$hh($gQ['giorni_uomo_C'] ?? 0),'color'=>'16A34A'],
+            ['label'=>'Fascia D','value'=>$hh($gQ['giorni_uomo_D'] ?? 0),'color'=>'F59E0B'],
+        ]);
+        $rr = [];
+        foreach ($gOp as $x) $rr[] = [$x['operatore'],$hh($x['giorni_lavorati']),$hh1($x['giornate_equiv']),
+            ($x['ore_per_giorno']!==null?$hh1($x['ore_per_giorno']):'—'),$hh($x['giorni_C']),$hh($x['giorni_D']),
+            ($x['produzione_teorica']!==null?$hh1($x['produzione_teorica']):'—'),($x['produzione_per_giorno']!==null?$hh1($x['produzione_per_giorno']):'—'),$hh($x['commesse'])];
+        $doc->table(['Operatore','Giorni lavorati','Giornate eq.','h/giorno','Fascia C','Fascia D','Produzione teorica','€/giorno','Commesse'], $rr, ['right'=>[1,2,3,4,5,6,7,8]]);
+        if ($gAr) {
+            $doc->heading('Ripartizione per area tecnologica', 2);
+            $rr=[]; foreach ($gAr as $x) $rr[]=[$x['operatore'],$x['area_tecnologica'],$hh($x['giorni']),$hh($x['interventi']),$hh1($x['ore']),$hh1($x['quota_ore_pct']).'%',($x['produzione_teorica']!==null?$hh1($x['produzione_teorica']):'—')];
+            $doc->table(['Operatore','Area tecnologica','Giorni','Interventi','Ore','Quota','Produzione teorica'], $rr, ['right'=>[2,3,4,5,6]]);
+        }
+        if ($gRic) {
+            $doc->heading('Giorni esclusi perché su commesse oggi chiuse', 2);
+            $rr=[]; foreach ($gRic as $x) $rr[]=[$x['operatore'],$hh($x['giorni_totali']),$hh($x['giorni_attive']),$hh($x['giorni_chiuse']),$hh1($x['ore_totali']),$hh1($x['ore_attive'])];
+            $doc->table(['Operatore','Giorni totali','Su attive','Su chiuse','Ore totali','Ore su attive'], $rr, ['right'=>[1,2,3,4,5]]);
+        }
+        $doc->note('«Giorni lavorati» sono giorni distinti: due interventi nello stesso giorno contano una volta. Un giorno in due fasce conta in entrambe, quindi C + D può superare i giorni totali. Produzione teorica = ore × listino.');
+    }
+
+    // COSTI
+    if ($incOn('costi') && $cRie2) {
+        $doc->heading('Riepilogo costi per fascia e contratto' . ($isPers ? ' — '.$persona : ''), 1);
+        $doc->kpi([
+            ['label'=>'Interventi','value'=>$hh($cQ2['interventi'] ?? 0),'color'=>'065F46'],
+            ['label'=>'Ore','value'=>$hh1($cQ2['ore'] ?? 0),'color'=>'334155'],
+            ['label'=>'Valore totale','value'=>$hh1($cQ2['valore'] ?? 0),'color'=>'0F766E'],
+            ['label'=>'Orario ordinario','value'=>$hh1($cQ2['valore_ordinario'] ?? 0),'color'=>'16A34A','sub'=>$hh1($cQ2['ore_ordinario'] ?? 0).' h'],
+            ['label'=>'Extra-orario','value'=>$hh1($cQ2['valore_extra'] ?? 0),'color'=>'F59E0B','sub'=>$hh1($cQ2['ore_extra'] ?? 0).' h'],
+            ['label'=>'Commesse','value'=>$hh($cQ2['commesse'] ?? 0),'color'=>'7C3AED'],
+        ]);
+        $rr=[]; foreach ($cRie2 as $x) $rr[]=[$x['codice_linea'],$x['descrizione_tariffa'],$x['reperibilita'],$hh($x['interventi']),$hh1($x['ore']),($x['tariffa_ora']!==null?$eur($x['tariffa_ora']):'—'),$eur($x['valore'])];
+        $doc->table(['Linea','Tariffa','Reper.','Interv.','Ore','Tariffa/ora','Valore'], $rr, ['right'=>[3,4,5,6]]);
+    }
+
+    // RIEPILOGO PER CODICE CONTRATTO
+    if ($incOn('contratti') && $riepContratto) {
+        $doc->heading('Riepilogo per Codice Contratto', 1);
+        $rr=[]; foreach ($riepContratto as $x) $rr[]=[$x['codice_contratto'],(string)($x['pm_project_code'] ?? ''),$hh1($x['ore_ordinarie']),$hh1($x['ore_straordinario']),$hh1($x['ore_reperibilita']),$hh($x['giorni_uomo']),$eur($x['costo_contratto']),$eur($x['tot_costo_tab'])];
+        $doc->table(['Codice contratto','PM','Ord.','Str.','Rep.','Gg-uomo','Costo','Tabella'], $rr, ['right'=>[2,3,4,5,6,7]]);
+    }
+
+    // DETTAGLIO PER COMMESSA — raggruppato per contratto, come nel PDF
+    if ($incOn('commesse') && $dettCommessa) {
+        $doc->heading('Dettaglio per Commessa', 1);
+        $byC = [];
+        foreach ($dettCommessa as $r) $byC[$r['contract_id']][] = $r;
+        foreach ($byC as $rows) {
+            $first  = $rows[0];
+            $intest = implode(' | ', array_filter([$first['contract_code'] ?? '', $first['code_x_installation'] ?? '', $first['customer_name'] ?? '', $first['contract_description'] ?? ''], fn($v) => $v !== null && $v !== ''));
+            $tOre = 0.0; $tTab = 0.0; foreach ($rows as $r) { $tOre += (float)$r['ore']; $tTab += (float)$r['tot_costo_tab']; }
+            $doc->heading(($intest !== '' ? $intest : 'Contratto') . '   —   ' . count($rows) . ' · ' . $hh1($tOre) . ' h · ' . $eur($tTab), 3);
+            $rr = [];
+            foreach ($rows as $r) $rr[] = [(string)$r['report_date'], $r['operator_name'], ((string)($r['ticket'] ?? '') ?: '—'), $r['fascia'], $r['regime'], $hh1($r['ore']), $eur($r['costo_contratto']), $eur($r['tot_costo_tab'])];
+            $doc->table(['Data','Operatore','Ticket','Fascia','Regime','Ore','Costo','Tabella'], $rr, ['right'=>[5,6,7]]);
+        }
+    }
+
+    $doc->download("relazione_servizio_it_{$f['from']}_{$f['to']}.docx");
+}
+
+require_once('header.php');
+// [PM_V1_9_34_APPLIED] pm-ui-boost
+if (!isset($GLOBALS['__pm_boost_v1934'])) {
+    $GLOBALS['__pm_boost_v1934'] = true;
+    echo '<link rel="stylesheet" href="assets/css/pm-ui-boost.css">' . "\n";
+    echo '<script src="assets/js/pm-ui-boost.js" defer></script>' . "\n";
+    echo '<meta name="pm-ui-boost" content=\'form select[multiple], form select[name="ricavo"]\'>' . "\n";
+}
+
+
+$qs = function (array $over = []) use ($f, $inc, $INC_ALL) {
     $p = ['from' => $f['from'], 'to' => $f['to'], 'ricavo' => $f['ricavo'],
           'q' => $f['q'], 'cliente' => $f['cliente']];
     foreach (['linee','codici','settori','aziende','incaricati','modalita','fasce','durate','sedi','gb'] as $k)
         if (!empty($f[$k])) $p[$k] = implode(',', $f[$k]);
+    if (count($inc) < count($INC_ALL)) $p['inc'] = $inc; // subset -> inc[] nei link stampa/export
     return url_safe('it_service', array_merge(array_filter($p, fn($v) => $v !== '' && $v !== []), $over));
 };
 ?>
@@ -259,13 +441,13 @@ $qs = function (array $over = []) use ($f) {
             ['settori', 'Settore tecnologico', $vSet], ['aziende', 'Azienda esecutrice', $vAz],
           ] as [$k, $lbl, $vals]): ?>
             <div class="form-group"><label><?=h($lbl)?> <span class="pm-multi">(multipla)</span></label>
-              <select name="<?=$k?>[]" multiple size="3">
+              <select name="<?=$k?>[]" multiple size="3" class="pm-ms">
                 <?php foreach ($vals as $v): ?>
                   <option value="<?=h($v)?>" <?=in_array($v,$f[$k],true)?'selected':''?>><?=h($v)?></option>
                 <?php endforeach; ?></select></div>
           <?php endforeach; ?>
           <div class="form-group"><label>Natura</label>
-            <select name="ricavo"><option value="">— tutte —</option>
+            <select name="ricavo" class="pm-ms"><option value="">— tutte —</option>
               <option value="1" <?=$f['ricavo']==='1'?'selected':''?>>Commesse a ricavo</option>
               <option value="0" <?=$f['ricavo']==='0'?'selected':''?>>Commesse interne</option>
             </select></div>
@@ -282,16 +464,28 @@ $qs = function (array $over = []) use ($f) {
             ['durate', 'Durata', ['giornata','mezza giornata','non rilevata']],
           ] as [$k, $lbl, $vals]): ?>
             <div class="form-group"><label><?=h($lbl)?> <span class="pm-multi">(multipla)</span></label>
-              <select name="<?=$k?>[]" multiple size="3">
+              <select name="<?=$k?>[]" multiple size="3" class="pm-ms">
                 <?php foreach ($vals as $v): ?>
                   <option value="<?=h($v)?>" <?=in_array($v,$f[$k],true)?'selected':''?>><?=h($v)?></option>
                 <?php endforeach; ?></select></div>
           <?php endforeach; ?>
           <div class="form-group"><label>Raggruppa per <span class="pm-multi">(multipla)</span></label>
-            <select name="gb[]" multiple size="3">
+            <select name="gb[]" multiple size="3" class="pm-ms">
               <?php foreach (ItServiceModel::DIM as $k => $lbl): ?>
                 <option value="<?=$k?>" <?=in_array($k,$f['gb'],true)?'selected':''?>><?=h($lbl)?></option>
               <?php endforeach; ?></select></div>
+        </div>
+      </div>
+
+      <div class="pm-group">
+        <h4>Dettagli da includere <span class="pm-multi">(stampa / export)</span></h4>
+        <div class="pm-grid-auto">
+          <?php foreach ($INC_ALL as $ik): ?>
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px">
+              <input type="checkbox" name="inc[]" value="<?=$ik?>" <?=$incOn($ik)?'checked':''?>>
+              <?=h($INC_LBL[$ik])?>
+            </label>
+          <?php endforeach; ?>
         </div>
       </div>
 
@@ -300,6 +494,8 @@ $qs = function (array $over = []) use ($f) {
         <a class="btn btn-sm" href="<?=url_safe('it_service')?>">Azzera</a>
         <a class="btn btn-sm" href="<?=$qs(['export'=>'xlsx'])?>">
           <i class="fa-solid fa-file-excel"></i> XLSX + pivot</a>
+        <a class="btn btn-sm" href="<?=$qs(['export'=>'docx'])?>">
+          <i class="fa-solid fa-file-word"></i> Word</a>
         <?php // v1.9.17 — l'etichetta dice quale report esce. Con un incaricato
               // solo selezionato il report è personale: un pulsante che dice
               // "generale" e produce una scheda personale fa dubitare dei dati. ?>
@@ -378,6 +574,10 @@ $qs = function (array $over = []) use ($f) {
   <div class="card-header"><span class="card-title">Andamento — <?=count($trend)?> mesi</span></div>
   <?php
     $mx = 0.01; foreach ($trend as $t) $mx = max($mx, (float)$t['ore']);
+    // v1.9.46 — target "ore ordinarie lavorative": override ?target= oppure media mensile
+    $avgOrd = 0.0; if ($trend) { $sO=0.0; foreach ($trend as $t) $sO += (float)($t['ore_ordinarie'] ?? 0); $avgOrd = $sO / count($trend); }
+    $targetOrd = (isset($_GET['target']) && is_numeric($_GET['target'])) ? (float)$_GET['target'] : round($avgOrd);
+    if ($targetOrd > 0) $mx = max($mx, $targetOrd);
     $W=900; $H=200; $pL=48; $pR=12; $pT=10; $pB=26;
     $pw=$W-$pL-$pR; $ph=$H-$pT-$pB; $nb=max(1,count($trend)); $bw=$pw/$nb;
   ?>
@@ -387,6 +587,12 @@ $qs = function (array $over = []) use ($f) {
       <text x="<?=$pL-5?>" y="<?=round($y+3,1)?>" text-anchor="end" font-size="9" fill="#94a3b8">
         <?=$hh(round($mx*$g/4))?></text>
     <?php endfor; ?>
+    <?php if($targetOrd>0): $yt=$pT+$ph-$targetOrd/$mx*$ph; ?>
+      <line x1="<?=$pL?>" y1="<?=round($yt,1)?>" x2="<?=$W-$pR?>" y2="<?=round($yt,1)?>"
+            stroke="#16a34a" stroke-width="1.5" stroke-dasharray="6 3"/>
+      <text x="<?=$W-$pR?>" y="<?=round($yt-3,1)?>" text-anchor="end" font-size="9" fill="#16a34a">
+        target ore ord. <?=$hh(round($targetOrd))?></text>
+    <?php endif; ?>
     <?php foreach($trend as $i=>$t):
       $ho=(float)$t['ore']/$mx*$ph; $hv=(float)$t['ore_fuori']/$mx*$ph;
       $x=$pL+$i*$bw+$bw*0.15; $bx=max(2,$bw*0.7); ?>
@@ -396,6 +602,11 @@ $qs = function (array $over = []) use ($f) {
       <rect x="<?=round($x,1)?>" y="<?=round($pT+$ph-$hv,1)?>" width="<?=round($bx,1)?>"
             height="<?=round($hv,1)?>" fill="#f59e0b" rx="1">
         <title>fuori orario: <?=$hh1($t['ore_fuori'])?> h</title></rect>
+      <?php $hrep=(float)($t['ore_reperibilita'] ?? 0)/$mx*$ph; if($hrep>0): ?>
+        <rect x="<?=round($x+$bx*0.60,1)?>" y="<?=round($pT+$ph-$hrep,1)?>" width="<?=round($bx*0.40,1)?>"
+              height="<?=round($hrep,1)?>" fill="#7c3aed" rx="1">
+          <title>reperibilità: <?=$hh1($t['ore_reperibilita'])?> h</title></rect>
+      <?php endif; ?>
       <?php if($i % max(1,intdiv($nb,10))===0): ?>
         <text x="<?=round($x+$bx/2,1)?>" y="<?=$H-8?>" text-anchor="middle" font-size="9" fill="#64748b">
           <?=h(substr((string)$t['ym'],2))?></text>
@@ -404,7 +615,9 @@ $qs = function (array $over = []) use ($f) {
   </svg>
   <div style="font-size:11px;color:var(--muted)">
     <span style="display:inline-block;width:12px;height:8px;background:#2563eb"></span> ore totali
-    <span style="display:inline-block;width:12px;height:8px;background:#f59e0b;margin-left:12px"></span> di cui fuori orario
+    <span style="display:inline-block;width:12px;height:8px;background:#f59e0b;margin-left:12px"></span> fuori orario
+    <span style="display:inline-block;width:12px;height:8px;background:#7c3aed;margin-left:12px"></span> reperibilità
+    <span style="display:inline-block;width:12px;height:0;border-top:2px dashed #16a34a;margin-left:12px;vertical-align:middle"></span> target ore ordinarie
   </div>
 </div>
 <?php endif; ?>
@@ -676,6 +889,105 @@ $qs = function (array $over = []) use ($f) {
       Gli scaglioni dipendono dalla durata del singolo intervento; il valore è ore × tariffa.
     </p>
   </div>
+<?php endif; ?>
+
+
+
+<?php // [PM_V1_9_35_APPLIED] Sezione 2: Riepilogo per Codice Contratto ?>
+<style>
+  .r35-h2 { margin:22px 0 8px; font-size:16px; }
+  .r35-badge { background:#dcfce7; color:#166534; padding:2px 8px; border-radius:999px; font-size:11px; }
+  .r35-tbl { width:100%; border-collapse:collapse; margin:4px 0 20px; }
+  .r35-tbl th,.r35-tbl td { padding:6px 8px; border-bottom:1px solid #e4e7ee; font-size:12.5px; text-align:right; }
+  .r35-tbl th:first-child,.r35-tbl td:first-child,.r35-tbl th:nth-child(2),.r35-tbl td:nth-child(2){text-align:left;}
+  .r35-tbl thead th { background:#f0f2f7; }
+  .r35-tbl tfoot td { font-weight:600; background:#f0f2f7; }
+  .r35-empty { color:#92400e; background:#fffbeb; border:1px solid #fde68a; padding:10px 12px; border-radius:6px; font-size:13px; }
+</style>
+<h2 class="r35-h2">Riepilogo per Codice Contratto <span class="r35-badge">v1.9.35</span></h2>
+<?php if (empty($riepContratto)): ?>
+  <div class="r35-empty">Nessun dato per il periodo
+    <b><?= h($f['from'] ?? '—') ?></b> – <b><?= h($f['to'] ?? '—') ?></b>.
+    Allarga il filtro periodo o verifica la sincronizzazione DGB.</div>
+<?php else: ?>
+  <table class="r35-tbl">
+    <thead><tr>
+      <th>Codice contratto</th><th>PM Project</th>
+      <th>Ore ord.</th><th>Ore str.</th><th>Ore rep.</th>
+      <th>Giorni-uomo</th><th>Costo contratto (€)</th><th>TotCostoTab (€)</th>
+    </tr></thead>
+    <tbody>
+    <?php $sO=$sS=$sR=$sG=$sC=$sT=0; foreach ($riepContratto as $r): ?>
+      <tr>
+        <td><?= h($r['codice_contratto']) ?></td>
+        <td><?= h((string)($r['pm_project_code'] ?? '')) ?></td>
+        <td><?= number_format((float)$r['ore_ordinarie'],2,',','.') ?></td>
+        <td><?= number_format((float)$r['ore_straordinario'],2,',','.') ?></td>
+        <td><?= number_format((float)$r['ore_reperibilita'],2,',','.') ?></td>
+        <td><?= number_format((float)$r['giorni_uomo'],0,',','.') ?></td>
+        <td><?= number_format((float)$r['costo_contratto'],2,',','.') ?></td>
+        <td><?= number_format((float)$r['tot_costo_tab'],2,',','.') ?></td>
+      </tr>
+    <?php $sO+=(float)$r['ore_ordinarie'];$sS+=(float)$r['ore_straordinario'];$sR+=(float)$r['ore_reperibilita'];$sG+=(int)$r['giorni_uomo'];$sC+=(float)$r['costo_contratto'];$sT+=(float)$r['tot_costo_tab']; endforeach; ?>
+    </tbody>
+    <tfoot><tr><td colspan="2">Totali</td>
+      <td><?= number_format($sO,2,',','.') ?></td><td><?= number_format($sS,2,',','.') ?></td>
+      <td><?= number_format($sR,2,',','.') ?></td><td><?= number_format($sG,0,',','.') ?></td>
+      <td><?= number_format($sC,2,',','.') ?></td><td><?= number_format($sT,2,',','.') ?></td>
+    </tr></tfoot>
+  </table>
+<?php endif; ?>
+
+<?php // [PM_V1_9_34_APPLIED] Sezione Dettaglio per Commessa ?>
+<?php if (!empty($dettCommessa)):
+    $__byC = [];
+    foreach ($dettCommessa as $r) $__byC[$r['contract_id']][] = $r;
+?>
+<style>
+  .rsi34-h2 { margin:22px 0 8px; font-size:16px; }
+  .rsi34-badge { background:#e0e7ff; color:#3730a3; padding:2px 8px; border-radius:999px; font-size:11px; }
+  .rsi34-h3 { margin:14px 0 4px; font-size:13.5px; background:#1e293b; color:#fff; padding:8px 12px; border-radius:5px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .rsi34-tbl { width:100%; border-collapse:collapse; margin:4px 0 20px; }
+  .rsi34-tbl th, .rsi34-tbl td { padding:5px 8px; border-bottom:1px solid #e4e7ee; font-size:12.5px; text-align:right; }
+  .rsi34-tbl th:nth-child(-n+3), .rsi34-tbl td:nth-child(-n+3) { text-align:left; }
+  .rsi34-tbl thead th { background:#f0f2f7; }
+  .rsi34-tbl tfoot td { font-weight:600; background:#eef4ff; }
+</style>
+<h2 class="rsi34-h2">Dettaglio per Commessa <span class="rsi34-badge">v1.9.34</span></h2>
+<?php foreach ($__byC as $cid => $rows):
+    $first = $rows[0];
+    $intest = implode(' | ', array_filter([$first['contract_code'], $first['code_x_installation'], $first['customer_name'], $first['contract_description']], fn($v)=>$v!==null && $v!==''));
+    $tOre = array_sum(array_map(fn($r)=>(float)$r['ore'], $rows));
+    $tCC  = array_sum(array_map(fn($r)=>(float)$r['costo_contratto'], $rows));
+    $tTab = array_sum(array_map(fn($r)=>(float)$r['tot_costo_tab'], $rows));
+?>
+  <h3 class="rsi34-h3"><?= h($intest) ?>
+    <?php if ($first['pm_project_code']): ?> · PM: <?= h($first['pm_project_code']) ?><?php endif; ?>
+    <span style="float:right;font-weight:normal"><?= count($rows) ?> righe · <?= number_format($tOre,2,',','.') ?>h · € <?= number_format($tTab,2,',','.') ?></span>
+  </h3>
+  <table class="rsi34-tbl">
+    <thead><tr><th>Data</th><th>Operatore</th><th>Ticket</th><th>Fascia</th><th>Regime</th><th>Ore</th><th>Costo contratto (€)</th><th>TotCostoTab (€)</th></tr></thead>
+    <tbody>
+    <?php foreach ($rows as $r): ?>
+      <tr>
+        <td><?= h((string)$r['report_date']) ?></td>
+        <td><?= h($r['operator_name']) ?></td>
+        <td><code><?= h((string)$r['ticket']) ?: '—' ?></code></td>
+        <td><?= h($r['fascia']) ?></td>
+        <td><?= h($r['regime']) ?></td>
+        <td><?= number_format((float)$r['ore'],2,',','.') ?></td>
+        <td><?= number_format((float)$r['costo_contratto'],2,',','.') ?></td>
+        <td><?= number_format((float)$r['tot_costo_tab'],2,',','.') ?></td>
+      </tr>
+    <?php endforeach; ?>
+    </tbody>
+    <tfoot><tr><td colspan="5">Totali commessa</td>
+      <td><?= number_format($tOre,2,',','.') ?></td>
+      <td><?= number_format($tCC,2,',','.') ?></td>
+      <td><?= number_format($tTab,2,',','.') ?></td>
+    </tr></tfoot>
+  </table>
+<?php endforeach; ?>
 <?php endif; ?>
 
 <?php require_once('footer.php'); ?>
