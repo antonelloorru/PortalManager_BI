@@ -14,7 +14,8 @@ $u_role  = (int)($_SESSION['role_id'] ?? 99);
 $emp_id = (int)($_GET['employee_id'] ?? 0);
 if (!$emp_id) { http_response_code(400); die('employee_id mancante'); }
 
-$can_view = in_array($u_role, [1, 2, 4], true) || ((int)($_SESSION['employee_id'] ?? 0) === $emp_id);
+// v1.9.51 — RBAC: permessi configurati + accesso al proprio dispositivo.
+$can_view = can('view', 'device_print.php') || ((int)($_SESSION['employee_id'] ?? 0) === $emp_id);
 if (!$can_view) { http_response_code(403); die('Accesso negato'); }
 
 // Carico dati dipendente + azienda

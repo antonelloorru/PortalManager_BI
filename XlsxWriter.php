@@ -85,16 +85,13 @@ final class XlsxWriter
             throw new RuntimeException('ZipArchive non disponibile. Abilitare estensione zip in PHP.');
         }
 
-        // Pre-processa tutte le sheet per indicizzare le stringhe condivise
-        foreach ($this->sheets as $rows) {
-            foreach ($rows as $row) {
-                foreach ($row as $cell) {
-                    if (is_string($cell) && $cell !== '' && !is_numeric($cell)) {
-                        $this->internString($cell);
-                    }
-                }
-            }
-        }
+        // v1.7.99: i fogli vengono generati PRIMA di sharedStrings.xml, perché è la
+        // costruzione dei fogli a popolare la tabella delle stringhe condivise.
+        // (In precedenza le stringhe interneate durante la scrittura dei fogli
+        //  finivano fuori dalla tabella già serializzata, producendo indici non
+        //  risolvibili e quindi un file segnalato come danneggiato da Excel.)
+        $sheetXml = [];
+        foreach ($this->sheets as $rows) $sheetXml[] = $this->buildSheetXml($rows);
 
         $zip = new ZipArchive();
         if ($zip->open($path, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
@@ -116,14 +113,12 @@ final class XlsxWriter
         // xl/styles.xml (stile bold per la prima riga)
         $zip->addFromString('xl/styles.xml', $this->buildStylesXml());
 
-        // xl/sharedStrings.xml
+        // xl/sharedStrings.xml (ora completa: i fogli sono già stati costruiti)
         $zip->addFromString('xl/sharedStrings.xml', $this->buildSharedStringsXml());
 
         // xl/worksheets/sheetN.xml
-        $idx = 1;
-        foreach ($this->sheets as $name => $rows) {
-            $zip->addFromString("xl/worksheets/sheet$idx.xml", $this->buildSheetXml($rows));
-            $idx++;
+        foreach ($sheetXml as $i => $xml) {
+            $zip->addFromString('xl/worksheets/sheet' . ($i + 1) . '.xml', $xml);
         }
 
         $zip->close();
@@ -211,6 +206,9 @@ final class XlsxWriter
   <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
   <xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>
 </cellXfs>
+<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
+<dxfs count="0"/>
+<tableStyles count="0" defaultTableStyle="TableStyleMedium9" defaultPivotStyle="PivotStyleLight16"/>
 </styleSheet>';
     }
 
@@ -238,12 +236,15 @@ final class XlsxWriter
                 }
             }
         }
-        $cols = '<cols>';
-        foreach ($widths as $col => $len) {
-            $width = max(10, min(60, $len + 2));
-            $cols .= '<col min="' . ($col + 1) . '" max="' . ($col + 1) . '" width="' . $width . '" customWidth="1"/>';
+        $cols = '';
+        if ($widths) {
+            $cols = '<cols>';
+            foreach ($widths as $col => $len) {
+                $width = max(10, min(60, $len + 2));
+                $cols .= '<col min="' . ($col + 1) . '" max="' . ($col + 1) . '" width="' . $width . '" customWidth="1"/>';
+            }
+            $cols .= '</cols>';
         }
-        $cols .= '</cols>';
 
         $rowsXml = '';
         foreach ($rows as $rIdx => $row) {
@@ -256,9 +257,9 @@ final class XlsxWriter
                     continue;
                 }
 
-                if (is_int($val) || is_float($val) || (is_string($val) && is_numeric($val) && !str_starts_with($val, '0'))) {
-                    // Numero
-                    $cells .= '<c r="' . $cellRef . '"' . $style . '><v>' . $val . '</v></c>';
+                if (self::isNumericCell($val)) {
+                    // Numero: normalizzato in notazione decimale accettata da OOXML
+                    $cells .= '<c r="' . $cellRef . '"' . $style . '><v>' . self::numericValue($val) . '</v></c>';
                 } else {
                     // Stringa (via shared string)
                     $idx = $this->internString((string)$val);
@@ -276,6 +277,26 @@ final class XlsxWriter
     }
 
     // ─── Helpers ────────────────────────────────────────────────────
+
+    /**
+     * v1.7.99: una cella è numerica se è int/float, oppure una stringa in forma
+     * decimale canonica. Restano testo i codici con zeri iniziali significativi
+     * (matricole "007", telefoni "0552…"), che Excel altrimenti troncherebbe.
+     */
+    private static function isNumericCell($val): bool
+    {
+        if (is_int($val) || is_float($val)) return is_finite((float)$val);
+        if (!is_string($val)) return false;
+        return (bool)preg_match('/^-?(0|[1-9]\d*)(\.\d+)?$/', $val);
+    }
+
+    /** Rappresentazione numerica sicura per il tag <v>. */
+    private static function numericValue($val): string
+    {
+        if (is_int($val)) return (string)$val;
+        if (is_float($val)) return rtrim(rtrim(number_format($val, 6, '.', ''), '0'), '.') ?: '0';
+        return (string)$val;
+    }
 
     /**
      * Restituisce indice della stringa nella shared strings table, creandola se serve.

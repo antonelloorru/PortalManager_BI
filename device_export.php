@@ -12,7 +12,8 @@
 require_once('access_control.php');
 
 $u_role  = (int)($_SESSION['role_id'] ?? 99);
-$can_view = in_array($u_role, [1, 2, 4], true) || ((int)($_SESSION['employee_id'] ?? 0) === (int)($_GET['employee_id'] ?? 0));
+// v1.9.51 — RBAC: permessi configurati + accesso al proprio dispositivo.
+$can_view = can('view', 'device_export.php') || can('export', 'device_export.php') || ((int)($_SESSION['employee_id'] ?? 0) === (int)($_GET['employee_id'] ?? 0));
 if (!$can_view) {
     http_response_code(403);
     die('Accesso negato');

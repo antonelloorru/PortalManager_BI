@@ -1,0 +1,98 @@
+# ═══════════════════════════════════════════════════════════════════
+#  certV 5.7.2 — .htaccess (rigenerato)
+#  - Funziona sia in root (/) che in sottocartella (/portalbrand/)
+#  - NIENTE RewriteBase: Apache la deduce dalla posizione del .htaccess
+#  - Pretty URL "app/<slug>" + fallback diretto su r.php?r=<slug>
+# ═══════════════════════════════════════════════════════════════════
+
+Options -Indexes -MultiViews
+DirectoryIndex index.php
+
+# ── Blocca file di configurazione e segreti ────────────────────────
+<FilesMatch "^(Config\.php|\.env\.php|Config\.php\.dist)$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order deny,allow
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+# ── Blocca SQL, log, markdown, dist, bak, env, swp ─────────────────
+<FilesMatch "\.(sql|log|md|dist|bak|swp|env)$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order deny,allow
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+# ── Blocca file nascosti (.htaccess, .git, .env) ───────────────────
+<FilesMatch "^\.">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order deny,allow
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+# ── Blocca file marker installer ───────────────────────────────────
+<FilesMatch "\.done$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+</FilesMatch>
+
+# ── URL rewriting + protezione cartella /app ───────────────────────
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Blocca esecuzione PHP dentro /app e /uploads
+    RewriteRule ^app/.*\.php$ - [F,L]
+    RewriteRule ^uploads/.*\.php$ - [F,L]
+    RewriteRule ^uploads/\.ratelimit/ - [F,L]
+
+    # Pretty URL: app/<slug> → r.php?r=<slug>
+    # (utile solo se USE_PRETTY_URLS='1' in .env.php; altrimenti i link
+    # generati dal portale puntano già direttamente a r.php?r=<slug>)
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^app/([A-Za-z0-9_-]{1,32})/?$ r.php?r=$1 [QSA,L]
+
+    # Blocca installer dopo che esiste il flag
+    RewriteCond %{DOCUMENT_ROOT}/portalbrand/installer_disabled.flag -f [OR]
+    RewriteCond %{DOCUMENT_ROOT}/installer_disabled.flag -f
+    RewriteRule ^(install|reset_admin|fix_password|schema_check_upgrade)\.php$ - [F,L]
+</IfModule>
+
+# ── Header di sicurezza ─────────────────────────────────────────────
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "SAMEORIGIN"
+    Header always set X-XSS-Protection "1; mode=block"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+    Header always set Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=(), usb=()"
+    Header unset X-Powered-By
+    Header unset Server
+</IfModule>
+
+AddDefaultCharset UTF-8
+
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/html text/plain text/xml text/css text/javascript application/javascript application/json
+</IfModule>
+
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType image/jpg  "access plus 1 month"
+    ExpiresByType image/png  "access plus 1 month"
+    ExpiresByType image/gif  "access plus 1 month"
+    ExpiresByType image/svg+xml "access plus 1 month"
+    ExpiresByType text/css   "access plus 1 week"
+    ExpiresByType application/javascript "access plus 1 week"
+</IfModule>

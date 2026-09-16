@@ -21,8 +21,9 @@ if (!$emp_id) { header('Location: manage_employees.php'); exit; }
 
 // Permessi: HR/Admin tutti, dipendente solo se stesso
 $is_self  = ($emp_id === $u_emp);
-$can_edit = in_array($u_role, [1, 2], true) || $is_self;
-$can_view = $can_edit || in_array($u_role, [4, 5], true);
+// v1.9.51 — RBAC: permessi configurati + accesso alla propria scheda.
+$can_edit = can('edit', 'employee_cv.php') || $is_self;
+$can_view = $can_edit || can('view', 'employee_cv.php');
 if (!$can_view) { http_response_code(403); die('Accesso negato'); }
 
 // ─────────────────────────────────────────────────────────────────────

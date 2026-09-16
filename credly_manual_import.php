@@ -24,7 +24,8 @@ require_once __DIR__ . '/app/CredlyImporter.php';
 
 $u_id   = (int)$_SESSION['user_id'];
 $u_role = (int)($_SESSION['role_id'] ?? 99);
-if (!in_array($u_role, [1, 2], true)) {
+// v1.9.51 — RBAC: gate via permessi configurati, non hardcoded.
+if (!can('view', 'credly_manual_import.php') && !can('edit', 'credly_manual_import.php')) {
     http_response_code(403);
     die('Accesso negato.');
 }

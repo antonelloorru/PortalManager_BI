@@ -1,0 +1,10 @@
+# certV 4.0 — file da NON committare
+.env.php
+uploads/
+!uploads/.gitkeep
+*.log
+*.bak
+*.swp
+*.done
+installer_disabled.flag
+Config.php

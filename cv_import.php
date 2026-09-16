@@ -16,7 +16,8 @@ require_once __DIR__ . '/app/CvParser.php';
 
 $u_id   = (int)$_SESSION['user_id'];
 $u_role = (int)($_SESSION['role_id'] ?? 99);
-if (!in_array($u_role, [1, 2, 5], true)) {
+// v1.9.51 — RBAC: gate via permessi configurati, non hardcoded.
+if (!can('view', 'cv_import.php') && !can('edit', 'cv_import.php') && !can('create', 'cv_import.php')) {
     http_response_code(403);
     die('Accesso negato.');
 }

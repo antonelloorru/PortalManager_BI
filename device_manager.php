@@ -18,8 +18,9 @@ require_once('access_control.php');
 
 $u_role = (int)($_SESSION['role_id'] ?? 99);
 $u_id   = (int)($_SESSION['user_id'] ?? 0);
-$can_edit = in_array($u_role, [1, 2], true);
-$can_view = $can_edit || in_array($u_role, [4], true);
+// v1.9.51 — RBAC: gate delegato ai permessi configurati (role/user), non piu' hardcoded.
+$can_edit = can('edit', 'device_manager.php');
+$can_view = can('view', 'device_manager.php') || $can_edit;
 if (!$can_view) { http_response_code(403); die('Accesso negato'); }
 
 // Tab attiva

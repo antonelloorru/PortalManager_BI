@@ -56,7 +56,7 @@ if (!in_array($page, $public, true) && empty($_SESSION['user_id'])) {
     }
 }
 
-// v1.9.49 — RBAC fix: allinea il ruolo di sessione al DB prima del controllo permessi.
+// v1.9.51 — RBAC fix: allinea il ruolo di sessione al DB prima del controllo permessi.
 if (isset($pdo) && $pdo instanceof PDO && class_exists('Session')) {
     Session::syncRole($pdo);
 }

@@ -14,7 +14,8 @@ require_once('header.php');
 
 $u_role  = (int)($_SESSION['role_id'] ?? 99);
 $u_id    = (int)$_SESSION['user_id'];
-$can_edit = in_array($u_role, [1, 2], true);
+// v1.9.51 — RBAC: gate via permessi configurati, non hardcoded.
+$can_edit = can('create', 'device_import.php') || can('edit', 'device_import.php');
 if (!$can_edit) { http_response_code(403); die('Solo Admin/HR possono importare dispositivi.'); }
 
 $emp_id = (int)($_GET['employee_id'] ?? 0);

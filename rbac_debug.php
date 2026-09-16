@@ -1,6 +1,6 @@
 <?php
 /**
- * PortalManager v1.9.49 — rbac_debug.php
+ * PortalManager v1.9.51 — rbac_debug.php
  * Diagnostica RBAC a runtime: mostra il ruolo in SESSIONE vs quello assegnato a DB
  * e i permessi effettivi (valore + sorgente) per una pagina.
  *

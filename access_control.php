@@ -16,7 +16,7 @@ if (!class_exists('Session')) {
     require_once __DIR__ . '/app/bootstrap.php';
 }
 
-// v1.9.49 — RBAC fix: riallinea il ruolo di sessione all'assegnazione corrente a DB.
+// v1.9.51 — RBAC fix: riallinea il ruolo di sessione all'assegnazione corrente a DB.
 // Senza questo, un cambio ruolo lato admin non ha effetto finché l'utente non rifà
 // login e la validazione runtime usa il ruolo (stale) salvato al login.
 if (isset($pdo) && $pdo instanceof PDO && class_exists('Session')) {
