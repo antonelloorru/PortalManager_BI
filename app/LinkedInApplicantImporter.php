@@ -67,6 +67,18 @@ final class LinkedInApplicantImporter
         'applied_at'          => "ALTER TABLE candidates ADD COLUMN applied_at DATE DEFAULT NULL",
         'education_level'     => "ALTER TABLE candidates ADD COLUMN education_level VARCHAR(80) DEFAULT NULL",
         'education_institute' => "ALTER TABLE candidates ADD COLUMN education_institute VARCHAR(200) DEFAULT NULL",
+        'offer_title'         => "ALTER TABLE candidates ADD COLUMN offer_title VARCHAR(200) DEFAULT NULL",
+        'offer_url'           => "ALTER TABLE candidates ADD COLUMN offer_url VARCHAR(500) DEFAULT NULL",
+        'li_ats_id'           => "ALTER TABLE candidates ADD COLUMN li_ats_id VARCHAR(80) DEFAULT NULL",
+        'pay_min'             => "ALTER TABLE candidates ADD COLUMN pay_min DECIMAL(12,2) DEFAULT NULL",
+        'pay_max'             => "ALTER TABLE candidates ADD COLUMN pay_max DECIMAL(12,2) DEFAULT NULL",
+        'pay_currency'        => "ALTER TABLE candidates ADD COLUMN pay_currency VARCHAR(10) DEFAULT NULL",
+        'pay_period'          => "ALTER TABLE candidates ADD COLUMN pay_period VARCHAR(30) DEFAULT NULL",
+        'hiring_project_id'   => "ALTER TABLE candidates ADD COLUMN hiring_project_id VARCHAR(80) DEFAULT NULL",
+        'hiring_project_title'=> "ALTER TABLE candidates ADD COLUMN hiring_project_title VARCHAR(200) DEFAULT NULL",
+        'li_contract_id'      => "ALTER TABLE candidates ADD COLUMN li_contract_id VARCHAR(80) DEFAULT NULL",
+        'li_contract_name'    => "ALTER TABLE candidates ADD COLUMN li_contract_name VARCHAR(200) DEFAULT NULL",
+        'screening_qa'        => "ALTER TABLE candidates ADD COLUMN screening_qa TEXT DEFAULT NULL",
     ];
 
     public function __construct(PDO $pdo, int $actorUserId)
@@ -229,10 +241,18 @@ final class LinkedInApplicantImporter
 
     private function enrich(int $candId, array $rec, bool $matched): void
     {
-        // aggiorna solo le colonne LinkedIn-specifiche se ora valorizzate (non sovrascrive dati esistenti con null)
+        // v1.9.52 — ISSUE 2 FIX: l'UPDATE del candidato NON tocca mai l'email.
+        // L'email e' un dato del candidato (dal file XLSX) e in modifica va preservata:
+        // non deve MAI essere sovrascritta con l'email dell'utente in sessione o con
+        // qualsiasi altra variabile. Qui l'email e' esplicitamente esclusa dal SET.
         $fields = $this->candidateFields($rec, $matched, false);
-        unset($fields['first_name'], $fields['last_name'], $fields['email'],
-              $fields['source'], $fields['added_by'], $fields['gdpr_consent'], $fields['status']);
+        unset(
+            $fields['first_name'], $fields['last_name'],
+            $fields['email'],          // <-- email isolata: mai in UPDATE
+            $fields['source'], $fields['added_by'], $fields['gdpr_consent'], $fields['status']
+        );
+        // salvaguardia difensiva: qualunque cosa accada sopra, l'email resta fuori dal SET
+        unset($fields['email']);
         $set = []; $vals = [];
         foreach ($fields as $c => $v) {
             if ($v === null || $v === '') continue;
@@ -261,6 +281,19 @@ final class LinkedInApplicantImporter
             'current_since'       => self::cut($rec['current_since'] ?? null, 20),
             'education_level'     => self::cut($rec['education_level'] ?? null, 80),
             'education_institute' => self::cut($rec['education_institute'] ?? null, 200),
+            // full mapping v1.9.52 — ogni colonna XLSX ha una destinazione dedicata
+            'offer_title'         => self::cut($rec['offer_title'] ?? null, 200),
+            'offer_url'           => self::cut($rec['offer_url'] ?? null, 500),
+            'li_ats_id'           => self::cut($rec['ats_id'] ?? null, 80),
+            'pay_min'             => self::numOrNull($rec['pay_min'] ?? null),
+            'pay_max'             => self::numOrNull($rec['pay_max'] ?? null),
+            'pay_currency'        => self::cut($rec['pay_ccy'] ?? null, 10),
+            'pay_period'          => self::cut($rec['pay_period'] ?? null, 30),
+            'hiring_project_id'   => self::cut($rec['hiring_project_id'] ?? null, 80),
+            'hiring_project_title'=> self::cut($rec['hiring_project_title'] ?? null, 200),
+            'li_contract_id'      => self::cut($rec['contract_id'] ?? null, 80),
+            'li_contract_name'    => self::cut($rec['contract_name'] ?? null, 200),
+            'screening_qa'        => self::clean($rec['screening_qa'] ?? null),
             'li_job_id'           => self::jobCode($rec['li_job_id'] ?? null),
             'li_stage'            => self::cut($rec['li_stage'] ?? null, 80),
             'applied_at'          => self::parseDate($rec['applied_at'] ?? null),
@@ -351,6 +384,18 @@ final class LinkedInApplicantImporter
     }
 
     /** Normalizza il codice offerta: '0'/vuoto → null. */
+    /** Numero decimale IT/EN; vuoto/N/A/0 -> null (LinkedIn usa 0 = non specificato). */
+    private static function numOrNull($v): ?string
+    {
+        $v = self::clean(is_string($v) ? $v : (string)$v);
+        if ($v === null) return null;
+        $v = str_replace(['.', ' '], ['', ''], $v);   // separatore migliaia
+        $v = str_replace(',', '.', $v);               // decimale IT
+        if (!is_numeric($v)) return null;
+        $f = (float)$v;
+        return $f == 0.0 ? null : number_format($f, 2, '.', '');
+    }
+
     private static function jobCode($v): ?string
     {
         $v = self::clean(is_string($v) ? $v : (string)$v);

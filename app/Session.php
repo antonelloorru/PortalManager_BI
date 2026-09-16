@@ -147,7 +147,7 @@ final class Session
     }
 
     /**
-     * v1.9.49 — Riallinea l'identità di sessione all'assegnazione corrente a DB.
+     * v1.9.51 — Riallinea l'identità di sessione all'assegnazione corrente a DB.
      *
      * Il ruolo (`role_id`) viene fissato al login e, senza questa sincronizzazione,
      * un cambio ruolo effettuato dall'amministratore NON ha effetto finché l'utente
