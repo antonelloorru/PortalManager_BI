@@ -1,0 +1,22 @@
+<?php
+/**
+ * certV 4.1 — header_2fa_snippet.php
+ *
+ * SNIPPET DA APPLICARE A header.php
+ *
+ * Aggiunge la voce "Sicurezza account (2FA)" nel menu utente.
+ * Va inserito subito DOPO la voce "Il mio dossier" (riga ~232 di header.php).
+ *
+ * Cerca questa riga in header.php:
+ *   <li><a href="<?= h($emp_link) ?>" class="<?= ia('user_profile') ?>">...
+ *
+ * E aggiungi SUBITO DOPO il blocco </ul> che la contiene queste righe:
+ */
+?>
+
+  <ul class="smenu" style="margin-top:6px">
+    <li><a href="<?= url_safe('index') ?>" class="<?= ia('index') ?>"><i class="fa-solid fa-gauge-high"></i>Dashboard</a></li>
+    <li><a href="<?= h($emp_link) ?>" class="<?= ia('user_profile') ?>"><i class="fa-solid fa-id-badge"></i>Il mio dossier</a></li>
+    <!-- v4.1: Voce 2FA visibile a tutti gli utenti loggati -->
+    <li><a href="<?= url_safe('2fa_settings') ?>" class="<?= ia('2fa_settings') ?>"><i class="fa-solid fa-shield-halved"></i>Sicurezza account</a></li>
+  </ul>
