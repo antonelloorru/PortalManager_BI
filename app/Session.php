@@ -7,10 +7,62 @@
 
 final class Session
 {
-    private const COOKIE_NAME  = 'certV_sid';
     private const IDLE_TIMEOUT = 1800;  // 30 min di inattività
     private const ABS_LIFETIME = 28800; // 8 ore di sessione assoluta
     private const REGEN_EVERY  = 900;   // rigenera ID ogni 15 min
+
+    /**
+     * Nome univoco del cookie di sessione per questa istanza.
+     * Previene collisioni di cookie tra istanze diverse sullo stesso host/IP.
+     */
+    public static function name(): string
+    {
+        $configured = Env::get('SESSION_COOKIE_NAME');
+        if ($configured !== null && $configured !== '') {
+            return $configured;
+        }
+        $appBase = defined('APP_BASE') ? APP_BASE : dirname(__DIR__);
+        $realPath = realpath($appBase) ?: $appBase;
+        $instanceHash = substr(hash('sha256', $realPath), 0, 8);
+        return 'PMSESS_' . $instanceHash;
+    }
+
+    /**
+     * Calcola dinamicamente il cookie path vincolato alla sottocartella web dell'istanza.
+     */
+    public static function cookiePath(): string
+    {
+        $configured = Env::get('SESSION_COOKIE_PATH');
+        if ($configured !== null && $configured !== '') {
+            return rtrim($configured, '/') . '/';
+        }
+        if (class_exists('Router')) {
+            $base = Router::base();
+            if ($base !== '') {
+                return rtrim($base, '/') . '/';
+            }
+        }
+        $script = str_replace('\\', '/', $_SERVER['SCRIPT_NAME'] ?? '');
+        $dir = dirname($script);
+        if ($dir === '.' || $dir === '/' || $dir === '\\') {
+            return '/';
+        }
+        if (preg_match('#/(app|tools|cron|public)$#i', $dir)) {
+            $dir = dirname($dir);
+        }
+        return ($dir === '/' || $dir === '\\' || $dir === '.') ? '/' : rtrim(str_replace('\\', '/', $dir), '/') . '/';
+    }
+
+    /**
+     * Impronta crittografica dell'ambiente (directory fisica + schema DB).
+     */
+    public static function instanceHash(): string
+    {
+        $appBase = defined('APP_BASE') ? APP_BASE : dirname(__DIR__);
+        $realPath = realpath($appBase) ?: $appBase;
+        $dbName = defined('DB_NAME') ? DB_NAME : '';
+        return substr(hash('sha256', $realPath . '|' . $dbName), 0, 16);
+    }
 
     public static function start(): void
     {
@@ -20,14 +72,16 @@ final class Session
         $secure = Env::get('COOKIE_SECURE', '0') === '1'
                   || (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
 
-        session_name(self::COOKIE_NAME);
+        $sameSite = Env::get('COOKIE_SAMESITE', 'Lax');
+
+        session_name(self::name());
         session_set_cookie_params([
-            'lifetime' => 0,            // scade alla chiusura del browser
-            'path'     => '/',
+            'lifetime' => 0,                    // scade alla chiusura del browser
+            'path'     => self::cookiePath(),   // vincolato alla subfolder dell'istanza
             'domain'   => '',
             'secure'   => $secure,
             'httponly' => true,
-            'samesite' => 'Strict',
+            'samesite' => $sameSite,
         ]);
 
         // Previeni sessioni con ID arbitrari (cookie injection)
@@ -54,16 +108,26 @@ final class Session
         // Prima volta che vediamo questa sessione: inizializza i marker
         if (!isset($_SESSION['_sec'])) {
             $_SESSION['_sec'] = [
-                'created'     => $now,
-                'last_seen'   => $now,
-                'last_regen'  => $now,
-                'fingerprint' => self::fingerprint(),
-                'ip'          => $_SERVER['REMOTE_ADDR'] ?? '',
+                'created'       => $now,
+                'last_seen'     => $now,
+                'last_regen'    => $now,
+                'fingerprint'   => self::fingerprint(),
+                'ip'            => $_SERVER['REMOTE_ADDR'] ?? '',
+                'instance_hash' => self::instanceHash(),
             ];
             return;
         }
 
         $sec = $_SESSION['_sec'];
+
+        // 0. Isolamento Istanza / Ambiente (Anti Cross-Instance Auth Leak)
+        // Se la sessione proviene da un'altra cartella o da un altro database, invalidala subito
+        $currentInst = self::instanceHash();
+        if (!empty($sec['instance_hash']) && !hash_equals($sec['instance_hash'], $currentInst)) {
+            self::destroy();
+            if (!$isLogin) self::redirectLogin('instance_mismatch');
+            return;
+        }
 
         // 1. Scadenza assoluta
         if ($now - $sec['created'] > self::ABS_LIFETIME) {
@@ -117,11 +181,11 @@ final class Session
             $p = session_get_cookie_params();
             setcookie(session_name(), '', [
                 'expires'  => time() - 42000,
-                'path'     => $p['path'],
-                'domain'   => $p['domain'],
-                'secure'   => $p['secure'],
-                'httponly' => $p['httponly'],
-                'samesite' => $p['samesite'] ?? 'Strict',
+                'path'     => $p['path'] ?: self::cookiePath(),
+                'domain'   => $p['domain'] ?? '',
+                'secure'   => $p['secure'] ?? false,
+                'httponly' => $p['httponly'] ?? true,
+                'samesite' => $p['samesite'] ?? 'Lax',
             ]);
         }
         @session_destroy();
@@ -138,11 +202,12 @@ final class Session
         foreach ($extra as $k => $v) $_SESSION[$k] = $v;
 
         $_SESSION['_sec'] = [
-            'created'     => time(),
-            'last_seen'   => time(),
-            'last_regen'  => time(),
-            'fingerprint' => self::fingerprint(),
-            'ip'          => $_SERVER['REMOTE_ADDR'] ?? '',
+            'created'       => time(),
+            'last_seen'     => time(),
+            'last_regen'    => time(),
+            'fingerprint'   => self::fingerprint(),
+            'ip'            => $_SERVER['REMOTE_ADDR'] ?? '',
+            'instance_hash' => self::instanceHash(),
         ];
     }
 

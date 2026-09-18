@@ -120,6 +120,17 @@ if (!function_exists('qs_self')) {
      */
     function qs_self(array $params = []): string
     {
+        // v1.9.57 — FIX routing "Personalizza menu": header.php imposta un <base href>.
+        // Un link a sola querystring ("?scope_type=role...") verrebbe risolto dal browser
+        // CONTRO la <base> (= Home), non contro la pagina corrente, generando il redirect
+        // indesiderato alla Home. Costruiamo quindi un URL COMPLETO (con segmento di path)
+        // alla pagina corrente: Router::url gestisce sia pretty-URL (app/<slug>) sia opaco
+        // (r.php?r=<slug>), entrambi risolti correttamente rispetto alla <base>.
+        $page = function_exists('current_page') ? current_page() : '';
+        if ($page !== '' && class_exists('Router')) {
+            return Router::url($page, $params);
+        }
+        // Fallback legacy (nessun Router / pagina sconosciuta): preserva 'r' se presente.
         if (!empty($_GET['r']) && is_string($_GET['r'])) {
             $params = array_merge(['r' => $_GET['r']], $params);
         }

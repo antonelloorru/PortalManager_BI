@@ -45,22 +45,9 @@ final class Csrf
      *     config_notifiche): da rimuovere quando i form sono migrati
      */
     private const LEGACY_ADMIN_TOOLS = [
-        // Installer / reset (devono funzionare senza sessione)
+        // Installer iniziale (gira prima dell'installazione DB e senza sessione)
         'install.php',
-        'reset_admin.php',
-        'fix_password.php',
-
-        // Tool sistema (Super Admin)
-        'system_update.php',
-        'db_upgrade.php',
-        'schema_check_upgrade.php',
-        'health_check.php',
-
-        // Utility manutenzione (one-shot, vengono eliminati dopo l'uso)
-        'apply_csrf_patch.php',
-        'verify_integrity.php',
-        'verify_integrity_v2.php',
-        'migrate_links.php',
+        'install_old.php',
     ];
 
     /**

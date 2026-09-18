@@ -149,7 +149,7 @@ if ($pronto && in_array(($_GET['export'] ?? ''), ['xlsx', 'csv', 'pdf'], true)) 
         $x['totale_dichiarato'], $x['scostamento'], $x['esito_validazione'],
         $x['dal'], $x['al']];
 
-    $rigHead = ['Ordinativo','Commessa','Denominazione','Cliente','Commerciale','Tipo contratto',
+    $rigHead = ['Ordinativo','Commessa','Denominazione','Cliente in SP','Commerciale','Tipo contratto',
                 'Descrizione','Importo','Origine importo','Fatturato','Stato commessa',
                 'Codici multipli','Data operazione'];
     $rigRows = [];
@@ -421,7 +421,7 @@ $attivi = ($q !== '') + ($cliente !== '') + ($commerciale !== '') + ($solo !== '
 
       <?php // le commesse collegate ?>
       <table class="data-table" style="width:100%;font-size:11px">
-        <thead><tr><th>Commessa</th><th>Cliente</th><th>Tipo contratto</th>
+        <thead><tr><th>Commessa</th><th>Cliente in SP</th><th>Tipo contratto</th>
           <th>Descrizione</th><th style="text-align:right">Importo</th>
           <th style="text-align:center">Stato</th><th style="width:36px"></th></tr></thead>
         <tbody>

@@ -91,6 +91,7 @@ function apply_update(string $zipPath, string $appRoot, string $backupDir, strin
         'errors'          => [],
         'duration'        => 0,
     ];
+    @set_time_limit(300);
     $t_start = microtime(true);
 
     // ── Step 1: Backup file correnti ─────────────────────────────────────────
@@ -98,7 +99,7 @@ function apply_update(string $zipPath, string $appRoot, string $backupDir, strin
     $backup_path = $backupDir . $backup_name;
     $bz = new ZipArchive();
     if ($bz->open($backup_path, ZipArchive::CREATE) === true) {
-        $skip = ['uploads','docs','.git','node_modules','vendor'];
+        $skip = ['uploads','docs','.git','node_modules','vendor','Dump','tools'];
         $files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($appRoot, RecursiveDirectoryIterator::SKIP_DOTS));
         foreach ($files as $file) {
             $rel = str_replace($appRoot . DIRECTORY_SEPARATOR, '', $file->getPathname());
@@ -107,6 +108,9 @@ function apply_update(string $zipPath, string $appRoot, string $backupDir, strin
             $skipThis = false;
             foreach ($skip as $s) { if (strpos($rel, $s . '/') === 0 || $rel === $s) { $skipThis = true; break; } }
             if ($skipThis) continue;
+            // Skip large zip/dump files in root
+            if (preg_match('/\.(zip|tar|gz|7z|sql)$/i', $rel)) continue;
+
             if ($file->isFile() && $file->getSize() < 5*1024*1024) {
                 $bz->addFile($file->getPathname(), $rel);
             }
@@ -117,21 +121,21 @@ function apply_update(string $zipPath, string $appRoot, string $backupDir, strin
         $r['errors'][] = "Impossibile creare backup file.";
     }
 
-    // ── Step 2: Backup DB ────────────────────────────────────────────────────
+    // ── Step 2: Backup DB (esclude le viste per evitare timeout) ──────────────
     try {
         $db_name = '';
         try { $db_name = $pdo->query("SELECT DATABASE()")->fetchColumn(); } catch (\Exception $e) {}
         if ($db_name) {
-            $tables = $pdo->query("SHOW TABLES")->fetchAll(PDO::FETCH_COLUMN);
+            // v1.9.53: filtra SOLO le tabelle base, escludendo le oltre 120 viste analitiche BI
+            // che provocavano il blocco per timeout del backup pre-aggiornamento.
+            $tables = $pdo->query("SHOW FULL TABLES WHERE Table_type = 'BASE TABLE'")->fetchAll(PDO::FETCH_COLUMN, 0);
             $db_file = "db_backup_v{$currentVer}_" . date('Ymd_His') . '.sql';
             $bh = fopen($backupDir . $db_file, 'w');
             if ($bh === false) {
                 $r['errors'][] = "Impossibile creare file backup DB.";
             } else {
-                // v1.8.10: backup in streaming (query non bufferizzata + scrittura a blocchi)
-                // per non esaurire la memoria su tabelle molto grandi (es. import DGB con
-                // decine di migliaia di righe). In precedenza si caricava l'intera tabella
-                // in memoria con fetchAll, causando "Allowed memory size exhausted".
+                fwrite($bh, "-- Backup PortalManager v{$currentVer} - " . date('Y-m-d H:i:s') . "\n");
+                fwrite($bh, "SET FOREIGN_KEY_CHECKS = 0;\n\n");
                 $hadBuffered = true;
                 try { $hadBuffered = (bool)$pdo->getAttribute(PDO::MYSQL_ATTR_USE_BUFFERED_QUERY); } catch (\Throwable $e) {}
                 try { $pdo->setAttribute(PDO::MYSQL_ATTR_USE_BUFFERED_QUERY, false); } catch (\Throwable $e) {}
@@ -151,6 +155,7 @@ function apply_update(string $zipPath, string $appRoot, string $backupDir, strin
                     $st = null;
                 }
                 try { $pdo->setAttribute(PDO::MYSQL_ATTR_USE_BUFFERED_QUERY, $hadBuffered); } catch (\Throwable $e) {}
+                fwrite($bh, "SET FOREIGN_KEY_CHECKS = 1;\n");
                 fclose($bh);
                 $r['backup_db'] = $db_file;
             }

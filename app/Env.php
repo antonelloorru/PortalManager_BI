@@ -15,19 +15,30 @@ final class Env
         if (self::$loaded) return;
         self::$loaded = true;
 
-        $envFile = APP_BASE . '/.env.php';
+        $appBase = defined('APP_BASE') ? APP_BASE : dirname(__DIR__);
+        $envFile = $appBase . '/.env.php';
 
         if (!file_exists($envFile)) {
             self::bootstrapSecrets($envFile);
         }
 
-        $data = require $envFile;
-        if (!is_array($data)) $data = [];
-        self::$data = $data;
+        if (file_exists($envFile)) {
+            $data = require $envFile;
+            if (is_array($data)) {
+                self::$data = array_merge(self::$data, $data);
+            }
+        }
     }
 
     public static function get(string $key, ?string $default = null): ?string
     {
+        $val = getenv($key);
+        if ($val !== false && $val !== '') {
+            return (string)$val;
+        }
+        if (isset($_ENV[$key]) && $_ENV[$key] !== '') {
+            return (string)$_ENV[$key];
+        }
         self::load();
         return self::$data[$key] ?? $default;
     }

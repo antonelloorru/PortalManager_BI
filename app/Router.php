@@ -102,6 +102,35 @@ final class Router
     }
 
     /**
+     * Calcola dinamicamente la web base URL (subfolder del server o stringa vuota se root).
+     * Es:
+     *   - Servito in http://localhost/                     -> ''
+     *   - Servito in http://localhost/portalmanager/        -> '/portalmanager'
+     *   - Servito in http://localhost/instances/test_pm/    -> '/instances/test_pm'
+     */
+    public static function base(?bool $reset = false): string
+    {
+        static $base = null;
+        if ($reset) {
+            $base = null;
+        }
+        if ($base !== null) return $base;
+
+        $script = str_replace('\\', '/', $_SERVER['SCRIPT_NAME'] ?? '');
+        $dir = dirname($script);
+        if ($dir === '.' || $dir === '/' || $dir === '\\') {
+            $base = '';
+        } else {
+            // Se eseguito da una sottocartella come /app, /tools, /cron, /public, risaliamo alla root web dell'app
+            if (preg_match('#/(app|tools|cron|public)$#i', $dir)) {
+                $dir = dirname($dir);
+            }
+            $base = ($dir === '/' || $dir === '\\' || $dir === '.') ? '' : rtrim(str_replace('\\', '/', $dir), '/');
+        }
+        return $base;
+    }
+
+    /**
      * Costruisce URL opaco per una pagina + parametri query opzionali.
      */
     public static function url(string $page, array $params = []): string

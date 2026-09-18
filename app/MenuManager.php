@@ -180,7 +180,7 @@ class MenuManager
                 'label'   => 'Sistema',
                 'icon'    => 'fa-cog',
                 'items'   => [
-                    ['page' => 'menu_customizer',      'label' => 'Personalizza menu',      'icon' => 'fa-bars-staggered', 'always_visible' => true],
+                    ['page' => 'menu_customizer',      'label' => 'Personalizza menu',      'icon' => 'fa-bars-staggered'],
                     ['page' => 'system_console',       'label' => 'Console di sistema',     'icon' => 'fa-sliders'],
                     // v1.9.21 — diagnostica errori PHP, riservata al super admin:
                     // il registro contiene percorsi e frammenti di query
@@ -292,8 +292,8 @@ class MenuManager
             $base_sec = $default_lookup_sec[$sec['key']];
             $clean_sec = [
                 'key'     => $base_sec['key'],
-                'label'   => $base_sec['label'],
-                'icon'    => $base_sec['icon'],
+                'label'   => !empty($sec['label']) ? (string)$sec['label'] : $base_sec['label'],
+                'icon'    => !empty($sec['icon']) ? (string)$sec['icon'] : $base_sec['icon'],
                 'visible' => isset($sec['visible']) ? (bool)$sec['visible'] : true,
                 'items'   => [],
             ];
@@ -307,8 +307,8 @@ class MenuManager
                 $base_it = $default_lookup_item[$page];
                 $clean_sec['items'][] = [
                     'page'    => $base_it['page'],
-                    'label'   => $base_it['label'],
-                    'icon'    => $base_it['icon'],
+                    'label'   => !empty($it['label']) ? (string)$it['label'] : $base_it['label'],
+                    'icon'    => !empty($it['icon']) ? (string)$it['icon'] : $base_it['icon'],
                     'visible' => !empty($base_it['always_visible']) || (isset($it['visible']) ? (bool)$it['visible'] : true),
                 ];
             }
@@ -430,14 +430,15 @@ class MenuManager
     {
         if ($role_id === 1) return true; // super admin vede tutto
 
-        $page_name = $page . '.php';
+        $page_name = str_ends_with($page, '.php') ? $page : $page . '.php';
+        $page_bare = str_ends_with($page, '.php') ? substr($page, 0, -4) : $page;
         $user_id = (int)($_SESSION['user_id'] ?? 0);
 
         // ── Override utente specifico (priorità massima) ──
         if ($user_id > 0) {
             try {
-                $s = $this->pdo->prepare("SELECT can_view FROM user_permissions WHERE user_id=? AND page_name=? LIMIT 1");
-                $s->execute([$user_id, $page_name]);
+                $s = $this->pdo->prepare("SELECT can_view FROM user_permissions WHERE user_id=? AND (page_name=? OR page_name=?) LIMIT 1");
+                $s->execute([$user_id, $page_name, $page_bare]);
                 $v = $s->fetchColumn();
                 $s->closeCursor();
                 if ($v !== false && $v !== null) {
@@ -451,8 +452,8 @@ class MenuManager
 
         // ── Permesso del ruolo (fallback) ──
         try {
-            $s = $this->pdo->prepare("SELECT can_view FROM role_permissions WHERE role_id=? AND page_name=? LIMIT 1");
-            $s->execute([$role_id, $page_name]);
+            $s = $this->pdo->prepare("SELECT can_view FROM role_permissions WHERE role_id=? AND (page_name=? OR page_name=?) LIMIT 1");
+            $s->execute([$role_id, $page_name, $page_bare]);
             return (bool)$s->fetchColumn();
         } catch (Throwable $e) {
             return false;

@@ -69,7 +69,15 @@ final class PublicApiAuth
         $bodyHash = hash('sha256', $rawBody);
         $canonical = strtoupper($method) . "\n" . $path . "\n" . $ts . "\n" . $nonce . "\n" . $bodyHash;
         $expected = hash_hmac('sha256', $canonical, $secret);
-        if (!hash_equals($expected, strtolower($signature))) {
+        $matched = hash_equals($expected, strtolower($signature));
+        if (!$matched && $rawBody === '' && !empty($_POST)) {
+            // Fallback per richieste multipart/form-data dove php://input non e' popolato da PHP
+            $altPost = http_build_query($_POST);
+            $altHash = hash('sha256', $altPost);
+            $altCanonical = strtoupper($method) . "\n" . $path . "\n" . $ts . "\n" . $nonce . "\n" . $altHash;
+            $matched = hash_equals(hash_hmac('sha256', $altCanonical, $secret), strtolower($signature));
+        }
+        if (!$matched) {
             throw new RuntimeException('bad_signature', 401);
         }
 

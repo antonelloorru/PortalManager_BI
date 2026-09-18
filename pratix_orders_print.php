@@ -100,7 +100,7 @@ $ver = defined('PM_VERSION') ? PM_VERSION : trim(@file_get_contents(__DIR__ . '/
   <p class="nota">Nessuna riga di dettaglio nel perimetro.</p>
 <?php else: ?>
   <table>
-    <thead><tr><th>Ordinativo</th><th>Commessa</th><th>Cliente</th><th>Commerciale</th>
+    <thead><tr><th>Ordinativo</th><th>Commessa</th><th>Cliente in SP</th><th>Commerciale</th>
       <th>Tipo contratto</th><th class="r">Importo</th><th>Origine</th><th>Stato</th><th>Data</th></tr></thead>
     <tbody>
     <?php foreach ($righePer as $cod => $righe): foreach ($righe as $r): ?>

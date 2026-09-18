@@ -1,3 +1,15 @@
+-- ============================================================================
+-- PortalManager — 20260918_113000_update_cert_management_schema.sql
+-- Schema Completo Consolidato & Idempotente (33 tabelle + Dati di Default + RBAC)
+-- Dialetto: MySQL 5.7+ / 8.0+ / MariaDB 10.x+
+-- Elimina l'errore SQLSTATE[42000] Code 1068 (Multiple primary key defined)
+-- Compatibile con qualsiasi nome di database (Multi-Istanza)
+-- ============================================================================
+
+SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
+SET FOREIGN_KEY_CHECKS = 0;
+SET NAMES utf8mb4;
+
 -- ════════════════════════════════════════════════════════════════════════════
 --  certV 2.4 — cert_management_v2.4.sql
 --  Script COMPLETO di creazione database
@@ -44,8 +56,8 @@ SET time_zone = "+00:00";
 -- Struttura della tabella `agencies`
 --
 
-CREATE TABLE `agencies` (
-  `id` int(11) NOT NULL,
+CREATE TABLE IF NOT EXISTS `agencies` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
   `name` varchar(150) NOT NULL,
   `type` enum('Headhunting','Somministrazione','RPO','Misto') DEFAULT 'Misto',
   `website` varchar(255) DEFAULT NULL,
@@ -56,14 +68,16 @@ CREATE TABLE `agencies` (
   `status` enum('active','paused','blacklisted') NOT NULL DEFAULT 'active',
   `rating` tinyint(1) DEFAULT NULL,
   `notes` text DEFAULT NULL,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `name` (`name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
 -- Dump dei dati per la tabella `agencies`
 --
 
-INSERT INTO `agencies` (`id`, `name`, `type`, `website`, `email`, `phone`, `address`, `vat_number`, `status`, `rating`, `notes`, `created_at`) VALUES
+INSERT IGNORE INTO `agencies` (`id`, `name`, `type`, `website`, `email`, `phone`, `address`, `vat_number`, `status`, `rating`, `notes`, `created_at`) VALUES
 (1, 'Adecco', 'Misto', NULL, NULL, NULL, NULL, NULL, 'active', NULL, NULL, '2026-03-30 08:47:12'),
 (2, 'Michael Page', 'Misto', NULL, NULL, NULL, NULL, NULL, 'active', NULL, NULL, '2026-03-30 08:47:33'),
 (3, 'DRD Recruiting', 'Misto', NULL, NULL, NULL, NULL, NULL, 'active', NULL, NULL, '2026-03-30 08:48:47'),
@@ -76,8 +90,8 @@ INSERT INTO `agencies` (`id`, `name`, `type`, `website`, `email`, `phone`, `addr
 -- Struttura della tabella `agency_contacts`
 --
 
-CREATE TABLE `agency_contacts` (
-  `id` int(11) NOT NULL,
+CREATE TABLE IF NOT EXISTS `agency_contacts` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
   `agency_id` int(11) NOT NULL,
   `first_name` varchar(100) NOT NULL,
   `last_name` varchar(100) NOT NULL,
@@ -86,7 +100,10 @@ CREATE TABLE `agency_contacts` (
   `phone` varchar(30) DEFAULT NULL,
   `is_primary` tinyint(1) NOT NULL DEFAULT 0,
   `notes` text DEFAULT NULL,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`),
+  KEY `agency_id` (`agency_id`),
+  CONSTRAINT `ac_fk1` FOREIGN KEY (`agency_id`) REFERENCES `agencies` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
@@ -95,8 +112,8 @@ CREATE TABLE `agency_contacts` (
 -- Struttura della tabella `agency_contracts`
 --
 
-CREATE TABLE `agency_contracts` (
-  `id` int(11) NOT NULL,
+CREATE TABLE IF NOT EXISTS `agency_contracts` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
   `agency_id` int(11) NOT NULL,
   `contract_ref` varchar(50) DEFAULT NULL,
   `type` enum('Quadro','Puntuale','Somministrazione') DEFAULT 'Quadro',
@@ -110,7 +127,10 @@ CREATE TABLE `agency_contracts` (
   `status` enum('active','expired','terminated') NOT NULL DEFAULT 'active',
   `notes` text DEFAULT NULL,
   `created_by` int(11) DEFAULT NULL COMMENT 'FK → users.id',
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`),
+  KEY `agency_id` (`agency_id`),
+  CONSTRAINT `acn_fk1` FOREIGN KEY (`agency_id`) REFERENCES `agencies` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
@@ -119,22 +139,27 @@ CREATE TABLE `agency_contracts` (
 -- Struttura della tabella `app_logs`
 --
 
-CREATE TABLE `app_logs` (
-  `id` int(11) NOT NULL,
+CREATE TABLE IF NOT EXISTS `app_logs` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
   `category` varchar(50) NOT NULL,
   `level` enum('info','success','warning','error') NOT NULL DEFAULT 'info',
   `message` text NOT NULL,
   `user_id` int(11) DEFAULT NULL COMMENT 'FK → users.id (chi ha eseguito l''azione)',
   `context` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL CHECK (json_valid(`context`) or `context` is null),
   `ip_address` varchar(45) DEFAULT NULL,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`),
+  KEY `level` (`level`),
+  KEY `user_id` (`user_id`),
+  KEY `created_at` (`created_at`),
+  CONSTRAINT `log_fk_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
 -- Dump dei dati per la tabella `app_logs`
 --
 
-INSERT INTO `app_logs` (`id`, `category`, `level`, `message`, `user_id`, `context`, `ip_address`, `created_at`) VALUES
+INSERT IGNORE INTO `app_logs` (`id`, `category`, `level`, `message`, `user_id`, `context`, `ip_address`, `created_at`) VALUES
 (1, 'Auth', 'warning', 'Login fallito: admin@certv.local', NULL, NULL, '192.168.230.1', '2026-03-28 21:00:09'),
 (2, 'Auth', 'warning', 'Login fallito: admin@certv.local', NULL, NULL, '192.168.230.1', '2026-03-28 21:01:17'),
 (3, 'Auth', 'success', 'Login', 1, NULL, '192.168.230.1', '2026-03-29 18:21:37'),
@@ -185,10 +210,11 @@ INSERT INTO `app_logs` (`id`, `category`, `level`, `message`, `user_id`, `contex
 -- Struttura della tabella `app_settings`
 --
 
-CREATE TABLE `app_settings` (
+CREATE TABLE IF NOT EXISTS `app_settings` (
   `setting_key` varchar(60) NOT NULL,
   `setting_value` varchar(500) NOT NULL,
-  `description` varchar(255) DEFAULT NULL
+  `description` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`setting_key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
@@ -233,8 +259,8 @@ INSERT INTO `app_settings` (`setting_key`, `setting_value`, `description`) VALUE
 -- Struttura della tabella `brands`
 --
 
-CREATE TABLE `brands` (
-  `id` int(11) NOT NULL,
+CREATE TABLE IF NOT EXISTS `brands` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
   `name` varchar(100) NOT NULL,
   `description` text DEFAULT NULL,
   `logo_path` varchar(255) DEFAULT NULL,
@@ -260,14 +286,17 @@ CREATE TABLE `brands` (
   `partner_portal_link` text DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
   `priority` tinyint(1) NOT NULL DEFAULT 3 COMMENT 'Priorità/importanza 1 (max) - 5 (min)',
-  `priority_color` varchar(7) NOT NULL DEFAULT '#3b82f6' COMMENT 'Colore HEX per codifica visiva priorità'
+  `priority_color` varchar(7) NOT NULL DEFAULT '#3b82f6' COMMENT 'Colore HEX per codifica visiva priorità',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `name` (`name`),
+  KEY `idx_brands_priority` (`priority`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
 -- Dump dei dati per la tabella `brands`
 --
 
-INSERT INTO `brands` (`id`, `name`, `description`, `logo_path`, `partnership_level`, `req_company`, `req_commercial`, `req_technical`, `pam_name`, `pam_email`, `pam_phone`, `pam_phone2`, `internal_bm_name`, `internal_bm_email`, `internal_bm_phone`, `brand_sl_name`, `brand_sl_email`, `brand_sl_phone`, `internal_sl_name`, `internal_sl_email`, `internal_sl_phone`, `learning_link`, `tech_doc_link`, `partner_portal_link`, `created_at`, `priority`, `priority_color`) VALUES
+INSERT IGNORE INTO `brands` (`id`, `name`, `description`, `logo_path`, `partnership_level`, `req_company`, `req_commercial`, `req_technical`, `pam_name`, `pam_email`, `pam_phone`, `pam_phone2`, `internal_bm_name`, `internal_bm_email`, `internal_bm_phone`, `brand_sl_name`, `brand_sl_email`, `brand_sl_phone`, `internal_sl_name`, `internal_sl_email`, `internal_sl_phone`, `learning_link`, `tech_doc_link`, `partner_portal_link`, `created_at`, `priority`, `priority_color`) VALUES
 (44, '3CX', 'ALLNET   - 90gg', NULL, 'SILVER', 0, 0, 0, 'LORIS SARETTA', 'ls@3cx.com', '596280001', NULL, 'MACINAI ALESSANDRO', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-30 15:27:12', 3, '#3b82f6'),
 (45, 'ASUS', 'ESPRINET', NULL, 'SILVER', 0, 0, 0, 'DAVIDE VITULLI', 'davide_vitulli@asus.com', '3355991600', NULL, 'MACINAI ALESSANDRO', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-30 15:27:12', 3, '#3b82f6'),
 (46, 'AXIS', 'ZELIATECH', NULL, 'GOLD', 0, 0, 0, 'PIERANGELO BERTINO', 'pierangelo.bertino@axis.com', '3458791006', NULL, 'MACINAI ALESSANDRO', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-30 15:27:12', 3, '#3b82f6'),
@@ -314,19 +343,24 @@ INSERT INTO `brands` (`id`, `name`, `description`, `logo_path`, `partnership_lev
 -- Struttura della tabella `brand_contacts_history`
 --
 
-CREATE TABLE `brand_contacts_history` (
-  `id` int(11) NOT NULL,
+CREATE TABLE IF NOT EXISTS `brand_contacts_history` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
   `brand_id` int(11) DEFAULT NULL,
   `archived_data` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL CHECK (json_valid(`archived_data`)),
   `archived_by` int(11) DEFAULT NULL,
-  `archived_at` timestamp NOT NULL DEFAULT current_timestamp()
+  `archived_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`),
+  KEY `brand_id` (`brand_id`),
+  KEY `archived_by` (`archived_by`),
+  CONSTRAINT `bch_fk_brand` FOREIGN KEY (`brand_id`) REFERENCES `brands` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `bch_fk_user` FOREIGN KEY (`archived_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
 -- Dump dei dati per la tabella `brand_contacts_history`
 --
 
-INSERT INTO `brand_contacts_history` (`id`, `brand_id`, `archived_data`, `archived_by`, `archived_at`) VALUES
+INSERT IGNORE INTO `brand_contacts_history` (`id`, `brand_id`, `archived_data`, `archived_by`, `archived_at`) VALUES
 (1, NULL, '{\"type\":\"permission_change\",\"role_id\":2,\"previous\":[\"brand_referents.php\",\"brand.php\",\"config_notifiche.php\",\"gap_analysis.php\",\"manage_companies.php\",\"manage_employees.php\",\"manage_work_modes.php\",\"manager_users.php\",\"mass_upload.php\",\"programmazione.php\",\"recruiting_agenzie.php\",\"recruiting_candidati.php\",\"recruiting_contratti.php\",\"recruiting_posizioni.php\",\"report_certificazioni.php\",\"settings.php\",\"training_plans.php\",\"upload_certificato.php\",\"visualizza_storico.php\"]}', 1, '2026-03-29 20:21:51'),
 (2, NULL, '{\"type\":\"permission_change\",\"role_id\":2,\"previous\":[\"programmazione.php\",\"recruiting_agenzie.php\",\"recruiting_candidati.php\",\"recruiting_contratti.php\",\"recruiting_posizioni.php\",\"training_plans.php\",\"upload_certificato.php\",\"visualizza_storico.php\"]}', 1, '2026-03-29 20:25:42'),
 (3, NULL, '{\"type\":\"permission_change\",\"role_id\":6,\"previous\":[\"programmazione.php\",\"training_plans.php\",\"upload_certificato.php\"]}', 1, '2026-03-29 20:26:19'),
@@ -339,22 +373,27 @@ INSERT INTO `brand_contacts_history` (`id`, `brand_id`, `archived_data`, `archiv
 -- Struttura della tabella `brand_referents`
 --
 
-CREATE TABLE `brand_referents` (
-  `id` int(11) NOT NULL,
+CREATE TABLE IF NOT EXISTS `brand_referents` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
   `brand_id` int(11) NOT NULL,
   `employee_id` int(11) NOT NULL COMMENT 'FK → employees.id (ex user_id)',
   `role_type` enum('brand_manager','account_commerciale','referente_formazione','tecnico') NOT NULL DEFAULT 'brand_manager',
   `start_date` date NOT NULL,
   `end_date` date DEFAULT NULL,
   `notes` varchar(255) DEFAULT NULL,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`),
+  KEY `brand_id` (`brand_id`),
+  KEY `employee_id` (`employee_id`),
+  CONSTRAINT `bref_fk1` FOREIGN KEY (`brand_id`) REFERENCES `brands` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `bref_fk_emp` FOREIGN KEY (`employee_id`) REFERENCES `employees` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
 -- Dump dei dati per la tabella `brand_referents`
 --
 
-INSERT INTO `brand_referents` (`id`, `brand_id`, `employee_id`, `role_type`, `start_date`, `end_date`, `notes`, `created_at`) VALUES
+INSERT IGNORE INTO `brand_referents` (`id`, `brand_id`, `employee_id`, `role_type`, `start_date`, `end_date`, `notes`, `created_at`) VALUES
 (1, 44, 2, 'referente_formazione', '2026-03-31', NULL, NULL, '2026-03-31 07:43:51'),
 (2, 45, 2, 'referente_formazione', '2026-03-31', NULL, NULL, '2026-03-31 07:44:02'),
 (3, 46, 2, 'referente_formazione', '2026-03-31', NULL, 'Tecnica', '2026-03-31 07:44:29'),
@@ -366,8 +405,8 @@ INSERT INTO `brand_referents` (`id`, `brand_id`, `employee_id`, `role_type`, `st
 -- Struttura della tabella `brand_requirements_history`
 --
 
-CREATE TABLE `brand_requirements_history` (
-  `id` int(11) NOT NULL,
+CREATE TABLE IF NOT EXISTS `brand_requirements_history` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
   `brand_id` int(11) NOT NULL,
   `partnership_level` varchar(50) DEFAULT NULL,
   `req_company` int(11) DEFAULT 0,
@@ -375,7 +414,10 @@ CREATE TABLE `brand_requirements_history` (
   `req_technical` int(11) DEFAULT 0,
   `start_date` date NOT NULL,
   `end_date` date DEFAULT NULL,
-  `updated_by` int(11) DEFAULT NULL
+  `updated_by` int(11) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `brand_id` (`brand_id`),
+  CONSTRAINT `brh_fk1` FOREIGN KEY (`brand_id`) REFERENCES `brands` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
@@ -384,8 +426,8 @@ CREATE TABLE `brand_requirements_history` (
 -- Struttura della tabella `brand_technologies`
 --
 
-CREATE TABLE `brand_technologies` (
-  `id` int(11) NOT NULL,
+CREATE TABLE IF NOT EXISTS `brand_technologies` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
   `brand_id` int(11) NOT NULL COMMENT 'FK → brands.id',
   `category` enum('Tecnologia','Servizio','Prodotto') NOT NULL DEFAULT 'Tecnologia' COMMENT 'Tipo: Tecnologia, Servizio o Prodotto',
   `name` varchar(150) NOT NULL COMMENT 'Nome tecnologia/servizio/prodotto',
@@ -396,7 +438,11 @@ CREATE TABLE `brand_technologies` (
   `relevance` tinyint(1) NOT NULL DEFAULT 3 COMMENT 'Rilevanza per l''azienda 1 (alta) - 5 (bassa)',
   `notes` text DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
-  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  PRIMARY KEY (`id`),
+  KEY `idx_bt_brand` (`brand_id`),
+  KEY `idx_bt_category` (`category`),
+  CONSTRAINT `fk_bt_brand` FOREIGN KEY (`brand_id`) REFERENCES `brands` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Tecnologie, servizi e prodotti associati a ciascun brand';
 
 -- --------------------------------------------------------
@@ -405,8 +451,8 @@ CREATE TABLE `brand_technologies` (
 -- Struttura della tabella `candidates`
 --
 
-CREATE TABLE `candidates` (
-  `id` int(11) NOT NULL,
+CREATE TABLE IF NOT EXISTS `candidates` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
   `first_name` varchar(100) NOT NULL,
   `last_name` varchar(100) NOT NULL,
   `email` varchar(150) DEFAULT NULL,
@@ -434,14 +480,17 @@ CREATE TABLE `candidates` (
   `test_path` varchar(255) DEFAULT NULL COMMENT 'Test psicologico',
   `lettera_path` varchar(255) DEFAULT NULL COMMENT 'Lettera di presentazione',
   `doc_extra_path` varchar(255) DEFAULT NULL COMMENT 'Documento aggiuntivo',
-  `soft_skills_notes` text DEFAULT NULL COMMENT 'Note su soft skills / carattere'
+  `soft_skills_notes` text DEFAULT NULL COMMENT 'Note su soft skills / carattere',
+  PRIMARY KEY (`id`),
+  KEY `agency_id` (`agency_id`),
+  CONSTRAINT `cand_fk1` FOREIGN KEY (`agency_id`) REFERENCES `agencies` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
 -- Dump dei dati per la tabella `candidates`
 --
 
-INSERT INTO `candidates` (`id`, `first_name`, `last_name`, `email`, `phone`, `linkedin_url`, `ral_requested`, `notice_period`, `cv_path`, `skills_tags`, `source`, `agency_id`, `agency_contact_id`, `gdpr_consent`, `gdpr_date`, `gdpr_expiry`, `status`, `notes`, `added_by`, `created_at`, `education_level`, `education_field`, `education_institute`, `education_year`, `external_certs`, `test_path`, `lettera_path`, `doc_extra_path`, `soft_skills_notes`) VALUES
+INSERT IGNORE INTO `candidates` (`id`, `first_name`, `last_name`, `email`, `phone`, `linkedin_url`, `ral_requested`, `notice_period`, `cv_path`, `skills_tags`, `source`, `agency_id`, `agency_contact_id`, `gdpr_consent`, `gdpr_date`, `gdpr_expiry`, `status`, `notes`, `added_by`, `created_at`, `education_level`, `education_field`, `education_institute`, `education_year`, `external_certs`, `test_path`, `lettera_path`, `doc_extra_path`, `soft_skills_notes`) VALUES
 (1, 'ANTONELLO', 'ORRU', 'antonello.orru@gmail.com', '3477365191', NULL, 100000.00, '90 giorni', NULL, NULL, 'LinkedIn', NULL, NULL, 1, '2026-03-30', '2027-03-30', 'new', NULL, 1, '2026-03-30 07:42:49', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL),
 (2, 'ANTONELLO', 'ORRU', 'antonello.orru@gmail.com', '3477365191', NULL, 100000.00, '90 giorni', NULL, 'tutto', 'LinkedIn', NULL, NULL, 1, '2026-03-30', '2027-03-30', 'new', NULL, 1, '2026-03-30 08:50:38', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
 
@@ -451,15 +500,22 @@ INSERT INTO `candidates` (`id`, `first_name`, `last_name`, `email`, `phone`, `li
 -- Struttura della tabella `candidate_applications`
 --
 
-CREATE TABLE `candidate_applications` (
-  `id` int(11) NOT NULL,
+CREATE TABLE IF NOT EXISTS `candidate_applications` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
   `candidate_id` int(11) NOT NULL,
   `position_id` int(11) NOT NULL,
   `stage` enum('cv_received','screening','tech_test','hr_interview','tech_interview','offer_sent','hired','rejected') NOT NULL DEFAULT 'cv_received',
   `match_score` tinyint(3) UNSIGNED DEFAULT NULL,
   `rejection_reason` varchar(255) DEFAULT NULL,
   `stage_updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_app` (`candidate_id`,`position_id`),
+  KEY `candidate_id` (`candidate_id`),
+  KEY `position_id` (`position_id`),
+  KEY `stage` (`stage`),
+  CONSTRAINT `app_fk1` FOREIGN KEY (`candidate_id`) REFERENCES `candidates` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `app_fk2` FOREIGN KEY (`position_id`) REFERENCES `job_positions` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
@@ -468,8 +524,8 @@ CREATE TABLE `candidate_applications` (
 -- Struttura della tabella `certifications`
 --
 
-CREATE TABLE `certifications` (
-  `id` int(11) NOT NULL,
+CREATE TABLE IF NOT EXISTS `certifications` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
   `brand_id` int(11) NOT NULL,
   `technology_id` int(11) NOT NULL,
   `name` varchar(200) NOT NULL,
@@ -480,7 +536,12 @@ CREATE TABLE `certifications` (
   `description` text DEFAULT NULL,
   `exam_url` varchar(255) DEFAULT NULL,
   `is_active` tinyint(1) NOT NULL DEFAULT 1,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`),
+  KEY `brand_id` (`brand_id`),
+  KEY `technology_id` (`technology_id`),
+  CONSTRAINT `c_fk1` FOREIGN KEY (`brand_id`) REFERENCES `brands` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `c_fk2` FOREIGN KEY (`technology_id`) REFERENCES `technologies` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
@@ -489,19 +550,21 @@ CREATE TABLE `certifications` (
 -- Struttura della tabella `companies`
 --
 
-CREATE TABLE `companies` (
-  `id` int(11) NOT NULL,
+CREATE TABLE IF NOT EXISTS `companies` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
   `name` varchar(150) NOT NULL,
   `legal_representative` varchar(150) DEFAULT NULL,
   `vat_number` varchar(30) DEFAULT NULL,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `name` (`name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
 -- Dump dei dati per la tabella `companies`
 --
 
-INSERT INTO `companies` (`id`, `name`, `legal_representative`, `vat_number`, `created_at`) VALUES
+INSERT IGNORE INTO `companies` (`id`, `name`, `legal_representative`, `vat_number`, `created_at`) VALUES
 (1, 'WETECH\'S SPA SB', 'ALESSANDRO TURCHI', '05174160480', '2026-03-28 20:59:36'),
 (2, 'Mips Informatica', 'Luca Marini', '03311300101', '2026-03-29 20:56:08'),
 (3, 'Antea srl', NULL, '01222470427', '2026-03-29 20:57:57');
@@ -512,8 +575,8 @@ INSERT INTO `companies` (`id`, `name`, `legal_representative`, `vat_number`, `cr
 -- Struttura della tabella `company_locations`
 --
 
-CREATE TABLE `company_locations` (
-  `id` int(11) NOT NULL,
+CREATE TABLE IF NOT EXISTS `company_locations` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
   `company_id` int(11) NOT NULL,
   `location_name` varchar(100) NOT NULL,
   `address` varchar(255) DEFAULT NULL,
@@ -525,14 +588,17 @@ CREATE TABLE `company_locations` (
   `manager_site` varchar(150) DEFAULT NULL,
   `manager_it` varchar(150) DEFAULT NULL,
   `manager_service` varchar(150) DEFAULT NULL,
-  `manager_admin` varchar(150) DEFAULT NULL
+  `manager_admin` varchar(150) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `company_id` (`company_id`),
+  CONSTRAINT `cl_fk1` FOREIGN KEY (`company_id`) REFERENCES `companies` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
 -- Dump dei dati per la tabella `company_locations`
 --
 
-INSERT INTO `company_locations` (`id`, `company_id`, `location_name`, `address`, `lat`, `lng`, `phone`, `email`, `email_pec`, `manager_site`, `manager_it`, `manager_service`, `manager_admin`) VALUES
+INSERT IGNORE INTO `company_locations` (`id`, `company_id`, `location_name`, `address`, `lat`, `lng`, `phone`, `email`, `email_pec`, `manager_site`, `manager_it`, `manager_service`, `manager_admin`) VALUES
 (1, 1, 'Sede Montevarchi (SEDE LEGALE)', 'Via Fratelli Alinari 76/82  Montevarchi (AR)', NULL, NULL, '055 9850197', 'info@wetechs.it', NULL, NULL, 'DANIELE CAPELLETTI', 'ANTONELLO ORRU\'', NULL),
 (2, 1, 'Sede Milano', 'Strada 1 – Palazzo F1 Milanofiori – Assago (MI)', NULL, NULL, '02 89366777', NULL, NULL, NULL, NULL, NULL, NULL),
 (3, 1, 'Sede Scandicci', 'Via del Lavoro, 10/37 Scandicci (FI)', NULL, NULL, '0574 1747613', NULL, NULL, NULL, NULL, NULL, NULL),
@@ -549,8 +615,8 @@ INSERT INTO `company_locations` (`id`, `company_id`, `location_name`, `address`,
 -- Struttura della tabella `email_log`
 --
 
-CREATE TABLE `email_log` (
-  `id` int(11) NOT NULL,
+CREATE TABLE IF NOT EXISTS `email_log` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
   `recipient` varchar(255) NOT NULL,
   `subject` varchar(500) NOT NULL,
   `status` enum('sent','failed','queued') NOT NULL DEFAULT 'sent',
@@ -559,7 +625,10 @@ CREATE TABLE `email_log` (
   `module` varchar(50) DEFAULT 'system',
   `related_id` int(11) DEFAULT NULL COMMENT 'ID record collegato (opzionale)',
   `sent_by` int(11) DEFAULT NULL COMMENT 'FK → users.id (NULL = cron/system)',
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`),
+  KEY `idx_email_log_status` (`status`),
+  KEY `idx_email_log_date` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Log di tutti gli invii email SMTP';
 
 -- --------------------------------------------------------
@@ -568,8 +637,8 @@ CREATE TABLE `email_log` (
 -- Struttura della tabella `employees`
 --
 
-CREATE TABLE `employees` (
-  `id` int(11) NOT NULL,
+CREATE TABLE IF NOT EXISTS `employees` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
   `company_id` int(11) DEFAULT 1,
   `location_id` int(11) DEFAULT NULL,
   `work_mode_id` int(11) DEFAULT NULL,
@@ -592,14 +661,23 @@ CREATE TABLE `employees` (
   `cv_path` varchar(255) DEFAULT NULL,
   `notes` text DEFAULT NULL COMMENT 'Note HR riservate — non visibili al dipendente',
   `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
-  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_employee_code` (`employee_code`),
+  KEY `company_id` (`company_id`),
+  KEY `location_id` (`location_id`),
+  KEY `work_mode_id` (`work_mode_id`),
+  KEY `status` (`status`),
+  CONSTRAINT `emp_fk_co` FOREIGN KEY (`company_id`) REFERENCES `companies` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `emp_fk_loc` FOREIGN KEY (`location_id`) REFERENCES `company_locations` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `emp_fk_wm` FOREIGN KEY (`work_mode_id`) REFERENCES `work_modes` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Anagrafica dipendenti — separata dalle utenze di accesso (v2.2)';
 
 --
 -- Dump dei dati per la tabella `employees`
 --
 
-INSERT INTO `employees` (`id`, `company_id`, `location_id`, `work_mode_id`, `first_name`, `last_name`, `fiscal_code`, `date_of_birth`, `phone`, `personal_email`, `employee_code`, `job_title`, `department`, `contract_type`, `hire_date`, `end_date`, `status`, `bio`, `technical_skills`, `soft_skills`, `cv_path`, `notes`, `created_at`, `updated_at`) VALUES
+INSERT IGNORE INTO `employees` (`id`, `company_id`, `location_id`, `work_mode_id`, `first_name`, `last_name`, `fiscal_code`, `date_of_birth`, `phone`, `personal_email`, `employee_code`, `job_title`, `department`, `contract_type`, `hire_date`, `end_date`, `status`, `bio`, `technical_skills`, `soft_skills`, `cv_path`, `notes`, `created_at`, `updated_at`) VALUES
 (1, 1, NULL, NULL, 'Super', 'Admin', NULL, NULL, NULL, NULL, NULL, 'System Administrator', NULL, 'Indeterminato', NULL, NULL, 'active', NULL, NULL, NULL, NULL, NULL, '2026-03-28 20:59:36', '2026-03-28 20:59:36'),
 (2, 1, 3, 3, 'ANTONELLO', 'ORRU\'', 'RRONNL75A22B354C', NULL, '3477465191', 'antonello.orru@gmail.com', '330', 'Quadro', 'IT', 'Indeterminato', '2025-08-01', NULL, 'active', NULL, NULL, NULL, NULL, NULL, '2026-03-29 21:15:19', '2026-03-31 13:54:11'),
 (3, 1, 1, 3, 'ALESSANDRO', 'MACINAI', NULL, NULL, NULL, 'alessandro.macinai@wetechs.it', NULL, 'Responsabile Coordinatore Commerciale', 'Commerciale', 'Partita IVA', NULL, NULL, 'active', NULL, NULL, NULL, NULL, NULL, '2026-03-31 07:46:44', '2026-03-31 07:47:23'),
@@ -611,9 +689,13 @@ INSERT INTO `employees` (`id`, `company_id`, `location_id`, `work_mode_id`, `fir
 -- Struttura della tabella `employee_brands`
 --
 
-CREATE TABLE `employee_brands` (
+CREATE TABLE IF NOT EXISTS `employee_brands` (
   `employee_id` int(11) NOT NULL COMMENT 'FK → employees.id (ex user_brands)',
-  `brand_id` int(11) NOT NULL
+  `brand_id` int(11) NOT NULL,
+  PRIMARY KEY (`employee_id`,`brand_id`),
+  KEY `eb_fk2` (`brand_id`),
+  CONSTRAINT `eb_fk_brand` FOREIGN KEY (`brand_id`) REFERENCES `brands` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `eb_fk_emp` FOREIGN KEY (`employee_id`) REFERENCES `employees` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
@@ -622,8 +704,8 @@ CREATE TABLE `employee_brands` (
 -- Struttura della tabella `interview_scorecards`
 --
 
-CREATE TABLE `interview_scorecards` (
-  `id` int(11) NOT NULL,
+CREATE TABLE IF NOT EXISTS `interview_scorecards` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
   `application_id` int(11) NOT NULL,
   `interviewer_id` int(11) NOT NULL COMMENT 'FK → users.id (chi ha fatto il colloquio)',
   `interview_date` date NOT NULL,
@@ -650,7 +732,12 @@ CREATE TABLE `interview_scorecards` (
   `recommendation` enum('proceed','hold','reject') DEFAULT NULL,
   `summary_note` text DEFAULT NULL,
   `sent_to_hr` tinyint(1) NOT NULL DEFAULT 0,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_scorecard` (`application_id`,`interviewer_id`),
+  KEY `interviewer_id` (`interviewer_id`),
+  CONSTRAINT `sc_fk1` FOREIGN KEY (`application_id`) REFERENCES `candidate_applications` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `sc_fk2` FOREIGN KEY (`interviewer_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
@@ -659,8 +746,8 @@ CREATE TABLE `interview_scorecards` (
 -- Struttura della tabella `job_positions`
 --
 
-CREATE TABLE `job_positions` (
-  `id` int(11) NOT NULL,
+CREATE TABLE IF NOT EXISTS `job_positions` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
   `title` varchar(200) NOT NULL,
   `department` varchar(100) DEFAULT NULL,
   `brand_id` int(11) DEFAULT NULL,
@@ -680,14 +767,22 @@ CREATE TABLE `job_positions` (
   `target_date` date DEFAULT NULL,
   `opened_at` date DEFAULT NULL,
   `closed_at` date DEFAULT NULL,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`),
+  KEY `brand_id` (`brand_id`),
+  KEY `requested_by` (`requested_by`),
+  KEY `team_leader_id` (`team_leader_id`),
+  KEY `status` (`status`),
+  CONSTRAINT `jp_fk1` FOREIGN KEY (`brand_id`) REFERENCES `brands` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `jp_fk2` FOREIGN KEY (`requested_by`) REFERENCES `users` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `jp_fk3` FOREIGN KEY (`team_leader_id`) REFERENCES `users` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
 -- Dump dei dati per la tabella `job_positions`
 --
 
-INSERT INTO `job_positions` (`id`, `title`, `department`, `brand_id`, `requested_by`, `approved_by`, `team_leader_id`, `status`, `priority`, `description`, `required_skills`, `nice_to_have`, `ral_min`, `ral_max`, `contract_type`, `location`, `remote_policy`, `target_date`, `opened_at`, `closed_at`, `created_at`) VALUES
+INSERT IGNORE INTO `job_positions` (`id`, `title`, `department`, `brand_id`, `requested_by`, `approved_by`, `team_leader_id`, `status`, `priority`, `description`, `required_skills`, `nice_to_have`, `ral_min`, `ral_max`, `contract_type`, `location`, `remote_policy`, `target_date`, `opened_at`, `closed_at`, `created_at`) VALUES
 (1, 'Tecnico di presidio', 'it', NULL, 1, NULL, NULL, 'draft', 'Alta', 'bjsadhbvjsdhbkjdh', ',zjdhfkjashd.kayusygfa', NULL, NULL, NULL, 'Indeterminato', 'da cliente', 'In sede', '2026-04-01', '2026-03-30', NULL, '2026-03-30 07:44:20'),
 (2, 'System Administrator', 'IT-autostrade', NULL, 1, NULL, NULL, 'draft', 'Alta', NULL, NULL, NULL, NULL, NULL, 'Indeterminato', 'Calenzano', 'Ibrido', '2026-04-01', '2026-03-30', NULL, '2026-03-30 08:46:47');
 
@@ -744,8 +839,8 @@ ON DUPLICATE KEY UPDATE
 -- Struttura della tabella `notifications`
 --
 
-CREATE TABLE `notifications` (
-  `id` int(11) NOT NULL,
+CREATE TABLE IF NOT EXISTS `notifications` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
   `user_id` int(11) DEFAULT NULL COMMENT 'FK → users.id (destinatario account)',
   `role_id` int(11) DEFAULT NULL,
   `type` enum('info','warning','critical','success') NOT NULL DEFAULT 'info',
@@ -756,7 +851,12 @@ CREATE TABLE `notifications` (
   `is_read` tinyint(1) NOT NULL DEFAULT 0,
   `escalation_level` tinyint(1) NOT NULL DEFAULT 1,
   `expires_at` date DEFAULT NULL,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`),
+  KEY `user_id` (`user_id`),
+  KEY `role_id` (`role_id`),
+  KEY `is_read` (`is_read`),
+  CONSTRAINT `notif_fk_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
@@ -765,13 +865,15 @@ CREATE TABLE `notifications` (
 -- Struttura della tabella `password_resets`
 --
 
-CREATE TABLE `password_resets` (
-  `id` int(11) NOT NULL,
+CREATE TABLE IF NOT EXISTS `password_resets` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
   `email` varchar(150) NOT NULL,
   `token` varchar(255) NOT NULL,
   `expires_at` datetime NOT NULL,
   `used` tinyint(1) NOT NULL DEFAULT 0,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`),
+  KEY `token` (`token`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
@@ -780,15 +882,20 @@ CREATE TABLE `password_resets` (
 -- Struttura della tabella `planned_exams`
 --
 
-CREATE TABLE `planned_exams` (
-  `id` int(11) NOT NULL,
+CREATE TABLE IF NOT EXISTS `planned_exams` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
   `employee_id` int(11) NOT NULL COMMENT 'FK → employees.id (ex user_id)',
   `certification_id` int(11) NOT NULL,
   `planned_date` date NOT NULL,
   `notes` text DEFAULT NULL,
   `status` enum('planned','completed','cancelled') DEFAULT 'planned',
   `result` enum('passed','failed') DEFAULT NULL,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`),
+  KEY `employee_id` (`employee_id`),
+  KEY `certification_id` (`certification_id`),
+  CONSTRAINT `pe_fk2` FOREIGN KEY (`certification_id`) REFERENCES `certifications` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `pe_fk_emp` FOREIGN KEY (`employee_id`) REFERENCES `employees` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
@@ -797,8 +904,8 @@ CREATE TABLE `planned_exams` (
 -- Struttura della tabella `position_publications`
 --
 
-CREATE TABLE `position_publications` (
-  `id` int(11) NOT NULL,
+CREATE TABLE IF NOT EXISTS `position_publications` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
   `position_id` int(11) NOT NULL COMMENT 'FK → job_positions.id',
   `channel` enum('linkedin','indeed','infojobs','glassdoor','monster','jobrapido','custom') NOT NULL DEFAULT 'linkedin',
   `channel_url` varchar(500) DEFAULT NULL COMMENT 'URL del post/annuncio pubblicato',
@@ -808,7 +915,14 @@ CREATE TABLE `position_publications` (
   `published_by` int(11) DEFAULT NULL COMMENT 'FK → users.id',
   `api_post_id` varchar(255) DEFAULT NULL COMMENT 'ID restituito dall API (LinkedIn jobPostingId ecc.)',
   `notes` text DEFAULT NULL,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`),
+  KEY `position_id` (`position_id`),
+  KEY `channel` (`channel`),
+  KEY `status` (`status`),
+  KEY `pp_fk2` (`published_by`),
+  CONSTRAINT `pp_fk1` FOREIGN KEY (`position_id`) REFERENCES `job_positions` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `pp_fk2` FOREIGN KEY (`published_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Traccia le pubblicazioni delle posizioni sui portali esterni';
 
 -- --------------------------------------------------------
@@ -817,17 +931,19 @@ CREATE TABLE `position_publications` (
 -- Struttura della tabella `roles`
 --
 
-CREATE TABLE `roles` (
-  `id` int(11) NOT NULL,
+CREATE TABLE IF NOT EXISTS `roles` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
   `name` varchar(80) NOT NULL,
-  `description` varchar(255) DEFAULT NULL
+  `description` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `name` (`name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
 -- Dump dei dati per la tabella `roles`
 --
 
-INSERT INTO `roles` (`id`, `name`, `description`) VALUES
+INSERT IGNORE INTO `roles` (`id`, `name`, `description`) VALUES
 (1, 'Super Admin', 'Accesso totale al sistema'),
 (2, 'HR Director', 'Supervisione ciclo talento, contratti, budget'),
 (3, 'Brand Manager', 'Governance brand, requisiti vendor, gap analysis'),
@@ -841,16 +957,18 @@ INSERT INTO `roles` (`id`, `name`, `description`) VALUES
 -- Struttura della tabella `role_permissions`
 --
 
-CREATE TABLE `role_permissions` (
+CREATE TABLE IF NOT EXISTS `role_permissions` (
   `role_id` int(11) NOT NULL,
-  `page_name` varchar(100) NOT NULL
+  `page_name` varchar(100) NOT NULL,
+  PRIMARY KEY (`role_id`,`page_name`),
+  CONSTRAINT `rp_fk1` FOREIGN KEY (`role_id`) REFERENCES `roles` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
 -- Dump dei dati per la tabella `role_permissions`
 --
 
-INSERT INTO `role_permissions` (`role_id`, `page_name`) VALUES
+INSERT IGNORE INTO `role_permissions` (`role_id`, `page_name`) VALUES
 (1, 'manage_employees.php'),
 (1, 'menu_customizer.php'),
 (1, 'publish_posizione.php'),
@@ -923,17 +1041,19 @@ INSERT INTO `role_permissions` (`role_id`, `page_name`) VALUES
 -- Struttura della tabella `technologies`
 --
 
-CREATE TABLE `technologies` (
-  `id` int(11) NOT NULL,
+CREATE TABLE IF NOT EXISTS `technologies` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
   `name` varchar(100) NOT NULL,
-  `description` text DEFAULT NULL
+  `description` text DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `name` (`name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
 -- Dump dei dati per la tabella `technologies`
 --
 
-INSERT INTO `technologies` (`id`, `name`, `description`) VALUES
+INSERT IGNORE INTO `technologies` (`id`, `name`, `description`) VALUES
 (1, 'Cloud & Infrastructure', NULL),
 (2, 'Networking', NULL),
 (3, 'Security', NULL),
@@ -947,8 +1067,8 @@ INSERT INTO `technologies` (`id`, `name`, `description`) VALUES
 -- Struttura della tabella `training_plans`
 --
 
-CREATE TABLE `training_plans` (
-  `id` int(11) NOT NULL,
+CREATE TABLE IF NOT EXISTS `training_plans` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
   `employee_id` int(11) NOT NULL COMMENT 'FK → employees.id (ex user_id)',
   `certification_id` int(11) NOT NULL,
   `target_date` date DEFAULT NULL,
@@ -959,7 +1079,12 @@ CREATE TABLE `training_plans` (
   `budget` decimal(8,2) DEFAULT NULL,
   `approved_by` int(11) DEFAULT NULL COMMENT 'FK → users.id',
   `is_renewal` tinyint(1) DEFAULT 0,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`),
+  KEY `employee_id` (`employee_id`),
+  KEY `certification_id` (`certification_id`),
+  CONSTRAINT `tp_fk2` FOREIGN KEY (`certification_id`) REFERENCES `certifications` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `tp_fk_emp` FOREIGN KEY (`employee_id`) REFERENCES `employees` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
@@ -968,8 +1093,8 @@ CREATE TABLE `training_plans` (
 -- Struttura della tabella `users`
 --
 
-CREATE TABLE `users` (
-  `id` int(11) NOT NULL,
+CREATE TABLE IF NOT EXISTS `users` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
   `employee_id` int(11) DEFAULT NULL COMMENT 'FK → employees.id. NULL = account di servizio senza dipendente associato',
   `role_id` int(11) NOT NULL DEFAULT 6,
   `email` varchar(150) NOT NULL,
@@ -977,14 +1102,20 @@ CREATE TABLE `users` (
   `display_name` varchar(150) DEFAULT NULL COMMENT 'Usato solo se employee_id è NULL (account di servizio)',
   `status` enum('active','inactive') DEFAULT 'active',
   `notifications_email` tinyint(1) NOT NULL DEFAULT 1,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `email` (`email`),
+  KEY `employee_id` (`employee_id`),
+  KEY `role_id` (`role_id`),
+  CONSTRAINT `u_fk_employee` FOREIGN KEY (`employee_id`) REFERENCES `employees` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `u_fk_role` FOREIGN KEY (`role_id`) REFERENCES `roles` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Utenze di accesso al portale — separate dall''anagrafica (v2.2)';
 
 --
 -- Dump dei dati per la tabella `users`
 --
 
-INSERT INTO `users` (`id`, `employee_id`, `role_id`, `email`, `password_hash`, `display_name`, `status`, `notifications_email`, `created_at`) VALUES
+INSERT IGNORE INTO `users` (`id`, `employee_id`, `role_id`, `email`, `password_hash`, `display_name`, `status`, `notifications_email`, `created_at`) VALUES
 (1, 1, 1, 'admin@certv.local', '$2y$12$TJA55kedgGR.P.qGN7PcZepkhc7sxKYgPklaj3DSeJmfSt9fE3niC', NULL, 'active', 1, '2026-03-28 20:59:37');
 
 -- --------------------------------------------------------
@@ -993,8 +1124,8 @@ INSERT INTO `users` (`id`, `employee_id`, `role_id`, `email`, `password_hash`, `
 -- Struttura della tabella `user_certifications`
 --
 
-CREATE TABLE `user_certifications` (
-  `id` int(11) NOT NULL,
+CREATE TABLE IF NOT EXISTS `user_certifications` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
   `employee_id` int(11) NOT NULL COMMENT 'FK → employees.id (ex user_id in v2.1)',
   `certification_id` int(11) NOT NULL,
   `issue_date` date NOT NULL,
@@ -1005,7 +1136,14 @@ CREATE TABLE `user_certifications` (
   `document_path` varchar(255) DEFAULT NULL,
   `notes` text DEFAULT NULL,
   `uploaded_by` int(11) DEFAULT NULL COMMENT 'FK → users.id (chi ha caricato)',
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`),
+  KEY `employee_id` (`employee_id`),
+  KEY `certification_id` (`certification_id`),
+  KEY `status` (`status`),
+  KEY `expiry_date` (`expiry_date`),
+  CONSTRAINT `uc_fk2` FOREIGN KEY (`certification_id`) REFERENCES `certifications` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `uc_fk_emp` FOREIGN KEY (`employee_id`) REFERENCES `employees` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
@@ -1014,596 +1152,29 @@ CREATE TABLE `user_certifications` (
 -- Struttura della tabella `work_modes`
 --
 
-CREATE TABLE `work_modes` (
-  `id` int(11) NOT NULL,
+CREATE TABLE IF NOT EXISTS `work_modes` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
   `name` varchar(50) NOT NULL,
   `description` varchar(255) DEFAULT NULL,
-  `color_hex` varchar(7) DEFAULT '#f1f5f9'
+  `color_hex` varchar(7) DEFAULT '#f1f5f9',
+  PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
 -- Dump dei dati per la tabella `work_modes`
 --
 
-INSERT INTO `work_modes` (`id`, `name`, `description`, `color_hex`) VALUES
+INSERT IGNORE INTO `work_modes` (`id`, `name`, `description`, `color_hex`) VALUES
 (1, 'In sede', 'Presenza fisica in ufficio', '#d1fae5'),
 (2, 'Smart Working', 'Lavoro da remoto', '#e0f2fe'),
 (3, 'Ibrido', 'Mix sede e remoto', '#fef3c7'),
 (4, 'Trasferta', 'In trasferta clienti', '#f3e8ff');
 
 --
--- Indici per le tabelle scaricate
---
 
---
--- Indici per le tabelle `agencies`
---
-ALTER TABLE `agencies`
-  ADD PRIMARY KEY (`id`),
-  ADD UNIQUE KEY `name` (`name`);
-
---
--- Indici per le tabelle `agency_contacts`
---
-ALTER TABLE `agency_contacts`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `agency_id` (`agency_id`);
-
---
--- Indici per le tabelle `agency_contracts`
---
-ALTER TABLE `agency_contracts`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `agency_id` (`agency_id`);
-
---
--- Indici per le tabelle `app_logs`
---
-ALTER TABLE `app_logs`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `level` (`level`),
-  ADD KEY `user_id` (`user_id`),
-  ADD KEY `created_at` (`created_at`);
-
---
--- Indici per le tabelle `app_settings`
---
-ALTER TABLE `app_settings`
-  ADD PRIMARY KEY (`setting_key`);
-
---
--- Indici per le tabelle `brands`
---
-ALTER TABLE `brands`
-  ADD PRIMARY KEY (`id`),
-  ADD UNIQUE KEY `name` (`name`),
-  ADD KEY `idx_brands_priority` (`priority`);
-
---
--- Indici per le tabelle `brand_contacts_history`
---
-ALTER TABLE `brand_contacts_history`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `brand_id` (`brand_id`),
-  ADD KEY `archived_by` (`archived_by`);
-
---
--- Indici per le tabelle `brand_referents`
---
-ALTER TABLE `brand_referents`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `brand_id` (`brand_id`),
-  ADD KEY `employee_id` (`employee_id`);
-
---
--- Indici per le tabelle `brand_requirements_history`
---
-ALTER TABLE `brand_requirements_history`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `brand_id` (`brand_id`);
-
---
--- Indici per le tabelle `brand_technologies`
---
-ALTER TABLE `brand_technologies`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `idx_bt_brand` (`brand_id`),
-  ADD KEY `idx_bt_category` (`category`);
-
---
--- Indici per le tabelle `candidates`
---
-ALTER TABLE `candidates`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `agency_id` (`agency_id`);
-
---
--- Indici per le tabelle `candidate_applications`
---
-ALTER TABLE `candidate_applications`
-  ADD PRIMARY KEY (`id`),
-  ADD UNIQUE KEY `unique_app` (`candidate_id`,`position_id`),
-  ADD KEY `candidate_id` (`candidate_id`),
-  ADD KEY `position_id` (`position_id`),
-  ADD KEY `stage` (`stage`);
-
---
--- Indici per le tabelle `certifications`
---
-ALTER TABLE `certifications`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `brand_id` (`brand_id`),
-  ADD KEY `technology_id` (`technology_id`);
-
---
--- Indici per le tabelle `companies`
---
-ALTER TABLE `companies`
-  ADD PRIMARY KEY (`id`),
-  ADD UNIQUE KEY `name` (`name`);
-
---
--- Indici per le tabelle `company_locations`
---
-ALTER TABLE `company_locations`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `company_id` (`company_id`);
-
---
--- Indici per le tabelle `email_log`
---
-ALTER TABLE `email_log`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `idx_email_log_status` (`status`),
-  ADD KEY `idx_email_log_date` (`created_at`);
-
---
--- Indici per le tabelle `employees`
---
-ALTER TABLE `employees`
-  ADD PRIMARY KEY (`id`),
-  ADD UNIQUE KEY `uq_employee_code` (`employee_code`),
-  ADD KEY `company_id` (`company_id`),
-  ADD KEY `location_id` (`location_id`),
-  ADD KEY `work_mode_id` (`work_mode_id`),
-  ADD KEY `status` (`status`);
-
---
--- Indici per le tabelle `employee_brands`
---
-ALTER TABLE `employee_brands`
-  ADD PRIMARY KEY (`employee_id`,`brand_id`),
-  ADD KEY `eb_fk2` (`brand_id`);
-
---
--- Indici per le tabelle `interview_scorecards`
---
-ALTER TABLE `interview_scorecards`
-  ADD PRIMARY KEY (`id`),
-  ADD UNIQUE KEY `unique_scorecard` (`application_id`,`interviewer_id`),
-  ADD KEY `interviewer_id` (`interviewer_id`);
-
---
--- Indici per le tabelle `job_positions`
---
-ALTER TABLE `job_positions`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `brand_id` (`brand_id`),
-  ADD KEY `requested_by` (`requested_by`),
-  ADD KEY `team_leader_id` (`team_leader_id`),
-  ADD KEY `status` (`status`);
-
---
--- Indici per le tabelle `notifications`
---
-ALTER TABLE `notifications`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `user_id` (`user_id`),
-  ADD KEY `role_id` (`role_id`),
-  ADD KEY `is_read` (`is_read`);
-
---
--- Indici per le tabelle `password_resets`
---
-ALTER TABLE `password_resets`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `token` (`token`);
-
---
--- Indici per le tabelle `planned_exams`
---
-ALTER TABLE `planned_exams`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `employee_id` (`employee_id`),
-  ADD KEY `certification_id` (`certification_id`);
-
---
--- Indici per le tabelle `position_publications`
---
-ALTER TABLE `position_publications`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `position_id` (`position_id`),
-  ADD KEY `channel` (`channel`),
-  ADD KEY `status` (`status`),
-  ADD KEY `pp_fk2` (`published_by`);
-
---
--- Indici per le tabelle `roles`
---
-ALTER TABLE `roles`
-  ADD PRIMARY KEY (`id`),
-  ADD UNIQUE KEY `name` (`name`);
-
---
--- Indici per le tabelle `role_permissions`
---
-ALTER TABLE `role_permissions`
-  ADD PRIMARY KEY (`role_id`,`page_name`);
-
---
--- Indici per le tabelle `technologies`
---
-ALTER TABLE `technologies`
-  ADD PRIMARY KEY (`id`),
-  ADD UNIQUE KEY `name` (`name`);
-
---
--- Indici per le tabelle `training_plans`
---
-ALTER TABLE `training_plans`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `employee_id` (`employee_id`),
-  ADD KEY `certification_id` (`certification_id`);
-
---
--- Indici per le tabelle `users`
---
-ALTER TABLE `users`
-  ADD PRIMARY KEY (`id`),
-  ADD UNIQUE KEY `email` (`email`),
-  ADD KEY `employee_id` (`employee_id`),
-  ADD KEY `role_id` (`role_id`);
-
---
--- Indici per le tabelle `user_certifications`
---
-ALTER TABLE `user_certifications`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `employee_id` (`employee_id`),
-  ADD KEY `certification_id` (`certification_id`),
-  ADD KEY `status` (`status`),
-  ADD KEY `expiry_date` (`expiry_date`);
-
---
--- Indici per le tabelle `work_modes`
---
-ALTER TABLE `work_modes`
-  ADD PRIMARY KEY (`id`);
-
---
--- AUTO_INCREMENT per le tabelle scaricate
---
-
---
--- AUTO_INCREMENT per la tabella `agencies`
---
-ALTER TABLE `agencies`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=6;
-
---
--- AUTO_INCREMENT per la tabella `agency_contacts`
---
-ALTER TABLE `agency_contacts`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT per la tabella `agency_contracts`
---
-ALTER TABLE `agency_contracts`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT per la tabella `app_logs`
---
-ALTER TABLE `app_logs`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=44;
-
---
--- AUTO_INCREMENT per la tabella `brands`
---
-ALTER TABLE `brands`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=83;
-
---
--- AUTO_INCREMENT per la tabella `brand_contacts_history`
---
-ALTER TABLE `brand_contacts_history`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=6;
-
---
--- AUTO_INCREMENT per la tabella `brand_referents`
---
-ALTER TABLE `brand_referents`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=5;
-
---
--- AUTO_INCREMENT per la tabella `brand_requirements_history`
---
-ALTER TABLE `brand_requirements_history`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT per la tabella `brand_technologies`
---
-ALTER TABLE `brand_technologies`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT per la tabella `candidates`
---
-ALTER TABLE `candidates`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
-
---
--- AUTO_INCREMENT per la tabella `candidate_applications`
---
-ALTER TABLE `candidate_applications`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT per la tabella `certifications`
---
-ALTER TABLE `certifications`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT per la tabella `companies`
---
-ALTER TABLE `companies`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
-
---
--- AUTO_INCREMENT per la tabella `company_locations`
---
-ALTER TABLE `company_locations`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=10;
-
---
--- AUTO_INCREMENT per la tabella `email_log`
---
-ALTER TABLE `email_log`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT per la tabella `employees`
---
-ALTER TABLE `employees`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=5;
-
---
--- AUTO_INCREMENT per la tabella `interview_scorecards`
---
-ALTER TABLE `interview_scorecards`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT per la tabella `job_positions`
---
-ALTER TABLE `job_positions`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
-
---
--- AUTO_INCREMENT per la tabella `notifications`
---
-ALTER TABLE `notifications`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT per la tabella `password_resets`
---
-ALTER TABLE `password_resets`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT per la tabella `planned_exams`
---
-ALTER TABLE `planned_exams`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT per la tabella `position_publications`
---
-ALTER TABLE `position_publications`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT per la tabella `roles`
---
-ALTER TABLE `roles`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=7;
-
---
--- AUTO_INCREMENT per la tabella `technologies`
---
-ALTER TABLE `technologies`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=7;
-
---
--- AUTO_INCREMENT per la tabella `training_plans`
---
-ALTER TABLE `training_plans`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT per la tabella `users`
---
-ALTER TABLE `users`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
-
---
--- AUTO_INCREMENT per la tabella `user_certifications`
---
-ALTER TABLE `user_certifications`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT per la tabella `work_modes`
---
-ALTER TABLE `work_modes`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=5;
-
---
--- Limiti per le tabelle scaricate
---
-
---
--- Limiti per la tabella `agency_contacts`
---
-ALTER TABLE `agency_contacts`
-  ADD CONSTRAINT `ac_fk1` FOREIGN KEY (`agency_id`) REFERENCES `agencies` (`id`) ON DELETE CASCADE;
-
---
--- Limiti per la tabella `agency_contracts`
---
-ALTER TABLE `agency_contracts`
-  ADD CONSTRAINT `acn_fk1` FOREIGN KEY (`agency_id`) REFERENCES `agencies` (`id`) ON DELETE CASCADE;
-
---
--- Limiti per la tabella `app_logs`
---
-ALTER TABLE `app_logs`
-  ADD CONSTRAINT `log_fk_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL;
-
---
--- Limiti per la tabella `brand_contacts_history`
---
-ALTER TABLE `brand_contacts_history`
-  ADD CONSTRAINT `bch_fk_brand` FOREIGN KEY (`brand_id`) REFERENCES `brands` (`id`) ON DELETE CASCADE,
-  ADD CONSTRAINT `bch_fk_user` FOREIGN KEY (`archived_by`) REFERENCES `users` (`id`) ON DELETE SET NULL;
-
---
--- Limiti per la tabella `brand_referents`
---
-ALTER TABLE `brand_referents`
-  ADD CONSTRAINT `bref_fk1` FOREIGN KEY (`brand_id`) REFERENCES `brands` (`id`) ON DELETE CASCADE,
-  ADD CONSTRAINT `bref_fk_emp` FOREIGN KEY (`employee_id`) REFERENCES `employees` (`id`) ON DELETE CASCADE;
-
---
--- Limiti per la tabella `brand_requirements_history`
---
-ALTER TABLE `brand_requirements_history`
-  ADD CONSTRAINT `brh_fk1` FOREIGN KEY (`brand_id`) REFERENCES `brands` (`id`) ON DELETE CASCADE;
-
---
--- Limiti per la tabella `brand_technologies`
---
-ALTER TABLE `brand_technologies`
-  ADD CONSTRAINT `fk_bt_brand` FOREIGN KEY (`brand_id`) REFERENCES `brands` (`id`) ON DELETE CASCADE ON UPDATE CASCADE;
-
---
--- Limiti per la tabella `candidates`
---
-ALTER TABLE `candidates`
-  ADD CONSTRAINT `cand_fk1` FOREIGN KEY (`agency_id`) REFERENCES `agencies` (`id`) ON DELETE SET NULL;
-
---
--- Limiti per la tabella `candidate_applications`
---
-ALTER TABLE `candidate_applications`
-  ADD CONSTRAINT `app_fk1` FOREIGN KEY (`candidate_id`) REFERENCES `candidates` (`id`) ON DELETE CASCADE,
-  ADD CONSTRAINT `app_fk2` FOREIGN KEY (`position_id`) REFERENCES `job_positions` (`id`) ON DELETE CASCADE;
-
---
--- Limiti per la tabella `certifications`
---
-ALTER TABLE `certifications`
-  ADD CONSTRAINT `c_fk1` FOREIGN KEY (`brand_id`) REFERENCES `brands` (`id`) ON DELETE CASCADE,
-  ADD CONSTRAINT `c_fk2` FOREIGN KEY (`technology_id`) REFERENCES `technologies` (`id`) ON DELETE CASCADE;
-
---
--- Limiti per la tabella `company_locations`
---
-ALTER TABLE `company_locations`
-  ADD CONSTRAINT `cl_fk1` FOREIGN KEY (`company_id`) REFERENCES `companies` (`id`) ON DELETE CASCADE;
-
---
--- Limiti per la tabella `employees`
---
-ALTER TABLE `employees`
-  ADD CONSTRAINT `emp_fk_co` FOREIGN KEY (`company_id`) REFERENCES `companies` (`id`) ON DELETE SET NULL,
-  ADD CONSTRAINT `emp_fk_loc` FOREIGN KEY (`location_id`) REFERENCES `company_locations` (`id`) ON DELETE SET NULL,
-  ADD CONSTRAINT `emp_fk_wm` FOREIGN KEY (`work_mode_id`) REFERENCES `work_modes` (`id`) ON DELETE SET NULL;
-
---
--- Limiti per la tabella `employee_brands`
---
-ALTER TABLE `employee_brands`
-  ADD CONSTRAINT `eb_fk_brand` FOREIGN KEY (`brand_id`) REFERENCES `brands` (`id`) ON DELETE CASCADE,
-  ADD CONSTRAINT `eb_fk_emp` FOREIGN KEY (`employee_id`) REFERENCES `employees` (`id`) ON DELETE CASCADE;
-
---
--- Limiti per la tabella `interview_scorecards`
---
-ALTER TABLE `interview_scorecards`
-  ADD CONSTRAINT `sc_fk1` FOREIGN KEY (`application_id`) REFERENCES `candidate_applications` (`id`) ON DELETE CASCADE,
-  ADD CONSTRAINT `sc_fk2` FOREIGN KEY (`interviewer_id`) REFERENCES `users` (`id`) ON DELETE CASCADE;
-
---
--- Limiti per la tabella `job_positions`
---
-ALTER TABLE `job_positions`
-  ADD CONSTRAINT `jp_fk1` FOREIGN KEY (`brand_id`) REFERENCES `brands` (`id`) ON DELETE SET NULL,
-  ADD CONSTRAINT `jp_fk2` FOREIGN KEY (`requested_by`) REFERENCES `users` (`id`) ON DELETE SET NULL,
-  ADD CONSTRAINT `jp_fk3` FOREIGN KEY (`team_leader_id`) REFERENCES `users` (`id`) ON DELETE SET NULL;
-
---
--- Limiti per la tabella `notifications`
---
-ALTER TABLE `notifications`
-  ADD CONSTRAINT `notif_fk_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE;
-
---
--- Limiti per la tabella `planned_exams`
---
-ALTER TABLE `planned_exams`
-  ADD CONSTRAINT `pe_fk2` FOREIGN KEY (`certification_id`) REFERENCES `certifications` (`id`) ON DELETE CASCADE,
-  ADD CONSTRAINT `pe_fk_emp` FOREIGN KEY (`employee_id`) REFERENCES `employees` (`id`) ON DELETE CASCADE;
-
---
--- Limiti per la tabella `position_publications`
---
-ALTER TABLE `position_publications`
-  ADD CONSTRAINT `pp_fk1` FOREIGN KEY (`position_id`) REFERENCES `job_positions` (`id`) ON DELETE CASCADE,
-  ADD CONSTRAINT `pp_fk2` FOREIGN KEY (`published_by`) REFERENCES `users` (`id`) ON DELETE SET NULL;
-
---
--- Limiti per la tabella `role_permissions`
---
-ALTER TABLE `role_permissions`
-  ADD CONSTRAINT `rp_fk1` FOREIGN KEY (`role_id`) REFERENCES `roles` (`id`) ON DELETE CASCADE;
-
---
--- Limiti per la tabella `training_plans`
---
-ALTER TABLE `training_plans`
-  ADD CONSTRAINT `tp_fk2` FOREIGN KEY (`certification_id`) REFERENCES `certifications` (`id`) ON DELETE CASCADE,
-  ADD CONSTRAINT `tp_fk_emp` FOREIGN KEY (`employee_id`) REFERENCES `employees` (`id`) ON DELETE CASCADE;
-
---
--- Limiti per la tabella `users`
---
-ALTER TABLE `users`
-  ADD CONSTRAINT `u_fk_employee` FOREIGN KEY (`employee_id`) REFERENCES `employees` (`id`) ON DELETE SET NULL,
-  ADD CONSTRAINT `u_fk_role` FOREIGN KEY (`role_id`) REFERENCES `roles` (`id`);
-
---
--- Limiti per la tabella `user_certifications`
---
-ALTER TABLE `user_certifications`
-  ADD CONSTRAINT `uc_fk2` FOREIGN KEY (`certification_id`) REFERENCES `certifications` (`id`) ON DELETE CASCADE,
-  ADD CONSTRAINT `uc_fk_emp` FOREIGN KEY (`employee_id`) REFERENCES `employees` (`id`) ON DELETE CASCADE;
+SET FOREIGN_KEY_CHECKS = 1;
 COMMIT;
 
-/*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;
-/*!40101 SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS */;
-/*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
+-- ============================================================================
+-- Fine Allineamento Schema cert_management
+-- ============================================================================
