@@ -1,0 +1,18 @@
+# ==============================================================================
+# PortalManager v1.9.54 — Regole di Protezione e Sicurezza
+# Copiare o verificare che queste regole siano presenti nel file .htaccess di root
+# ==============================================================================
+
+# 1. Protezione categorica file di archivio e dump DB
+<FilesMatch "\.(zip|tar|gz|7z|sql)$">
+    Require all denied
+</FilesMatch>
+
+# 2. Protezione script critici di diagnostica e reset admin
+<FilesMatch "^(diag|reset_admin|fix_password|install|install_old)\.php$">
+    Require all denied
+</FilesMatch>
+
+# 3. Protezione cartelle sensibili
+RedirectMatch 403 ^/Dump/.*$
+RedirectMatch 403 ^/UpdateControl/.*$
