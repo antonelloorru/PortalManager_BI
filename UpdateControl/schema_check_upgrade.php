@@ -23,6 +23,12 @@
  * ═══════════════════════════════════════════════════════════════
  */
 
+require_once dirname(__DIR__) . '/access_control.php';
+if ((int)($_SESSION['role_id'] ?? 99) !== 1) {
+    http_response_code(403);
+    die('<!DOCTYPE html><html lang="it"><meta charset="UTF-8"><title>403</title><body style="font-family:sans-serif;padding:40px;text-align:center"><h1>403 Forbidden</h1><p>Accesso consentito esclusivamente al Super Admin.</p></body></html>');
+}
+
 // ── Connessione DB ─────────────────────────────────────────────
 $pdo      = null;
 $db_error = null;
@@ -602,6 +608,7 @@ details summary{cursor:pointer;color:#64748b;font-size:11px;margin-top:4px}
   <div class="warn-box">⚠ Config.php non trovato nella stessa cartella. Inserisci le credenziali manualmente.</div>
   <?php endif; ?>
   <form method="POST">
+    <?= csrf_field() ?>
     <div class="grid2">
       <div><label>Host</label><input type="text" name="db_host" value="localhost"></div>
       <div><label>Database</label><input type="text" name="db_name" value="cert_management"></div>
@@ -615,6 +622,7 @@ details summary{cursor:pointer;color:#64748b;font-size:11px;margin-top:4px}
 <?php elseif ($db_error): ?>
 <div class="err-box">❌ Errore connessione: <?=h($db_error)?></div>
 <form method="POST">
+  <?= csrf_field() ?>
   <div class="grid2">
     <div><label>Host</label><input type="text" name="db_host" value="localhost"></div>
     <div><label>Database</label><input type="text" name="db_name" value="cert_management"></div>
@@ -692,6 +700,7 @@ details summary{cursor:pointer;color:#64748b;font-size:11px;margin-top:4px}
   </div>
 
   <form method="POST" onsubmit="return confirm('Confermi l\'esecuzione di tutte le modifiche al database?')">
+    <?= csrf_field() ?>
     <?php if(!file_exists(__DIR__.'/Config.php')): ?>
     <input type="hidden" name="db_host" value="<?=h($_POST['db_host']??'localhost')?>">
     <input type="hidden" name="db_name" value="<?=h($_POST['db_name']??'cert_management')?>">
@@ -706,6 +715,7 @@ details summary{cursor:pointer;color:#64748b;font-size:11px;margin-top:4px}
 </div>
 <?php else: ?>
 <form method="POST">
+  <?= csrf_field() ?>
   <?php if(!file_exists(__DIR__.'/Config.php')): ?>
   <input type="hidden" name="db_host" value="<?=h($_POST['db_host']??'localhost')?>">
   <input type="hidden" name="db_name" value="<?=h($_POST['db_name']??'cert_management')?>">
