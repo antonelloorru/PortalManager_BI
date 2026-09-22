@@ -23,6 +23,41 @@ if (isset($pdo) && $pdo instanceof PDO && class_exists('Session')) {
     Session::syncRole($pdo);
 }
 
+// v1.9.56 — Auto-migrazione idempotente tabelle menu_preferences e permissions
+if (isset($pdo) && $pdo instanceof PDO) {
+    static $menuMigrated = false;
+    if (!$menuMigrated) {
+        $menuMigrated = true;
+        try {
+            $pdo->query("SELECT id FROM menu_preferences LIMIT 0")->closeCursor();
+            $pdo->query("SELECT id FROM permissions LIMIT 0")->closeCursor();
+        } catch (\Throwable $e) {
+            $candidates = [
+                __DIR__ . '/20260918_113000_fix_menu_permissions.sql',
+                __DIR__ . '/sql/20260918_113000_fix_menu_permissions.sql',
+                __DIR__ . '/migration_menu_permissions.sql',
+            ];
+            $mf = null;
+            foreach ($candidates as $c) {
+                if (file_exists($c)) { $mf = $c; break; }
+            }
+            if ($mf) {
+                $sqlContent = file_get_contents($mf);
+                $lines = array_map(function($l) {
+                    $t = trim($l);
+                    return str_starts_with($t, '--') ? '' : $l;
+                }, explode("\n", $sqlContent));
+                $cleanSql = implode("\n", $lines);
+                foreach (explode(";", $cleanSql) as $s) {
+                    $s = trim($s);
+                    if (!$s) continue;
+                    try { $pdo->exec($s); } catch (\Throwable $x) {}
+                }
+            }
+        }
+    }
+}
+
 $current_page   = basename($_SERVER['PHP_SELF']);
 // Rimuovi l'estensione perché Router usa 'brand' non 'brand.php'
 $current_key    = str_ends_with($current_page, '.php')
@@ -32,11 +67,10 @@ $current_key    = str_ends_with($current_page, '.php')
 $public_pages   = ['login.php', 'unauthorized.php', 'install.php', 'r.php'];
 $always_allowed = [
     'index.php', 'user_profile.php', 'notifications.php', 'logout.php',
-    'db_upgrade.php', 'schema_check_upgrade.php', 'health_check.php', 'system_update.php',
     'api_filters.php', 'api_cert_search.php', 'api_cert_history.php', 'api_contract_docs.php', 'api_cert_codes.php',
     'doc_download.php', 'download.php',
-    // NOTA v4.0: reset_admin.php e fix_password.php RIMOSSI da always_allowed.
-    // In produzione devono essere bloccati via installer_disabled.flag.
+    // NOTA v1.9.54: db_upgrade.php, schema_check_upgrade.php, health_check.php e system_update.php
+    // rimossi da always_allowed per riservarli esclusivamente al Super Admin (role_id = 1).
 ];
 
 if (!in_array($current_page, $public_pages)) {
@@ -113,6 +147,30 @@ function can(string $action = 'view', string $page = ''): bool
 }
 
 function check_ui_permission(string $page): bool { return can('view', $page); }
+
+/**
+ * v1.9.56 — RBAC Policy Check standard.
+ * Supporta sia nomi file fisici (es. 'menu_customizer.php') sia alias/slug
+ * di capability (es. 'menu.customize', 'can_customize_menu', 'menu_customizer').
+ */
+function hasPermissionTo(string $permission, string $action = 'view'): bool
+{
+    static $aliasMap = [
+        'menu.customize'      => 'menu_customizer.php',
+        'can_customize_menu'  => 'menu_customizer.php',
+        'menu_customizer'     => 'menu_customizer.php',
+        'user.profile'        => 'user_profile.php',
+        'roles.manage'        => 'manage_roles.php',
+        'permissions.manage'  => 'manage_permissions.php',
+    ];
+
+    $targetPage = $aliasMap[$permission] ?? $permission;
+    if (!str_ends_with($targetPage, '.php')) {
+        $targetPage .= '.php';
+    }
+
+    return can($action, $targetPage);
+}
 
 function perms(string $page = ''): array
 {

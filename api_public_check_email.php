@@ -5,7 +5,8 @@ declare(strict_types=1);
  * Cerca in candidates.email (case-insensitive via collation _ci) e
  * segnala presenza di candidatura attiva (candidate_applications.stage).
  */
-require_once __DIR__ . '/bootstrap.php';
+define('CSRF_SKIP', true); // Endpoint API autenticato via HMAC (X-PM-Signature), non usa sessione browser
+require_once __DIR__ . '/app/bootstrap.php';
 require_once __DIR__ . '/app/PublicApiAuth.php';
 require_once __DIR__ . '/app/ApiResponse.php';
 require_once __DIR__ . '/app/CareersSettings.php';

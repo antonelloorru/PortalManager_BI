@@ -8,7 +8,8 @@ declare(strict_types=1);
  *   - candidate_applications (stage='cv_received'; UNIQUE candidate_id+position_id)
  * File: uploads/cv_imports/cand_<id>_cv_<ts>.<ext>   (allineato al pattern esistente)
  */
-require_once __DIR__ . '/bootstrap.php';
+define('CSRF_SKIP', true); // Endpoint API autenticato via HMAC (X-PM-Signature), non usa sessione browser
+require_once __DIR__ . '/app/bootstrap.php';
 require_once __DIR__ . '/app/PublicApiAuth.php';
 require_once __DIR__ . '/app/ApiResponse.php';
 require_once __DIR__ . '/app/CareersSettings.php';

@@ -4,7 +4,7 @@ declare(strict_types=1);
  * PortalManager v1.9.26 — GET posizioni aperte (schema reale).
  * View: v_public_open_positions
  */
-require_once __DIR__ . '/bootstrap.php';
+require_once __DIR__ . '/app/bootstrap.php';
 require_once __DIR__ . '/app/PublicApiAuth.php';
 require_once __DIR__ . '/app/ApiResponse.php';
 
@@ -49,7 +49,9 @@ try {
     $stmt = $pdo->prepare($sql);
     $stmt->execute($bind);
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    $total = (int)$pdo->query("SELECT COUNT(*) FROM v_public_open_positions " . $whereSql)->fetchColumn();
+    $countStmt = $pdo->prepare("SELECT COUNT(*) FROM v_public_open_positions " . $whereSql);
+    $countStmt->execute($bind);
+    $total = (int)$countStmt->fetchColumn();
 
     $auth->audit($clientId, 'positions', 'GET', 200, $reqId);
     ApiResponse::json(200, ['ok' => true, 'total' => $total, 'items' => $rows], $reqId);

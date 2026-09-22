@@ -61,6 +61,7 @@ class MenuManager
                     ['page' => 'training_plans',          'label' => 'Master calendar',        'icon' => 'fa-calendar-days'],
                     ['page' => 'upload_certificato',      'label' => 'Carica certificato',     'icon' => 'fa-upload'],
                     ['page' => 'cert_import_cisco',       'label' => 'Import certificazioni Cisco','icon' => 'fa-file-import'],
+                    ['page' => 'cert_import_omnissa',     'label' => 'Import certificazioni Omnissa','icon' => 'fa-file-import'],
                     ['page' => 'programmazione',          'label' => 'Pianifica esame',        'icon' => 'fa-calendar-plus'],
                     ['page' => 'segreteria',              'label' => 'Segreteria & Logistica', 'icon' => 'fa-concierge-bell'],
                 ],

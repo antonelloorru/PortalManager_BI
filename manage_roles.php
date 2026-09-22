@@ -21,6 +21,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $desc = trim($_POST['description'] ?? '');
             if ($name) {
                 $pdo->prepare("INSERT INTO roles (name, description) VALUES (?,?)")->execute([$name, $desc ?: null]);
+                $newRoleId = (int)$pdo->lastInsertId();
+                if ($newRoleId > 0) {
+                    // Integrità referenziale: inizializza mappatura in role_permissions
+                    $pdo->prepare("INSERT IGNORE INTO role_permissions (role_id, page_name, can_view, can_create, can_edit, can_delete, can_export) VALUES (?, 'menu_customizer.php', 0, 0, 0, 0, 0)")
+                        ->execute([$newRoleId]);
+                }
                 $msg = "<div class='alert alert-success'>Ruolo '{$name}' creato.</div>";
                 write_log('Roles','success',"Nuovo ruolo: $name",$u_id);
             }
@@ -40,6 +46,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($rid <= 6) throw new Exception("I ruoli di sistema (1-6) non possono essere eliminati.");
             $cnt = $pdo->prepare("SELECT COUNT(*) FROM users WHERE role_id=?"); $cnt->execute([$rid]);
             if ($cnt->fetchColumn() > 0) throw new Exception("Impossibile: ci sono utenti assegnati a questo ruolo.");
+            // Integrità referenziale: pulizia preferenze menu e permessi per prevenire record orfani
+            $pdo->prepare("DELETE FROM menu_preferences WHERE scope_type='role' AND scope_id=?")->execute([$rid]);
+            $pdo->prepare("DELETE FROM role_permissions WHERE role_id=?")->execute([$rid]);
             $pdo->prepare("DELETE FROM roles WHERE id=?")->execute([$rid]);
             $msg = "<div class='alert alert-success'>Ruolo eliminato.</div>";
         }
@@ -71,7 +80,8 @@ $roles = $pdo->query(
         <td style="font-size:12px;color:var(--muted)"><?=h($r['description']??'—')?></td>
         <td style="text-align:center"><span style="background:#f1f5f9;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:700"><?=$r['user_count']?></span></td>
         <td style="text-align:center;white-space:nowrap" class="no-print">
-          <button onclick='openEditModal(<?=json_encode($r,JSON_HEX_APOS|JSON_HEX_QUOT)?>)' class="btn btn-blue btn-sm"><i class="fa-solid fa-pen"></i></button>
+          <a href="<?= (class_exists('Router') ? Router::url('menu_customizer') : 'menu_customizer.php') ?>?scope_type=role&scope_id=<?=$r['id']?>" class="btn btn-sm" style="background:#7c3aed;color:#fff;margin-right:4px" title="Personalizza menu ruolo"><i class="fa-solid fa-bars-staggered"></i></a>
+          <button onclick='openEditModal(<?=json_encode($r,JSON_HEX_APOS|JSON_HEX_QUOT)?>)' class="btn btn-blue btn-sm" title="Modifica ruolo"><i class="fa-solid fa-pen"></i></button>
           <?php if($r['id']>6): ?>
           <form method="POST" style="display:inline" onsubmit="return confirm('Eliminare?')">
             <?= csrf_field() ?>

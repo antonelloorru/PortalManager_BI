@@ -13,7 +13,11 @@
  */
 
 if (session_status() === PHP_SESSION_NONE) {
-    @session_start();
+    if (class_exists('Session')) {
+        Session::start();
+    } else {
+        @session_start();
+    }
 }
 
 $is_logged = !empty($_SESSION['user_id']);

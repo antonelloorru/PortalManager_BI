@@ -75,8 +75,9 @@ if (!in_array($page, $alwaysAllowed, true) && !empty($_SESSION['user_id'])) {
 
 // ── Pagina corrente accessibile via current_page() ─────────────
 $GLOBALS['_router_current_page'] = $page;
-$_SERVER['PHP_SELF'] = '/' . $page . '.php';
-$_SERVER['SCRIPT_NAME'] = '/' . $page . '.php';
+$basePrefix = class_exists('Router') ? Router::base() : '';
+$_SERVER['PHP_SELF']    = $basePrefix . '/' . $page . '.php';
+$_SERVER['SCRIPT_NAME'] = $basePrefix . '/' . $page . '.php';
 
 require $targetFile;
 

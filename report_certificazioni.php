@@ -122,6 +122,7 @@ if (!empty($f_emps) && !$restrict_emp) { $where[] = "uc.employee_id IN(".implode
 if (!empty($f_status)){ $where[] = "uc.status IN(".implode(',',array_fill(0,count($f_status),'?')).")"; $params=array_merge($params,$f_status); }
 
 $sql = "SELECT uc.*, cert.name cert_name, cert.code cert_code, b.name brand_name,
+               e.credly_url emp_credly_url, e.linkedin_url emp_linkedin_url,
                e.first_name, e.last_name, t.name tech_name
         FROM user_certifications uc
         JOIN certifications cert ON uc.certification_id = cert.id
@@ -242,15 +243,38 @@ require_once('header.php');
     <tr>
       <th>Collaboratore</th><th>Certificazione</th><th>Brand</th><th>Tecnologia</th>
       <th>Conseguimento</th><th>Scadenza</th>
+      <th style="text-align:center">Credly</th><th style="text-align:center">LinkedIn</th>
       <th style="text-align:center">PDF</th><th style="text-align:center">Stato</th>
       <?php if($can_edit): ?><th style="text-align:center">Azioni</th><?php endif; ?>
     </tr>
   </thead>
   <tbody>
   <?php if(empty($results)): ?>
-  <tr><td colspan="9" style="text-align:center;padding:40px;color:var(--muted)">Nessun certificato trovato.</td></tr>
+  <tr><td colspan="11" style="text-align:center;padding:40px;color:var(--muted)">Nessun certificato trovato.</td></tr>
   <?php endif; ?>
   <?php foreach($results as $r): ?>
+  <?php
+    // Link Credly: badge specifico (certificate_code UUID) -> template cert -> profilo dip.
+    $cc = trim((string)($r['certificate_code'] ?? ''));
+    $credly = '';
+    if ($cc !== '' && preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $cc)) {
+        $credly = 'https://www.credly.com/badges/' . $cc;
+    } elseif (!empty($r['emp_credly_url'])) {
+        $credly = $r['emp_credly_url'];
+    }
+    // Link LinkedIn: "Aggiungi al profilo" per la certificazione (con date e cert URL)
+    $linkedin = '';
+    if (!empty($r['cert_name'])) {
+        $q = ['startTask' => 'CERTIFICATION_NAME', 'name' => $r['cert_name']];
+        if (!empty($r['issue_date']))  { $q['issueYear']  = date('Y', strtotime($r['issue_date']));  $q['issueMonth']  = date('n', strtotime($r['issue_date'])); }
+        if (!empty($r['expiry_date'])) { $q['expirationYear'] = date('Y', strtotime($r['expiry_date'])); $q['expirationMonth'] = date('n', strtotime($r['expiry_date'])); }
+        if ($credly !== '') $q['certUrl'] = $credly;
+        if ($cc !== '')     $q['certId']  = $cc;
+        $linkedin = 'https://www.linkedin.com/profile/add?' . http_build_query($q);
+    } elseif (!empty($r['emp_linkedin_url'])) {
+        $linkedin = $r['emp_linkedin_url'];
+    }
+  ?>
   <tr>
     <td><strong><?=h($r['first_name'].' '.$r['last_name'])?></strong></td>
     <td><?=h($r['cert_name'])?><?php if($r['cert_code']): ?><br><code style="font-size:10px;color:var(--muted)"><?=h($r['cert_code'])?></code><?php endif; ?></td>
@@ -258,6 +282,12 @@ require_once('header.php');
     <td style="font-size:12px;color:var(--muted)"><?=h($r['tech_name'])?></td>
     <td><?=format_date($r['issue_date'])?></td>
     <td><?=$r['expiry_date']?format_date($r['expiry_date']):'Perpetua'?></td>
+    <td style="text-align:center">
+      <?php if($credly): ?><a href="<?=h($credly)?>" target="_blank" rel="noopener" title="Credly"><i class="fa-solid fa-award" style="color:#ff6b00;font-size:15px"></i></a><span style="display:none"><?=h($credly)?></span><?php else: ?>&mdash;<?php endif; ?>
+    </td>
+    <td style="text-align:center">
+      <?php if($linkedin): ?><a href="<?=h($linkedin)?>" target="_blank" rel="noopener" title="Aggiungi a LinkedIn"><i class="fa-brands fa-linkedin" style="color:#0a66c2;font-size:15px"></i></a><span style="display:none"><?=h($linkedin)?></span><?php else: ?>&mdash;<?php endif; ?>
+    </td>
     <td style="text-align:center">
       <?php if($r['document_path']): ?>
       <a href="download.php?file=<?=urlencode($r['document_path'])?>" target="_blank" style="color:#e11d48"><i class="fa-solid fa-file-pdf" style="font-size:16px"></i></a>

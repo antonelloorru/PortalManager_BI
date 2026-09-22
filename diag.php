@@ -18,8 +18,13 @@
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
-// ── No autenticazione: questo è uno strumento diagnostico standalone ─
-// In produzione: proteggere via .htaccess o IP whitelist.
+if (PHP_SAPI !== 'cli') {
+    require_once __DIR__ . '/access_control.php';
+    if ((int)($_SESSION['role_id'] ?? 99) !== 1) {
+        http_response_code(403);
+        die('Accesso negato: strumento riservato esclusivamente al Super Admin.');
+    }
+}
 
 $results = [];
 function check(string $name, bool $ok, string $detail = '', string $suggestion = ''): void {
@@ -312,6 +317,7 @@ foreach (['pdo_mysql','mbstring','openssl','curl','zip','json'] as $ext) {
     <?php endif; ?>
 
     <form method="POST">
+      <?= csrf_field() ?>
       <label style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;color:#475569;margin-bottom:4px">Email account</label>
       <input type="text" name="reset_email" required placeholder="admin@example.com" autocomplete="off">
 

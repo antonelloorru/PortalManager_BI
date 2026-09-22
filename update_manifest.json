@@ -1,11 +1,20 @@
 {
-    "name": "PortalManager Release v1.9.56",
-    "version": "1.9.56",
-    "release_date": "2026-09-18 11:00:00",
-    "description": "Audit RBAC, censimento dizionario permissions, migrazione automatica e allineamento modulo Personalizza Menu per tutti i ruoli.",
+    "name": "PortalManager Release v1.9.57",
+    "version": "1.9.57",
+    "release_date": "2026-09-18 14:30:00",
+    "description": "Ordinativi Pratix: allineamento intestazione colonna 'Cliente in SP' nella tabella commesse collegate, nella vista di stampa PDF e negli export XLSX/CSV.",
     "files": [
         "update_manifest.json",
         "VERSION",
+        "pratix_orders.php",
+        "pratix_orders_print.php",
+        "GUIDA_APPLICAZIONE_HOTFIX_v1.9.57.md",
+        "db_upgrade.php",
+        "UpdateControl/db_upgrade.php",
+        "20260918_113000_update_cert_management_schema.sql",
+        "20260918_113000_fix_menu_permissions.sql",
+        "sql/20260918_113000_update_cert_management_schema.sql",
+        "sql/20260918_113000_fix_menu_permissions.sql",
         "migration_menu_permissions.sql",
         "access_control.php",
         "app/MenuManager.php",
@@ -13,8 +22,6 @@
         "header.php",
         "manage_permissions.php",
         "manage_roles.php",
-        "db_upgrade.php",
-        "UpdateControl/db_upgrade.php",
         "cert_management.sql",
         "sql/cert_management.sql",
         "Config.php",
@@ -43,7 +50,6 @@
         "public/careers/index.html",
         ".htaccess",
         "tools/cli_backup.php",
-        "tools/safe_backup.ps1",
-        "GUIDA_APPLICAZIONE_HOTFIX_v1.9.56.md"
+        "tools/safe_backup.ps1"
     ]
 }

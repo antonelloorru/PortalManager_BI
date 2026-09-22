@@ -425,6 +425,17 @@ $interv   = $model->interventions($pid);
 $employees = $pdo->query("SELECT id, first_name, last_name FROM employees ORDER BY last_name, first_name")->fetchAll(PDO::FETCH_ASSOC);
 $presByCC = []; foreach ($presales as $pe) $presByCC[$pe['cost_center']] = $pe;
 
+// v1.9.61 — Dati Pratix collegati alla commessa (1 commessa -> N Codici Pratix)
+$pratix_rows = [];
+try {
+    $stpx = $pdo->prepare(
+        "SELECT `codice_pratix`, `cliente_fatturazione`, `cliente_effettivo`
+           FROM `v_cm_pratix_commessa_codici`
+          WHERE `project_id` = ?
+          ORDER BY `codice_pratix`");
+    $stpx->execute([(int)$pid]);
+    $pratix_rows = $stpx->fetchAll(PDO::FETCH_ASSOC);
+} catch (Throwable $e) { $pratix_rows = []; }
 $msg='';
 if (!empty($_SESSION['flash_msg'])) { $msg=$_SESSION['flash_msg']; unset($_SESSION['flash_msg']); }
 require_once('header.php');
@@ -442,6 +453,30 @@ $eur = fn($v)=> $v===null?'—':number_format((float)$v,2,',','.').' €';
   <button class="tab-btn" data-tab="gantt">Gantt</button>
   <button class="tab-btn" data-tab="report">Report &amp; Avanzamento</button>
   <button class="tab-btn" data-tab="dgb">DGB<?=$dgb_roll?' <span style="background:#0891b2;color:#fff;border-radius:8px;padding:0 6px;font-size:10px">'.number_format((int)$dgb_roll['activities'],0,',','.').'</span>':''?></button>
+  <button class="tab-btn" data-tab="pratix">Pratix<?= $pratix_rows ? ' <span style="background:#0f766e;color:#fff;border-radius:8px;padding:0 6px;font-size:10px">'.count($pratix_rows).'</span>' : '' ?></button>
+</div>
+
+<div id="tab-pratix" class="tab-pane" style="display:none">
+  <div class="card">
+    <h3 style="margin:0 0 4px;font-size:14px"><i class="fa-solid fa-file-invoice"></i> Dati Pratix <span style="color:var(--muted);font-weight:400;font-size:11px">(da Pratix)</span></h3>
+    <p style="color:var(--muted);font-size:12px;margin:0 0 10px">Una commessa può essere collegata a più Codici Pratix; i clienti possono variare per singolo codice.</p>
+    <?php if (!$pratix_rows): ?>
+      <div style="color:var(--muted);font-size:13px">Nessun Codice Pratix collegato a questa commessa.</div>
+    <?php else: ?>
+      <table class="data-table" style="width:100%;font-size:12px">
+        <thead><tr><th>Codice Pratix</th><th>Cliente Fatturazione</th><th>Cliente Effettivo</th></tr></thead>
+        <tbody>
+        <?php foreach ($pratix_rows as $pr): ?>
+          <tr>
+            <td style="font-weight:600"><?=h($pr['codice_pratix'] ?? '—')?></td>
+            <td><?=h($pr['cliente_fatturazione'] ?? '—')?></td>
+            <td><?=h($pr['cliente_effettivo'] ?? '—')?></td>
+          </tr>
+        <?php endforeach; ?>
+        </tbody>
+      </table>
+    <?php endif; ?>
+  </div>
 </div>
 
 <div id="tab-anag" class="tab-pane">

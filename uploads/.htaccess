@@ -1,0 +1,31 @@
+# ═══════════════════════════════════════════════════════════════════
+#  certV 4.0 — uploads/.htaccess
+#  Impedisce l'esecuzione di file PHP/script nella cartella uploads.
+#  Anche se un attaccante riuscisse a caricare un file dannoso,
+#  Apache lo servirebbe come testo, non lo eseguirebbe.
+# ═══════════════════════════════════════════════════════════════════
+
+<FilesMatch "\.(php|phtml|php3|php4|php5|php7|php8|phar|pl|py|cgi|asp|aspx|sh|bash|jsp)$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order deny,allow
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+# Disabilita esecuzione PHP via SetHandler (doppia rete di sicurezza)
+<IfModule mod_php.c>
+    php_flag engine off
+</IfModule>
+
+# Niente directory listing
+Options -Indexes -ExecCGI
+
+# Blocca anche la sotto-cartella .ratelimit
+<FilesMatch "^\.">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+</FilesMatch>

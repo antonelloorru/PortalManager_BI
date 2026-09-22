@@ -139,6 +139,7 @@ if (class_exists('MenuManager') && $u_id > 0) {
 <html lang="it">
 <head>
 <meta charset="UTF-8">
+<base href="<?= htmlspecialchars((class_exists('Router') && Router::base()) ? Router::base() . '/' : '/', ENT_QUOTES) ?>">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <meta name="referrer" content="strict-origin-when-cross-origin">
 <meta name="csrf-token" content="<?= h(csrf_token()) ?>">
@@ -465,9 +466,11 @@ body {
           <span class="notif-dot"><?= (int)$notif_count ?></span>
           <?php endif; ?>
         </a>
+        <?php if ($is_admin || can('view', 'menu_customizer.php')): ?>
         <a href="<?= url_safe('menu_customizer') ?>" class="btn btn-sm" title="Personalizza menu" style="padding:6px 10px">
           <i class="fa-solid fa-bars-staggered"></i>
         </a>
+        <?php endif; ?>
         <a href="<?= h($emp_link) ?>" class="btn btn-sm" title="Profilo">
           <i class="fa-solid fa-circle-user"></i><?= h(explode(' ', $_SESSION['user_name'] ?? 'Utente')[0]) ?>
           <span style="background:#1e293b;color:#fff;border-radius:4px;padding:1px 5px;font-size:9px;font-weight:700;margin-left:4px"><?= h($role_label) ?></span>

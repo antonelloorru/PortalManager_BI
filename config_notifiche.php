@@ -225,11 +225,11 @@ $placeholder_msg = [
   <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:9px;padding:16px 18px;margin-bottom:22px;font-size:12px;color:#1e40af">
     <div style="font-weight:700;margin-bottom:10px"><i class="fa-solid fa-clock"></i> Configurazione cron job</div>
     <div style="margin-bottom:6px"><strong>Linux / macOS</strong></div>
-    <code style="display:block;background:#1e3a5f;color:#e2e8f0;padding:10px 14px;border-radius:7px;font-size:11px;margin-bottom:12px">0 7 * * * /usr/bin/php /var/www/html/certV/cron/cron_notifications.php >> /var/log/certv_cron.log 2>&1</code>
+    <code style="display:block;background:#1e3a5f;color:#e2e8f0;padding:10px 14px;border-radius:7px;font-size:11px;margin-bottom:12px">0 7 * * * /usr/bin/php <?= htmlspecialchars(str_replace('\\', '/', __DIR__ . '/cron_notifications.php')) ?> >> /var/log/portalmanager_cron.log 2>&1</code>
     <div style="margin-bottom:6px"><strong>Windows XAMPP — Task Scheduler</strong></div>
     <code style="display:block;background:#1e3a5f;color:#e2e8f0;padding:10px 14px;border-radius:7px;font-size:11px">
       Programma:  C:\xampp\php\php.exe<br>
-      Argomenti:  C:\xampp\htdocs\certV\cron\cron_notifications.php
+      Argomenti:  <?= htmlspecialchars(__DIR__ . DIRECTORY_SEPARATOR . 'cron_notifications.php') ?>
     </code>
     <div style="margin-top:12px;padding-top:10px;border-top:1px solid #bfdbfe">
       <strong>Test manuale:</strong>

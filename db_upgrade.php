@@ -28,6 +28,12 @@ error_reporting(E_ALL);
 ini_set('display_errors', 1);
 set_time_limit(300);
 
+require_once __DIR__ . '/access_control.php';
+if ((int)($_SESSION['role_id'] ?? 99) !== 1) {
+    http_response_code(403);
+    die('<!DOCTYPE html><html lang="it"><meta charset="UTF-8"><title>403</title><body style="font-family:sans-serif;padding:40px;text-align:center"><h1>403 Forbidden</h1><p>Accesso consentito esclusivamente al Super Admin.</p></body></html>');
+}
+
 // ── Connessione ──────────────────────────────────────────────────────────────
 $pdo = null;
 $db_error = null;
@@ -1442,6 +1448,20 @@ $VERSIONS = [
     '1.8.39' => [
         'label'    => 'v1.8.39 — Hotfix DEFINITIVO export XLSX/DOCX: corretto il file reale saved_views_api.php a ROOT (doppia session_start -> Notice in testa al file). Guardia session_start + ob_start + sanitizzazione',
         'color'    => '#16a34a',
+        'tables'   => [],
+        'permissions' => [],
+        'settings' => ['app_version','schema_version','release_label'],
+    ],
+    '1.9.56' => [
+        'label'    => 'v1.9.56 — Audit RBAC, dizionario permissions e allineamento modulo Personalizza Menu',
+        'color'    => '#7c3aed',
+        'tables'   => ['menu_preferences', 'permissions'],
+        'permissions' => ['1:menu_customizer.php', '2:menu_customizer.php'],
+        'settings' => ['app_version','schema_version','release_label'],
+    ],
+    '1.9.57' => [
+        'label'    => 'v1.9.57 — Ordinativi Pratix: aggiornamento colonna Cliente in SP',
+        'color'    => '#0f766e',
         'tables'   => [],
         'permissions' => [],
         'settings' => ['app_version','schema_version','release_label'],
@@ -3152,6 +3172,59 @@ INSERT INTO app_settings (setting_key, setting_value, description) VALUES
 ON DUPLICATE KEY UPDATE setting_value=VALUES(setting_value);
 SQL;
 
+// ─── v1.9.56: Audit RBAC, tabella permissions e allineamento menu_customizer ───
+$UPGRADE_SQL['1.9.56'] = <<<'SQL'
+CREATE TABLE IF NOT EXISTS `menu_preferences` (
+  `id`          INT NOT NULL AUTO_INCREMENT,
+  `scope_type`  ENUM('role','user') NOT NULL,
+  `scope_id`    INT NOT NULL,
+  `menu_config` LONGTEXT NOT NULL,
+  `created_at`  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`  TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_scope` (`scope_type`, `scope_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `permissions` (
+  `id`          INT NOT NULL AUTO_INCREMENT,
+  `name`        VARCHAR(100) NOT NULL,
+  `label`       VARCHAR(150) NOT NULL,
+  `description` TEXT DEFAULT NULL,
+  `module`      VARCHAR(100) NOT NULL DEFAULT 'General',
+  `created_at`  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_perm_name` (`name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT INTO `permissions` (`name`, `label`, `description`, `module`) VALUES
+  ('menu_customizer.php', 'Personalizza Menu', 'Accesso al modulo di personalizzazione ordine e visibilità menu', 'Amministrazione'),
+  ('menu.customize', 'Personalizza Menu (Alias)', 'Alias standard RBAC per la personalizzazione del menu', 'Amministrazione'),
+  ('can_customize_menu', 'Personalizza Menu (Capability)', 'Capability check per la modifica delle preferenze di navigazione', 'Amministrazione')
+ON DUPLICATE KEY UPDATE
+  `label` = VALUES(`label`),
+  `description` = VALUES(`description`),
+  `module` = VALUES(`module`);
+
+INSERT IGNORE INTO `role_permissions` (`role_id`, `page_name`, `can_view`, `can_create`, `can_edit`, `can_delete`, `can_export`) VALUES
+  (1, 'menu_customizer.php', 1, 1, 1, 1, 1),
+  (2, 'menu_customizer.php', 1, 1, 1, 0, 0);
+
+INSERT INTO app_settings (setting_key, setting_value, description) VALUES
+  ('app_version','1.9.56','Versione applicazione'),
+  ('schema_version','1.9.56','Versione schema database'),
+  ('release_label','1.9.56','Etichetta release mostrata in footer')
+ON DUPLICATE KEY UPDATE setting_value=VALUES(setting_value);
+SQL;
+
+// ─── v1.9.57: Ordinativi Pratix colonna Cliente in SP ───
+$UPGRADE_SQL['1.9.57'] = <<<'SQL'
+INSERT INTO app_settings (setting_key, setting_value, description) VALUES
+  ('app_version','1.9.57','Versione applicazione'),
+  ('schema_version','1.9.57','Versione schema database'),
+  ('release_label','1.9.57','Etichetta release mostrata in footer')
+ON DUPLICATE KEY UPDATE setting_value=VALUES(setting_value);
+SQL;
+
 
 
 // Helper: verifica se esiste un permesso role/page
@@ -3653,12 +3726,14 @@ if ($pdo && !empty($report) && !$just_upgraded):
       </ul>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
         <form method="POST" style="display:inline" onsubmit="return confirm('Applicare automaticamente <?=$_total_missing?> elementi mancanti?\n\nLa pagina verrà ricaricata al termine.\n\nIN CASO DI DUBBIO eseguire prima un BACKUP.');">
+          <?= csrf_field() ?>
           <input type="hidden" name="action" value="auto_apply">
           <button type="submit" class="btn btn-primary" style="background:var(--warning);border:0;padding:9px 18px">
             <i class="fa-solid fa-wand-magic-sparkles"></i> Auto-applica tutti i fix mancanti
           </button>
         </form>
         <form method="POST" style="display:inline">
+          <?= csrf_field() ?>
           <input type="hidden" name="action" value="backup_db">
           <button type="submit" class="btn btn-outline" style="padding:9px 14px">
             <i class="fa-solid fa-download"></i> Backup DB prima
@@ -3684,9 +3759,10 @@ if ($pdo && !empty($report) && !$just_upgraded):
     <div class="card-head"><i class="fa-solid fa-plug" style="color:var(--p)"></i><h2>Connessione Database</h2></div>
     <div class="card-body">
         <form method="POST">
+            <?= csrf_field() ?>
             <div class="grid-2">
-                <div class="fg"><label>Host</label><input type="text" name="db_host" value="localhost"></div>
-                <div class="fg"><label>Database</label><input type="text" name="db_name" value="cert_management"></div>
+                <div class="fg"><label>Host</label><input type="text" name="db_host" value="<?=htmlspecialchars($_POST['db_host'] ?? (defined('DB_HOST') ? DB_HOST : 'localhost'))?>"></div>
+                <div class="fg"><label>Database</label><input type="text" name="db_name" value="<?=htmlspecialchars($_POST['db_name'] ?? ($db_name ?: (defined('DB_NAME') ? DB_NAME : 'portalmanager')) )?>"></div>
                 <div class="fg"><label>Utente</label><input type="text" name="db_user" value="root"></div>
                 <div class="fg"><label>Password</label><input type="password" name="db_pass" value=""></div>
             </div>
@@ -3727,10 +3803,14 @@ if ($pdo && !empty($report) && !$just_upgraded):
     <div class="card-head"><i class="fa-solid fa-shield-halved" style="color:var(--p)"></i><h2 style="flex:1">Backup</h2></div>
     <div class="card-body" style="padding:16px 22px">
         <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
-            <form method="POST" style="display:inline"><input type="hidden" name="action" value="backup_db">
+            <form method="POST" style="display:inline">
+                <?= csrf_field() ?>
+                <input type="hidden" name="action" value="backup_db">
                 <button type="submit" class="btn btn-outline" onclick="this.innerHTML='<i class=\'fa-solid fa-spinner fa-spin\'></i> Backup DB...';this.disabled=true;this.form.submit()"><i class="fa-solid fa-database"></i> Backup Database</button>
             </form>
-            <form method="POST" style="display:inline"><input type="hidden" name="action" value="backup_files">
+            <form method="POST" style="display:inline">
+                <?= csrf_field() ?>
+                <input type="hidden" name="action" value="backup_files">
                 <button type="submit" class="btn btn-outline" onclick="this.innerHTML='<i class=\'fa-solid fa-spinner fa-spin\'></i> Backup files...';this.disabled=true;this.form.submit()"><i class="fa-solid fa-file-zipper"></i> Backup File Portale</button>
             </form>
             <span style="font-size:11px;color:var(--muted)"><i class="fa-solid fa-circle-info"></i> Salvati in <code>uploads/backups/</code></span>
@@ -3792,6 +3872,7 @@ $bar_col = $pct >= 90 ? 'var(--success)' : ($pct >= 60 ? 'var(--warning)' : 'var
                 </div>
             </div>
             <form method="POST" onsubmit="this.querySelector('button').innerHTML='<i class=\'fa-solid fa-spinner fa-spin\'></i> In corso...';this.querySelector('button').disabled=true">
+                <?= csrf_field() ?>
                 <input type="hidden" name="action" value="upgrade">
                 <input type="hidden" name="target_version" value="1.3.0">
                 <button type="submit" class="btn btn-success" style="font-size:15px;padding:12px 28px">

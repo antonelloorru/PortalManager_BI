@@ -78,7 +78,7 @@ try {
     };
 
     $st = $pdo->prepare(
-        "SELECT o.* FROM `v_cm_pratix_ordinativi` o
+        "SELECT o.* FROM `v_cm_pratix_ordinativi_ext` o
           WHERE " . implode(' AND ', $w) . "
           ORDER BY $ordSQL LIMIT 300");
     $st->execute($a);
@@ -149,7 +149,7 @@ if ($pronto && in_array(($_GET['export'] ?? ''), ['xlsx', 'csv', 'pdf'], true)) 
         $x['totale_dichiarato'], $x['scostamento'], $x['esito_validazione'],
         $x['dal'], $x['al']];
 
-    $rigHead = ['Ordinativo','Commessa','Denominazione','Cliente in SP','Commerciale','Tipo contratto',
+    $rigHead = ['Ordinativo','Commessa','Denominazione','Cliente','Commerciale','Tipo contratto',
                 'Descrizione','Importo','Origine importo','Fatturato','Stato commessa',
                 'Codici multipli','Data operazione'];
     $rigRows = [];
@@ -419,9 +419,37 @@ $attivi = ($q !== '') + ($cliente !== '') + ($commerciale !== '') + ($solo !== '
         </span>
       </div>
 
+      <?php // ── Dati importati da Pratix (LEFT JOIN order_code = Codice) ── ?>
+      <?php $hasPx = (($o['px_cliente_effettivo'] ?? null)!==null) || (($o['px_totale'] ?? null)!==null)
+                    || (($o['px_stato'] ?? null)!==null) || (($o['px_linea_business'] ?? null)!==null); ?>
+      <?php if ($hasPx): ?>
+        <div style="margin:6px 0 10px;padding:8px 10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px">
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:#0f766e;margin-bottom:6px">Dati Pratix <span style="color:#94a3b8">(da Pratix)</span></div>
+          <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px 14px;font-size:11px">
+          <?php $pxFields = [
+            'Cliente Effettivo (da Pratix)'       => $o['px_cliente_effettivo'] ?? null,
+            'Cliente di Fatturazione (da Pratix)' => $o['px_cliente_fatturazione'] ?? null,
+            'Progetto (da Pratix)'                => $o['px_progetto'] ?? null,
+            'Descrizione (da Pratix)'             => $o['px_descrizione'] ?? null,
+            'Stato (da Pratix)'                   => $o['px_stato'] ?? null,
+            'Azienda (da Pratix)'                 => $o['px_azienda'] ?? null,
+            'Numero Documento (da Pratix)'        => $o['px_numero_documento'] ?? null,
+            'Tipologia (da Pratix)'               => $o['px_tipologia'] ?? null,
+            'Totale (da Pratix)'                  => (isset($o['px_totale']) && $o['px_totale']!==null) ? ($n2($o['px_totale']).' €') : null,
+            'Firma Tecnica (da Pratix)'           => $o['px_firma_tecnica'] ?? null,
+            'Firma Commerciale (da Pratix)'       => $o['px_firma_commerciale'] ?? null,
+            'Linea di Business (da Pratix)'       => $o['px_linea_business'] ?? null,
+          ]; foreach ($pxFields as $lbl => $val): ?>
+            <div><div style="font-size:9px;color:#94a3b8;text-transform:uppercase"><?=h($lbl)?></div>
+                 <div style="font-weight:600;color:#334155"><?= ($val!==null && $val!=='') ? h((string)$val) : '—' ?></div></div>
+          <?php endforeach; ?>
+          </div>
+        </div>
+      <?php endif; ?>
+
       <?php // le commesse collegate ?>
       <table class="data-table" style="width:100%;font-size:11px">
-        <thead><tr><th>Commessa</th><th>Cliente in SP</th><th>Tipo contratto</th>
+        <thead><tr><th>Commessa</th><th>Cliente</th><th>Tipo contratto</th>
           <th>Descrizione</th><th style="text-align:right">Importo</th>
           <th style="text-align:center">Stato</th><th style="width:36px"></th></tr></thead>
         <tbody>

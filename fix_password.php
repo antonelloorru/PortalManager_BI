@@ -4,6 +4,13 @@
  * Genera e applica il hash bcrypt corretto per admin@certv.local
  * CANCELLARE DOPO L'USO
  */
+if (PHP_SAPI !== 'cli') {
+    require_once __DIR__ . '/access_control.php';
+    if ((int)($_SESSION['role_id'] ?? 99) !== 1) {
+        http_response_code(403);
+        die('Accesso negato: strumento riservato esclusivamente al Super Admin autenticato o via CLI.');
+    }
+}
 $pdo = null;
 $msg = '';
 if (file_exists(__DIR__.'/Config.php')) require_once __DIR__.'/Config.php';
@@ -59,6 +66,7 @@ td{padding:8px;color:#e2e8f0;border-bottom:1px solid #1e293b}
   <?php if($msg): ?><div class="msg"><?=$msg?></div><?php endif; ?>
   <?php if($pdo): ?>
   <form method="POST">
+    <?= csrf_field() ?>
     <label>Email account</label>
     <select name="email">
       <?php foreach($users as $u): ?>

@@ -15,6 +15,14 @@
  * ═══════════════════════════════════════════════════════════════
  */
 
+if (PHP_SAPI !== 'cli') {
+    require_once __DIR__ . '/access_control.php';
+    if ((int)($_SESSION['role_id'] ?? 99) !== 1) {
+        http_response_code(403);
+        die('Accesso negato: strumento riservato esclusivamente al Super Admin autenticato o via CLI.');
+    }
+}
+
 // ── Carica DB ─────────────────────────────────────────────────────────────────
 $db_error = null;
 $pdo = null;
@@ -27,11 +35,15 @@ if (file_exists(__DIR__ . '/Config.php')) {
         $db_error = $e->getMessage();
     }
 } else {
-    // Fallback: connessione diretta con valori default XAMPP
+    // Fallback: tenta la connessione usando le costanti o variabili d'ambiente correnti
+    $fbDb = defined('DB_NAME') ? DB_NAME : (getenv('DB_NAME') ?: 'portalmanager');
+    $fbHost = defined('DB_HOST') ? DB_HOST : (getenv('DB_HOST') ?: 'localhost');
+    $fbUser = defined('DB_USER') ? DB_USER : (getenv('DB_USER') ?: 'root');
+    $fbPass = defined('DB_PASS') ? DB_PASS : (getenv('DB_PASS') !== false ? getenv('DB_PASS') : '');
     try {
         $pdo = new PDO(
-            'mysql:host=localhost;dbname=cert_management;charset=utf8mb4',
-            'root', '',
+            "mysql:host={$fbHost};dbname={$fbDb};charset=utf8mb4",
+            $fbUser, $fbPass,
             [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]
         );
     } catch (PDOException $e) {
@@ -302,6 +314,7 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f172a; min-
     <!-- Tab Reset -->
     <div id="tab_reset">
       <form method="POST" onsubmit="return confirm('Confermi il reset delle credenziali?')">
+        <?= csrf_field() ?>
         <input type="hidden" name="action" value="reset_password">
         <input type="hidden" name="target_user_id" id="target_uid" value="0">
 
@@ -347,6 +360,7 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f172a; min-
         Genera l'hash senza modificare il DB. Copia la query SQL e incollala in phpMyAdmin.
       </p>
       <form method="POST">
+        <?= csrf_field() ?>
         <input type="hidden" name="action" value="show_hash">
         <div class="fg">
           <label>Password da hashare</label>

@@ -911,9 +911,9 @@ function doc_link(string $fname, string $label): string {
       <div class="grid-2">
         <div class="form-group"><label>Nome *</label><input type="text" name="first_name" value="<?=h($emp['first_name'])?>" required></div>
         <div class="form-group"><label>Cognome *</label><input type="text" name="last_name" value="<?=h($emp['last_name'])?>" required></div>
-        <div class="form-group"><label>Email aziendale</label><input type="email" name="business_email" value="<?=h($emp['business_email']??'')?>" placeholder="nome.cognome@azienda.it"></div>
+        <div class="form-group"><label>Email aziendale</label><input type="email" name="business_email" value="<?=h($emp['business_email']??'')?>" placeholder="nome.cognome@azienda.it" autocomplete="off"></div>
         <div class="form-group"><label>Telefono aziendale</label><input type="tel" name="phone" value="<?=h($emp['phone']??'')?>"></div>
-        <div class="form-group"><label>Email personale</label><input type="email" name="personal_email" value="<?=h($emp['personal_email']??'')?>" placeholder="nome@gmail.com"></div>
+        <div class="form-group"><label>Email personale</label><input type="email" name="personal_email" value="<?=h($emp['personal_email']??'')?>" placeholder="nome@gmail.com" autocomplete="off"></div>
         <div class="form-group"><label>Telefono personale</label><input type="tel" name="phone_personal" value="<?=h($emp['phone_personal']??'')?>"></div>
         <div class="form-group span-2"><label><i class="fa-brands fa-linkedin" style="color:#0a66c2"></i> URL LinkedIn</label><input type="url" name="linkedin_url" value="<?=h($emp['linkedin_url']??'')?>" placeholder="https://www.linkedin.com/in/..."></div>
         <div class="form-group span-2"><label><i class="fa-solid fa-shield-halved" style="color:#7c3aed"></i> URL Credly</label><input type="url" name="credly_url" value="<?=h($emp['credly_url']??'')?>" placeholder="https://www.credly.com/users/..."></div>

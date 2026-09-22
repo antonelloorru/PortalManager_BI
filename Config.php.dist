@@ -5,15 +5,21 @@
  * Se hai usato install.php, questo file è stato generato automaticamente.
  */
 
-define('DB_HOST',    'localhost');
-define('DB_PORT',    '3306');         // 3306 default, MAMP: 8889
-define('DB_NAME',    'cert_management');
-define('DB_USER',    'root');
-define('DB_PASS',    '');             // Vuota su XAMPP, 'root' su MAMP
-define('DB_CHARSET', 'utf8mb4');
+// 1. Caricamento ambiente locale (.env.php) se presente
+$envFile = __DIR__ . '/.env.php';
+$env = file_exists($envFile) ? (array)@include($envFile) : [];
 
-define('APP_ROOT',   __DIR__);
-define('UPLOAD_DIR', APP_ROOT . '/uploads/');
+// 2. Parametri DB con gerarchia: getenv() > .env.php > fallback predefiniti
+if (!defined('DB_HOST'))    define('DB_HOST',    getenv('DB_HOST') ?: ($env['DB_HOST'] ?? 'localhost'));
+if (!defined('DB_PORT'))    define('DB_PORT',    getenv('DB_PORT') ?: ($env['DB_PORT'] ?? '3306'));
+if (!defined('DB_NAME'))    define('DB_NAME',    getenv('DB_NAME') ?: ($env['DB_NAME'] ?? 'portalmanager'));
+if (!defined('DB_USER'))    define('DB_USER',    getenv('DB_USER') ?: ($env['DB_USER'] ?? 'root'));
+if (!defined('DB_PASS'))    define('DB_PASS',    getenv('DB_PASS') !== false ? getenv('DB_PASS') : ($env['DB_PASS'] ?? ''));
+if (!defined('DB_CHARSET')) define('DB_CHARSET', getenv('DB_CHARSET') ?: ($env['DB_CHARSET'] ?? 'utf8mb4'));
+
+if (!defined('APP_ROOT'))   define('APP_ROOT',   __DIR__);
+if (!defined('APP_BASE'))   define('APP_BASE',   __DIR__);
+if (!defined('UPLOAD_DIR')) define('UPLOAD_DIR', APP_ROOT . '/uploads/');
 
 try {
     $pdo = new PDO(

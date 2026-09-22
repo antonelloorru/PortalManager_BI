@@ -1459,6 +1459,13 @@ $VERSIONS = [
         'permissions' => ['1:menu_customizer.php', '2:menu_customizer.php'],
         'settings' => ['app_version','schema_version','release_label'],
     ],
+    '1.9.57' => [
+        'label'    => 'v1.9.57 — Ordinativi Pratix: aggiornamento colonna Cliente in SP',
+        'color'    => '#0f766e',
+        'tables'   => [],
+        'permissions' => [],
+        'settings' => ['app_version','schema_version','release_label'],
+    ],
 ];
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -3206,6 +3213,15 @@ INSERT INTO app_settings (setting_key, setting_value, description) VALUES
   ('app_version','1.9.56','Versione applicazione'),
   ('schema_version','1.9.56','Versione schema database'),
   ('release_label','1.9.56','Etichetta release mostrata in footer')
+ON DUPLICATE KEY UPDATE setting_value=VALUES(setting_value);
+SQL;
+
+// ─── v1.9.57: Ordinativi Pratix colonna Cliente in SP ───
+$UPGRADE_SQL['1.9.57'] = <<<'SQL'
+INSERT INTO app_settings (setting_key, setting_value, description) VALUES
+  ('app_version','1.9.57','Versione applicazione'),
+  ('schema_version','1.9.57','Versione schema database'),
+  ('release_label','1.9.57','Etichetta release mostrata in footer')
 ON DUPLICATE KEY UPDATE setting_value=VALUES(setting_value);
 SQL;
 

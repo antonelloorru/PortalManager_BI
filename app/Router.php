@@ -66,7 +66,7 @@ final class Router
         'manage_departments', 'hr_reference_values', 'organigramma',
 
         // Competenze & Formazione aggiuntive
-        'cert_import_cisco', 'credly_manual_import', 'linkedin_sync',
+        'cert_import_cisco', 'cert_import_omnissa', 'credly_manual_import', 'linkedin_sync',
     ];
 
     /**

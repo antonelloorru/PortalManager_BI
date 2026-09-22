@@ -28,7 +28,7 @@ require_once __DIR__ . '/app/bootstrap.php';
 // v1.8.39: la sessione è già avviata dal bootstrap. Chiamare di nuovo session_start()
 // generava il Notice "Ignoring session_start() because a session is already active"
 // che veniva stampato in testa al file esportato, rendendolo non apribile.
-if (session_status() !== PHP_SESSION_ACTIVE) { session_start(); }
+if (session_status() !== PHP_SESSION_ACTIVE) { Session::start(); }
 
 // Verifica autenticazione
 if (empty($_SESSION['user_id'])) {

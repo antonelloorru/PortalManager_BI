@@ -18,6 +18,13 @@ $u_id   = (int)$_SESSION['user_id'];
 $u_role = (int)($_SESSION['role_id'] ?? 99);
 $is_admin = ($u_role === 1);
 
+// v1.9.56 — Guard autorizzativo RBAC formale: verifica view su menu_customizer.php
+if (!$is_admin && !can('view', 'menu_customizer.php')) {
+    $targetUrl = class_exists('Router') ? Router::url('unauthorized') : 'unauthorized.php';
+    header('Location: ' . $targetUrl);
+    exit();
+}
+
 $mgr = new MenuManager($pdo);
 $msg = '';
 
@@ -37,6 +44,12 @@ if ($scope_type === 'user' && $scope_id !== $u_id && !$is_admin) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
     try {
+        if ($scope_type === 'role' && !$is_admin) {
+            throw new RuntimeException('Accesso negato: solo i Super Admin possono modificare il menu di ruolo.');
+        }
+        if ($scope_type === 'user' && !$is_admin && !can('edit', 'menu_customizer.php') && !can('view', 'menu_customizer.php')) {
+            throw new RuntimeException('Accesso negato: non disponi del permesso per personalizzare il menu.');
+        }
         if ($action === 'save_config') {
             $cfg_json = $_POST['menu_config'] ?? '[]';
             $cfg = json_decode($cfg_json, true);
@@ -159,12 +172,14 @@ foreach ($default_full as $base_sec) {
 }
 
 function user_role_can_see(PDO $pdo, string $page, int $check_role, int $session_role): bool {
-    // Super admin può sempre vedere tutto durante customizzazione
-    if ($session_role === 1) return true;
+    // Se stiamo controllando per il Super Admin (ruolo 1), vede tutto
+    if ($check_role === 1) return true;
     try {
-        $s = $pdo->prepare("SELECT can_view FROM role_permissions WHERE role_id=? AND page_name=? LIMIT 1");
-        $s->execute([$check_role, $page . '.php']);
-        return (bool)$s->fetchColumn();
+        $page_name = $page . '.php';
+        $s = $pdo->prepare("SELECT can_view FROM role_permissions WHERE role_id=? AND (page_name=? OR page_name=?) LIMIT 1");
+        $s->execute([$check_role, $page_name, $page]);
+        $v = $s->fetchColumn();
+        return ($v !== false && (int)$v === 1);
     } catch (Throwable $e) {
         return false;
     }
@@ -173,13 +188,20 @@ function user_role_can_see(PDO $pdo, string $page, int $check_role, int $session
 require_once('header.php');
 $h = fn($s) => htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8');
 
-// ── Lista ruoli per dropdown admin ──
+// ── Lista ruoli per dropdown admin (dinamica da tabella roles) ──
 $roles_list = [];
 if ($is_admin) {
-    $roles_list = [
-        1 => 'Super Admin', 2 => 'HR Director', 3 => 'Brand Manager',
-        4 => 'Team Leader', 5 => 'Recruiter',   6 => 'Dipendente',
-    ];
+    try {
+        $st = $pdo->query("SELECT id, name FROM roles ORDER BY id");
+        while ($row = $st->fetch(PDO::FETCH_ASSOC)) {
+            $roles_list[(int)$row['id']] = $row['name'];
+        }
+    } catch (Throwable $e) {
+        $roles_list = [
+            1 => 'Super Admin', 2 => 'HR Director', 3 => 'Brand Manager',
+            4 => 'Team Leader', 5 => 'Recruiter',   6 => 'Dipendente',
+        ];
+    }
 }
 
 $has_saved_pref = ($mgr->loadPreference($scope_type, $scope_id) !== null);

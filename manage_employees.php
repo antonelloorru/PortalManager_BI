@@ -1075,7 +1075,7 @@ if (isset($_GET['scheda'])) {
       <h3 style="margin:0;font-size:16px" id="mEmpTitle">Nuovo dipendente</h3>
       <button onclick="closeModal('mEmp')" style="border:none;background:none;font-size:22px;cursor:pointer;color:var(--muted)">&times;</button>
     </div>
-    <form method="POST" id="empForm">
+    <form method="POST" id="empForm" autocomplete="off">
             <?= csrf_field() ?>
       <input type="hidden" name="action" value="save">
       <input type="hidden" name="employee_id" id="e_id" value="0">
@@ -1090,8 +1090,8 @@ if (isset($_GET['scheda'])) {
         <div class="form-group" style="margin:0"><label>Data di nascita</label><input type="date" name="date_of_birth" id="e_dob"></div>
         <div class="form-group" style="margin:0"><label>Telefono aziendale</label><input type="tel" name="phone" id="e_ph" placeholder="+39 055 ..."></div>
         <div class="form-group" style="margin:0"><label>Telefono personale</label><input type="tel" name="phone_personal" id="e_pp" placeholder="+39 333 ..."></div>
-        <div class="form-group" style="margin:0"><label>Email aziendale</label><input type="email" name="business_email" id="e_be" placeholder="nome.cognome@azienda.it"></div>
-        <div class="form-group" style="margin:0"><label>Email personale</label><input type="email" name="personal_email" id="e_pe" placeholder="nome@gmail.com"></div>
+        <div class="form-group" style="margin:0"><label>Email aziendale</label><input type="email" name="business_email" id="e_be" placeholder="nome.cognome@azienda.it" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')"></div>
+        <div class="form-group" style="margin:0"><label>Email personale</label><input type="email" name="personal_email" id="e_pe" placeholder="nome@gmail.com" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')"></div>
       </div>
 
       <!-- Sezione Profili Pubblici / Social -->
