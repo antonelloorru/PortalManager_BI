@@ -1,0 +1,12 @@
+# Release Checklist — v1.9.78
+- [x] VERSION = 1.9.78; migration aggiorna app_version / schema_version / release_label
+- [x] `pm_migration_sql` registra ('1.9.78','migration_v1_9_78.sql')
+- [x] Migration idempotente (RUN1/RUN2 err=0), nessun `;` nei commenti SQL
+- [x] `php -l` su 11 file PHP
+- [x] Filtro applicato a tutti i dataset di Service Desk, Report direzionale, DGB (+ Relazione IT invariata)
+- [x] Stampa/export con perimetro dichiarato (foglio «Filtri», intestazioni)
+- [x] Parametri preparati; input validato (`PmContractFilter::norm`)
+- [x] Persistenza fra pagine con banner visibile e rimozione esplicita
+- [x] Nessuna nuova pagina: menu, Router, permessi invariati
+- [x] Fix incluso: Fatal nel grafico giornaliero Service Desk (periodi > 92 giorni)
+- [x] Docs: CHANGELOG, DEPLOYMENT, TECHNICAL_DESIGN, RELEASE_CHECKLIST
