@@ -1790,7 +1790,7 @@ $cert_count = (int)$pdo->query("SELECT COUNT(*) FROM user_certifications WHERE e
       <i class="fa-solid fa-file-word" style="color:#1e40af"></i> Curriculum Vitae Europass
     </h1>
     <div style="font-size:12px;color:var(--muted)">
-      Dipendente: <strong><?= htmlspecialchars($emp['first_name'] . ' ' . $emp['last_name']) ?></strong>
+      Dipendente: <strong><?= htmlspecialchars($emp['last_name'] . ' ' . $emp['first_name']) ?></strong>
       <?php if ($emp['employee_code']): ?> · matricola <?= htmlspecialchars($emp['employee_code']) ?><?php endif; ?>
     </div>
   </div>

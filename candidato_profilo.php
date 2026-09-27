@@ -264,7 +264,7 @@ function doc_link(string $fname, string $label): string {
     </div>
     <div>
       <h1 style="font-size:20px;font-weight:800;margin-bottom:4px">
-        <?=h($cand['first_name'].' '.$cand['last_name'])?>
+        <?=h($cand['last_name'].' '.$cand['first_name'])?>
       </h1>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <?php if($cand['email']): ?>
@@ -523,7 +523,7 @@ function doc_link(string $fname, string $label): string {
 // v5.02.05: carica TUTTI i documenti del candidato dalla tabella moderna person_documents
 $docs_q = $pdo->prepare(
     "SELECT pd.*,
-            CONCAT(COALESCE(eu.first_name,''), ' ', COALESCE(eu.last_name,'')) AS uploaded_by_name
+            CONCAT(COALESCE(eu.last_name,''), ' ', COALESCE(eu.first_name,'')) AS uploaded_by_name
        FROM person_documents pd
        LEFT JOIN users u ON u.id = pd.uploaded_by
        LEFT JOIN employees eu ON eu.id = u.employee_id

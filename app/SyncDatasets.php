@@ -159,6 +159,10 @@ ORDER BY c.code ASC",
     a.code AS `N.`,
     CONCAT(a.code, '#', ao.id_operator) AS `__grana`,
     ao.id AS `id allocazione`,
+    -- v1.9.79 — collegamento all'attivita DGB: senza, le viste non ricavano
+    -- modalita (smart working, reperibilita) e fascia oraria del rapportino
+    a.id AS `id attivita`,
+    a.code AS `codice attivita`,
     DATE_FORMAT(a.report_date, '%d/%m/%Y') AS `Data rapporto`,
     DATE_FORMAT(a.date_start, '%d/%m/%Y %H:%i') AS `Inizio intervento`,
     DATE_FORMAT(a.date_dead_line, '%d/%m/%Y %H:%i') AS `Fine intervento`,
@@ -230,6 +234,8 @@ ORDER BY a.report_date ASC, a.code ASC",
                     'N.'                      => ['report_code', 'text'],
                     '__grana'                 => ['source_uid', 'text'],
                     'id allocazione'          => ['dgb_source_id', 'int'],
+                    'id attivita'             => ['dgb_activity_id', 'int'],      // v1.9.79
+                    'codice attivita'         => ['dgb_activity_code', 'text'],   // v1.9.79
                     'Data rapporto'           => ['report_date', 'date'],
                     'Inizio intervento'       => ['start_at', 'datetime'],
                     'Fine intervento'         => ['end_at', 'datetime'],

@@ -362,7 +362,7 @@ final class TechnologyMapper
     {
         $s = $this->pdo->prepare(
             "SELECT e.id AS employee_id,
-                    CONCAT(COALESCE(e.first_name,''), ' ', COALESCE(e.last_name,'')) AS employee_name,
+                    CONCAT(COALESCE(e.last_name,''), ' ', COALESCE(e.first_name,'')) AS employee_name,
                     e.job_title,
                     GROUP_CONCAT(DISTINCT CONCAT(b.name, ' / ', c.code)
                                  ORDER BY b.name SEPARATOR ', ') AS certifications,

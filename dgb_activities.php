@@ -18,6 +18,19 @@ $u_id  = (int)$_SESSION['user_id'];
 $model = new DgbModel($pdo);
 $imp   = new DgbImporter($pdo);
 $f     = DgbModel::normFilters($_GET);
+$f['contratti'] = PmContractFilter::canonical($pdo, $f['contratti']);   // v1.9.78 — link storici contract=<id>
+$vCtr  = $model->valoriContratti();   // v1.9.78 — filtro globale Codice Contratto / PM Project
+/** v1.9.78 — foglio "Filtri" negli export XLSX: il file dichiara il proprio perimetro. */
+$dgbFiltriSheet = function () use ($f, $vCtr): array {
+    $r = [['Parametro', 'Valore']];
+    if ($f['from'] !== '' || $f['to'] !== '') $r[] = ['Periodo (data lavoro)', ($f['from'] ?: '…') . ' – ' . ($f['to'] ?: '…')];
+    if ($f['contratti']) $r[] = ['Contratto / PM Project', implode(', ', array_map(fn($v) => PmContractFilter::label($v, $vCtr), $f['contratti']))];
+    foreach (['q' => 'Codice/ticket', 'operator' => 'Incaricato (id)', 'status' => 'Stato', 'report_type' => 'Tipo report',
+              'mode' => 'Modalità', 'schedule' => 'Orario', 'oncall' => 'Reperibilità'] as $k => $l)
+        if (($f[$k] ?? '') !== '' && ($f[$k] ?? 0) !== 0) $r[] = [$l, (string)$f[$k]];
+    $r[] = ['Generato il', date('d/m/Y H:i')];
+    return $r;
+};
 
 // parametri distribuzione temporale
 $gran  = ($_GET['gran'] ?? 'month') === 'day' ? 'day' : 'month';
@@ -68,6 +81,7 @@ function dgb_dist_svg(array $dist, ?callable $drill = null): string
     foreach ($b as $i => $r) {
         $x = $col($i) + $barW * 0.15; $w = $barW * 0.7;
         $ord = (float)$r['ordinary']; $ext = (float)$r['overtime'];
+        $onc = (float)($r['oncall'] ?? 0);     // v1.9.76 — ore in reperibilità (record during_availability)
         $base = (float)$r['baseline'];
 
         // fondo grigio per il fine settimana
@@ -76,13 +90,14 @@ function dgb_dist_svg(array $dist, ?callable $drill = null): string
         // descrizione leggibile al passaggio del mouse: senza, i valori esatti
         // si possono solo stimare a occhio sull'asse
         $tip = $esc($r['label']) . ' — ordinario ' . $num($ord) . ' h';
-        if ($ext > 0)  $tip .= ', reperibilita ' . $num($ext) . ' h';
-        $tip .= ', totale ' . $num($ord + $ext) . ' h';
+        if ($ext > 0)  $tip .= ', fuori orario ' . $num($ext) . ' h';
+        if ($onc > 0)  $tip .= ', reperibilità ' . $num($onc) . ' h';
+        $tip .= ', totale ' . $num($ord + $ext + $onc) . ' h';
         if ($base > 0) {
             $tip .= ' su ' . $num($base) . ' h di riferimento';
             if (isset($r['actives']) && (int)$r['actives'] > 0) $tip .= ' (' . (int)$r['actives'] . ' incaricati)';
             if (!empty($r['estimated'])) $tip .= ' — riferimento stimato';
-            $tip .= ' — utilizzo ' . number_format(($ord + $ext) / $base * 100, 0, ',', '.') . '%';
+            $tip .= ' — utilizzo ' . number_format(($ord + $ext + $onc) / $base * 100, 0, ',', '.') . '%';
         }
         if ($isMonth) $tip .= ' — clic per il dettaglio giornaliero';
 
@@ -102,6 +117,10 @@ function dgb_dist_svg(array $dist, ?callable $drill = null): string
         if ($ext > 0) {
             $yTot = $y($ord + $ext); $hExt = $yOrd - $yTot;
             $svg .= '<rect x="' . round($x,1) . '" y="' . $yTot . '" width="' . round($w,1) . '" height="' . round(max(0,$hExt),1) . '" fill="#f59e0b"><title>' . $tip . '</title></rect>';
+        }
+        if ($onc > 0) {   // v1.9.76 — reperibilità in cima alla colonna (viola, come nella Relazione IT)
+            $yBase = $y($ord + $ext); $yTop = $y($ord + $ext + $onc);
+            $svg .= '<rect x="' . round($x,1) . '" y="' . $yTop . '" width="' . round($w,1) . '" height="' . round(max(0.8, $yBase - $yTop),1) . '" fill="#7c3aed"><title>' . $tip . '</title></rect>';
         }
         $svg .= $close;
 
@@ -132,8 +151,9 @@ function dgb_dist_svg(array $dist, ?callable $drill = null): string
     // legenda
     $ly = $H - 14;
     $svg .= '<rect x="' . $padL . '" y="' . $ly . '" width="11" height="10" fill="#2563eb"/><text x="' . ($padL+15) . '" y="' . ($ly+9) . '" font-size="10" fill="#475569">ordinario</text>';
-    $svg .= '<rect x="' . ($padL+90) . '" y="' . $ly . '" width="11" height="10" fill="#f59e0b"/><text x="' . ($padL+105) . '" y="' . ($ly+9) . '" font-size="10" fill="#475569">reperibilita</text>';
-    $svg .= '<line x1="' . ($padL+205) . '" y1="' . ($ly+5) . '" x2="' . ($padL+225) . '" y2="' . ($ly+5) . '" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="5 3"/><text x="' . ($padL+230) . '" y="' . ($ly+9) . '" font-size="10" fill="#475569">capacita ordinaria (8 h/gg)</text>';
+    $svg .= '<rect x="' . ($padL+90) . '" y="' . $ly . '" width="11" height="10" fill="#f59e0b"/><text x="' . ($padL+105) . '" y="' . ($ly+9) . '" font-size="10" fill="#475569">fuori orario</text>';
+    $svg .= '<rect x="' . ($padL+185) . '" y="' . $ly . '" width="11" height="10" fill="#7c3aed"/><text x="' . ($padL+200) . '" y="' . ($ly+9) . '" font-size="10" fill="#475569">reperibilità</text>';
+    $svg .= '<line x1="' . ($padL+285) . '" y1="' . ($ly+5) . '" x2="' . ($padL+305) . '" y2="' . ($ly+5) . '" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="5 3"/><text x="' . ($padL+310) . '" y="' . ($ly+9) . '" font-size="10" fill="#475569">capacità ordinaria (8 h/gg)</text>';
     $svg .= '</svg>';
     return $svg;
 }
@@ -149,22 +169,22 @@ if (in_array($exp, ['distsvg', 'distxlsx', 'distcsv'], true)) {
         header("Content-Disposition: attachment; filename=\"dgb_distribuzione_{$gran}_$stamp.svg\"");
         echo $svg; exit;
     }
-    $head = ['Periodo', 'Ordinario (h)', 'Reperibilità (h)', 'Carico totale (h)', 'Riferimento (h)', 'Delta vs riferimento (h)', 'Incaricati attivi', 'Nota'];
+    $head = ['Periodo', 'Ordinario (h)', 'Fuori orario (h)', 'Reperibilità (h)', 'Carico totale (h)', 'Riferimento (h)', 'Delta vs riferimento (h)', 'Incaricati attivi', 'Nota'];
     $data = [$head];
     // v1.8.52: l'export riporta anche gli incaricati attivi, che sono il
     // denominatore della baseline giornaliera: senza, il riferimento non e'
     // ricostruibile fuori dal portale.
     foreach ($dist['buckets'] as $r) $data[] = [
-        (string)$r['label'], $r['ordinary'], $r['overtime'], $r['workload'], $r['baseline'],
+        (string)$r['label'], $r['ordinary'], $r['overtime'], $r['oncall'] ?? 0, $r['workload'], $r['baseline'],
         round((float)$r['workload'] - (float)$r['baseline'], 2),
         isset($r['actives']) ? (int)$r['actives'] : '',
         !empty($r['estimated']) ? 'stimato' : '',
     ];
     $t = $dist['totals'];
-    $data[] = ['TOTALE', $t['ordinary'], $t['overtime'], $t['workload'], $t['baseline'], round($t['workload'] - $t['baseline'], 2), '', ''];
+    $data[] = ['TOTALE', $t['ordinary'], $t['overtime'], $t['oncall'] ?? 0, $t['workload'], $t['baseline'], round($t['workload'] - $t['baseline'], 2), '', ''];
     if ($exp === 'distxlsx') {
         require_once(__DIR__ . '/XlsxWriter.php');
-        $w = new XlsxWriter(); $w->addSheet('Distribuzione DGB', $data); $w->download("dgb_distribuzione_{$gran}_$stamp.xlsx"); exit;
+        $w = new XlsxWriter(); $w->addSheet('Distribuzione DGB', $data); $w->addSheet('Filtri', $dgbFiltriSheet()); $w->download("dgb_distribuzione_{$gran}_$stamp.xlsx"); exit;
     }
     header('Content-Type: text/csv; charset=UTF-8');
     header("Content-Disposition: attachment; filename=\"dgb_distribuzione_{$gran}_$stamp.csv\"");
@@ -189,7 +209,7 @@ if ($fmt === 'xlsx' || $fmt === 'csv') {
     write_log('DGB', 'info', 'Export attività (' . $fmt . '): ' . count($rows) . ' righe', $u_id);
     if ($fmt === 'xlsx') {
         require_once(__DIR__ . '/XlsxWriter.php');
-        $w = new XlsxWriter(); $w->addSheet('Attività DGB', $data); $w->download("dgb_attivita_$stamp.xlsx"); exit;
+        $w = new XlsxWriter(); $w->addSheet('Attività DGB', $data); $w->addSheet('Filtri', $dgbFiltriSheet()); $w->download("dgb_attivita_$stamp.xlsx"); exit;
     }
     header('Content-Type: text/csv; charset=UTF-8');
     header("Content-Disposition: attachment; filename=\"dgb_attivita_$stamp.csv\"");
@@ -220,6 +240,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
             catch (Throwable $e) { $errs[] = h($orig) . ': ' . h($e->getMessage()); }
             @unlink($dest);
         }
+    }
+    // v1.9.79 — le attivita appena importate agganciano i rapportini gia sincronizzati
+    if ($done) {
+        require_once(__DIR__ . '/app/PmReportLink.php');
+        $lk = PmReportLink::relink($pdo);
+        if (($lk['by_allocation'] + $lk['by_code']) > 0) $errs[] = 'rapportini collegati alle attività: ' . ($lk['by_allocation'] + $lk['by_code']);
     }
     write_log('DGB', 'success', "Import batch $batch: $done file", $u_id);
     $_SESSION['flash_msg'] = "<div class='alert alert-" . ($done ? 'success' : 'danger') . "'>Import completato: $done file"
@@ -284,6 +310,7 @@ $anomRiep = []; $anomRighe = []; $anomTecnici = []; $anomTot = 0;
 // Un modulo di intervento su un contratto che remunera la sola disponibilita'
 // (WTS-REP) va spostato sul contratto operativo collegato.
 $impRighe = []; $impRiep = [];
+$f0 = $f;   // filtri della pagina (contratto) per le anomalie
 $anomF = [
     'tipo'    => trim($_GET['atipo'] ?? ''),
     'tecnico' => trim($_GET['atec'] ?? ''),
@@ -294,14 +321,15 @@ $anomF = [
 $anomAttivi = count(array_filter($anomF, fn($v) => $v !== ''));
 
 /** Clausola WHERE delle anomalie: unica sorgente per video ed export. */
-$anomWhere = function (array $f): array {
+$anomWhere = function (array $f) use ($model, $f0): array {
     $w = ['1=1']; $a = [];
     if ($f['tipo']    !== '') { $w[] = 'tipo = ?';          $a[] = $f['tipo']; }
     if ($f['sev']     !== '') { $w[] = 'severita = ?';      $a[] = $f['sev']; }
     if ($f['tecnico'] !== '') { $w[] = 'tecnico LIKE ?';    $a[] = '%' . $f['tecnico'] . '%'; }
     if ($f['dal']     !== '') { $w[] = 'giorno >= ?';       $a[] = $f['dal']; }
     if ($f['al']      !== '') { $w[] = 'giorno <= ?';       $a[] = $f['al']; }
-    return [implode(' AND ', $w), $a];
+    // v1.9.78 — filtro contratto: giorni-operatore con attività sui contratti selezionati
+    return [implode(' AND ', $w) . $model->ctrOperatoreGiorno($f0, 'operator_id', 'giorno', $a), $a];
 };
 $anomOrder = " ORDER BY FIELD(severita,'alta','media'), giorno DESC, ore DESC";
 $anomCols  = ['Severita', 'Tipo', 'Tecnico', 'Giorno', 'Ore', 'Righe', 'Commesse coinvolte', 'Rilievo', 'Dettaglio'];
@@ -335,6 +363,7 @@ if ($tab === 'anomalie' && ($anomExp === 'xlsx' || $anomExp === 'csv')) {
             require_once(__DIR__ . '/XlsxWriter.php');
             $w = new XlsxWriter();
             $w->addSheet('Anomalie orarie', $data);
+            $w->addSheet('Filtri', $dgbFiltriSheet());   // v1.9.78
             $w->download("anomalie_orarie_$stamp.xlsx");
             exit;
         }
@@ -354,8 +383,18 @@ if ($tab === 'anomalie' && ($anomExp === 'xlsx' || $anomExp === 'csv')) {
 
 if ($tab === 'anomalie') {
     try {
+        if ($model->cf($f)->active()) {
+            // v1.9.78 — riepilogo ricalcolato sulle sole segnalazioni dei contratti selezionati
+            $ar = []; $wr = '1=1' . $model->ctrOperatoreGiorno($f, 'operator_id', 'giorno', $ar);
+            $stR = $pdo->prepare("SELECT tipo, severita, COUNT(*) AS segnalazioni, COUNT(DISTINCT operator_id) AS tecnici_coinvolti,
+                                         ROUND(SUM(ore), 2) AS ore_coinvolte, MIN(giorno) AS dal, MAX(giorno) AS al
+                                    FROM v_dgb_anomalie_orario WHERE $wr GROUP BY tipo, severita
+                                   ORDER BY FIELD(severita,'alta','media'), tipo");
+            $stR->execute($ar); $anomRiep = $stR->fetchAll(PDO::FETCH_ASSOC); $stR->closeCursor();
+        } else {
         $anomRiep = $pdo->query("SELECT * FROM v_dgb_anomalie_riepilogo ORDER BY FIELD(severita,'alta','media'), tipo")
                         ->fetchAll(PDO::FETCH_ASSOC);
+        }
         $anomTecnici = $pdo->query("SELECT DISTINCT tecnico FROM v_dgb_anomalie_orario
                                      WHERE tecnico IS NOT NULL AND tecnico <> '' ORDER BY tecnico")
                            ->fetchAll(PDO::FETCH_COLUMN);
@@ -371,9 +410,25 @@ if ($tab === 'anomalie') {
         $anomRighe = $stA->fetchAll(PDO::FETCH_ASSOC);
 
         try {
+            if ($model->cf($f)->active()) {
+                // v1.9.78 — imputazioni errate sulla commessa selezionata o da spostare su di essa
+                $ai = []; $c1 = $model->cf($f)->sql('code', 'commessa_errata', $ai);
+                $c2 = $model->cf($f)->sql('code', 'commessa_suggerita', $ai);
+                $wi = "($c1 OR $c2)";
+                $stI = $pdo->prepare("SELECT linea_errata, COUNT(*) AS segnalazioni, COUNT(DISTINCT commessa_errata) AS commesse_coinvolte,
+                                             COUNT(DISTINCT tecnico) AS tecnici, ROUND(SUM(ore), 2) AS ore,
+                                             SUM(commessa_suggerita IS NOT NULL) AS con_suggerimento,
+                                             SUM(commesse_candidate = 1) AS suggerimento_univoco,
+                                             MIN(data_rapporto) AS dal, MAX(data_rapporto) AS al
+                                        FROM v_cm_anomalia_imputazione WHERE $wi GROUP BY linea_errata");
+                $stI->execute($ai); $impRiep = $stI->fetchAll(PDO::FETCH_ASSOC); $stI->closeCursor();
+                $stI = $pdo->prepare("SELECT * FROM v_cm_anomalia_imputazione WHERE $wi ORDER BY data_rapporto DESC LIMIT 200");
+                $stI->execute($ai); $impRighe = $stI->fetchAll(PDO::FETCH_ASSOC); $stI->closeCursor();
+            } else {
             $impRiep  = $pdo->query("SELECT * FROM v_cm_anomalia_imputazione_riepilogo")->fetchAll(PDO::FETCH_ASSOC);
             $impRighe = $pdo->query("SELECT * FROM v_cm_anomalia_imputazione
                                       ORDER BY data_rapporto DESC LIMIT 200")->fetchAll(PDO::FETCH_ASSOC);
+            }
         } catch (Throwable $e) { $impRighe = []; $impRiep = []; }
     } catch (Throwable $e) {
         $anomRiep = []; $anomRighe = [];
@@ -396,8 +451,8 @@ $dist  = $model->temporalDistribution($f, $gran, $month);
 if ($gran === 'day' && strtolower((string)($_GET['hexport'] ?? '')) === 'xlsx') {
     try {
         $hh = $model->hourlyHeatmap($f, $month);
-        $et = ['cli_ord' => 'cliente ordinario', 'cli_rep' => 'cliente reperibilità',
-               'int_ord' => 'interno ordinario', 'int_rep' => 'interno reperibilità'];
+        $et = ['cli_ord' => 'cliente ordinario', 'cli_rep' => 'cliente fuori fascia',
+               'int_ord' => 'interno ordinario', 'int_rep' => 'interno fuori fascia'];
 
         $celle = [['Giorno', 'Ora', 'Natura', 'Ore']];
         foreach ($hh['split'] as $k => $perNat) {
@@ -419,6 +474,7 @@ if ($gran === 'day' && strtolower((string)($_GET['hexport'] ?? '')) === 'xlsx') 
         $w->addSheet('Celle giorno-ora', $celle);
         $w->addSheet('Profilo orario', $profilo);
         if (count($assenze) > 1) $w->addSheet('Assenze', $assenze);
+        $w->addSheet('Filtri', $dgbFiltriSheet());   // v1.9.78
         write_log('DGB', 'info', 'Export XLSX matrice oraria ' . $hh['month'] . ': '
             . (count($celle) - 1) . ' celle', $u_id);
         $w->download('distribuzione_oraria_' . str_replace('-', '', $hh['month']) . '.xlsx');
@@ -457,7 +513,8 @@ require_once('header.php');
 
 $eur = fn($v) => $v !== null ? number_format((float)$v, 2, ',', '.') : '—';
 $qs = function (array $over = []) use ($f, $tab, $gran, $month) {
-    $p = array_filter(['from'=>$f['from'],'to'=>$f['to'],'operator'=>$f['operator'],'status'=>$f['status'],'contract'=>$f['contract'],
+    $p = array_filter(['from'=>$f['from'],'to'=>$f['to'],'operator'=>$f['operator'],'status'=>$f['status'],
+                       'contratti'=>implode(',', $f['contratti']),'q'=>$f['q'],
                        'report_type'=>$f['report_type'],'mode'=>$f['mode'],'stdh'=>$f['stdh']!=8.0?$f['stdh']:'',
                        'schedule'=>$f['schedule'],'oncall'=>$f['oncall'],
                        'gran'=>$gran!=='month'?$gran:'','month'=>$month,'tab'=>$tab!=='analisi'?$tab:''], fn($v)=>$v!=='' && $v!==0);
@@ -484,7 +541,11 @@ $qs = function (array $over = []) use ($f, $tab, $gran, $month) {
     // il contatore delle sole anomalie gravi va nella scheda: se restasse dentro,
     // nessuno saprebbe di doverla aprire
     $nAlta = 0;
-    try { $nAlta = (int)$pdo->query("SELECT COUNT(*) FROM v_dgb_anomalie_orario WHERE severita='alta'")->fetchColumn(); }
+    try {
+        $aN = []; $wN = "severita='alta'" . $model->ctrOperatoreGiorno($f, 'operator_id', 'giorno', $aN);   // v1.9.78
+        $stN = $pdo->prepare("SELECT COUNT(*) FROM v_dgb_anomalie_orario WHERE $wN"); $stN->execute($aN);
+        $nAlta = (int)$stN->fetchColumn();
+    }
     catch (Throwable $e) { $nAlta = 0; }
   ?>
   <a class="btn btn-sm <?=$tab==='anomalie'?'btn-primary':''?>" href="<?=url_safe('dgb_activities',['tab'=>'anomalie'])?>">
@@ -494,6 +555,12 @@ $qs = function (array $over = []) use ($f, $tab, $gran, $month) {
     <?php endif; ?>
   </a>
 </div>
+
+<?php if ($tab === 'analisi' || $tab === 'anomalie'): ?>
+<?= PmContractFilter::banner($f['contratti'], $vCtr,
+        url_safe('dgb_activities', array_filter(['tab' => $tab !== 'analisi' ? $tab : '', 'contratti_set' => 1])),
+        $tab === 'anomalie' ? 'anomalie orarie dei giorni-operatore con attività sui contratti; imputazioni sulla commessa errata o suggerita' : '') ?>
+<?php endif; ?>
 
 <?php if ($tab === 'anomalie'): ?>
 
@@ -623,6 +690,7 @@ $qs = function (array $over = []) use ($f, $tab, $gran, $month) {
             array_filter([
                 'tab' => 'anomalie', 'atipo' => $anomF['tipo'], 'atec' => $anomF['tecnico'],
                 'asev' => $anomF['sev'], 'adal' => $anomF['dal'], 'aal' => $anomF['al'],
+                'contratti' => implode(',', $f['contratti']),
             ], fn($v) => $v !== ''), $over));
       ?>
       <a class="btn btn-success btn-sm" href="<?=$aqs(['aexport'=>'xlsx'])?>"><i class="fa-solid fa-file-excel"></i> Esporta XLSX</a>
@@ -701,9 +769,8 @@ $qs = function (array $over = []) use ($f, $tab, $gran, $month) {
       <select name="mode"><option value="">tutte</option>
         <option value="sede" <?=$f['mode']==='sede'?'selected':''?>>sede</option>
         <option value="remoto" <?=$f['mode']==='remoto'?'selected':''?>>remoto</option></select></div>
-    <div class="form-group" style="margin:0"><label>Commessa</label>
-      <select name="contract"><option value="">tutte</option>
-        <?php foreach($dgb_contracts as $cid=>$pc):?><option value="<?=(int)$cid?>" <?=$f['contract']===(int)$cid?'selected':''?>><?=h($pc)?></option><?php endforeach;?></select></div>
+    <?php // v1.9.78 — la scelta singola "Commessa" diventa il filtro globale multi-contratto ?>
+    <div style="grid-column:1/-1;display:grid"><?= PmContractFilter::field($vCtr, $f['contratti'], 'vale anche per Relazione IT, Service Desk, Report direzionale') ?></div>
     <div class="form-group" style="margin:0"><label>Orario</label>
       <select name="schedule"><option value="">tutti</option>
         <option value="ordinario" <?=$f['schedule']==='ordinario'?'selected':''?>>ordinario</option>
@@ -714,7 +781,7 @@ $qs = function (array $over = []) use ($f, $tab, $gran, $month) {
         <option value="0" <?=$f['oncall']==='0'?'selected':''?>>non reperibili</option></select></div>
     <div class="form-group" style="margin:0"><label>Ore ordinarie/giorno</label><input type="number" name="stdh" step="0.5" min="1" max="24" value="<?=h((string)$f['stdh'])?>"></div>
     <div style="display:flex;gap:8px"><button class="btn btn-primary"><i class="fa-solid fa-filter"></i> Applica</button>
-      <a class="btn" href="<?=url_safe('dgb_activities')?>">Azzera</a></div>
+      <a class="btn" href="<?=url_safe('dgb_activities', ['contratti_set' => 1])?>">Azzera</a></div>
   </form>
 </div>
 
@@ -918,7 +985,7 @@ $qs = function (array $over = []) use ($f, $tab, $gran, $month) {
       foreach ($dist['buckets'] as $b) $totOre += (float)$b['ordinary'] + (float)$b['overtime'];
     ?>
     <span class="card-title"><i class="fa-solid fa-chart-column"></i>
-      Distribuzione carico — ordinario vs reperibilità
+      Distribuzione carico — ordinario, fuori orario e reperibilità
       <span style="font-weight:400;color:var(--muted);font-size:12px">
         · <?=h($periodo)?> · <?=count($dist['buckets'])?> barre · <?=number_format($totOre,1,',','.')?> h
       </span>
@@ -936,7 +1003,8 @@ $qs = function (array $over = []) use ($f, $tab, $gran, $month) {
       <a class="btn btn-sm" title="Mese precedente" href="<?=$qs(['gran'=>'day','month'=>$prevM])?>"><i class="fa-solid fa-chevron-left"></i></a>
       <form method="get" style="display:inline-flex;gap:4px;align-items:center;margin:0">
       <?= route_slug_field() ?>
-        <?php foreach(['from','to','operator','status','report_type','mode','stdh'] as $k): if($f[$k]!=='' && $f[$k]!==0): ?><input type="hidden" name="<?=$k?>" value="<?=h((string)$f[$k])?>"><?php endif; endforeach; ?>
+        <?php foreach(['from','to','operator','status','report_type','mode','stdh','q','schedule','oncall'] as $k): if($f[$k]!=='' && $f[$k]!==0): ?><input type="hidden" name="<?=$k?>" value="<?=h((string)$f[$k])?>"><?php endif; endforeach; ?>
+        <?php if ($f['contratti']): ?><input type="hidden" name="contratti" value="<?=h(implode(',', $f['contratti']))?>"><?php endif; ?>
         <input type="hidden" name="gran" value="day">
         <input type="month" name="month" value="<?=h($curM)?>" onchange="this.form.submit()">
       </form>
@@ -970,9 +1038,9 @@ $qs = function (array $over = []) use ($f, $tab, $gran, $month) {
       // grafico a colonne; le attivita' interne usano verde e rosso.
       $NAT = [
           'cli_ord' => ['#2563eb', 'cliente · ordinario'],
-          'cli_rep' => ['#f59e0b', 'cliente · reperibilità'],
+          'cli_rep' => ['#f59e0b', 'cliente · fuori fascia'],
           'int_ord' => ['#0d9488', 'interno · ordinario'],
-          'int_rep' => ['#dc2626', 'interno · reperibilità'],
+          'int_rep' => ['#dc2626', 'interno · fuori fascia'],
       ];
       $oreOrd = [9,10,11,12,14,15,16,17];   // fasce ordinarie, v1.8.53
 
@@ -1104,15 +1172,15 @@ $qs = function (array $over = []) use ($f, $tab, $gran, $month) {
     <p style="font-size:11px;color:var(--muted);margin:8px 0 0">
       Ogni cella è un'ora di un giorno, colorata secondo la <strong>natura prevalente</strong>:
       <strong style="color:#2563eb">blu</strong> cliente ordinario,
-      <strong style="color:#b45309">arancione</strong> cliente in reperibilità,
+      <strong style="color:#b45309">arancione</strong> cliente fuori fascia,
       <strong style="color:#0d9488">verde</strong> interno ordinario,
-      <strong style="color:#dc2626">rosso</strong> interno in reperibilità.
+      <strong style="color:#dc2626">rosso</strong> interno fuori fascia.
       Più la cella è intensa, più ore vi sono state lavorate; il suggerimento riporta la ripartizione
       completa quando una cella contiene più nature.
       Le <strong>assenze</strong> — ferie, permessi, recuperi, malattia — stanno nella banda sotto la
       griglia: sono ore <em>non</em> lavorate e non appartengono a una fascia oraria.
       Le fasce ordinarie sono 09–13 e 14–18 dal lunedì al venerdì: <strong>nel fine settimana anche
-      quelle ore sono reperibilità</strong>, ed è per questo che le colonne del sabato e della domenica
+      quelle ore sono fuori fascia</strong>, ed è per questo che le colonne del sabato e della domenica
       risultano arancioni per intera.
       Le ore di un intervento sono <strong>ripartite sulle fasce che attraversa</strong>, non attribuite
       all'orario di inizio: attribuirle all'inizio concentrerebbe quasi tutto sulle 09:00, che è
@@ -1123,8 +1191,9 @@ $qs = function (array $over = []) use ($f, $tab, $gran, $month) {
 
   <p style="font-size:11px;color:var(--muted);margin:0;max-width:70%">
       <strong>Ordinario</strong> = lun-ven 09:00–13:00 e 14:00–18:00 (8 h/giorno).
-      Fuori da queste fasce — fine settimana, 18:01–08:59 e pausa pranzo — l'intervento è in
-      <strong>reperibilità</strong>. Chi opera in turni non è soggetto alla regola.
+      Fuori da queste fasce — fine settimana, 18:01–08:59 e pausa pranzo — l'intervento è
+      <strong>fuori fascia</strong>. La <strong>reperibilità</strong> è un'altra cosa: sono le attività svolte
+      in disponibilità (dal modulo DGB), mostrate in viola. Chi opera in turni non è soggetto alla regola.
       Le ore consuntivate non vengono ricalcolate: viene ripartita la loro classificazione,
       in proporzione a quanto dell'intervento cade nella fascia ordinaria.
       <?php if ($gran === 'month'): ?>

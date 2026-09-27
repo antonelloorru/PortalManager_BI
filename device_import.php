@@ -178,7 +178,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
 }
 
 // ─── UI ──────────────────────────────────────────────────────────────
-$emp_label = trim($emp['first_name'] . ' ' . $emp['last_name']);
+$emp_label = trim($emp['last_name'] . ' ' . $emp['first_name']);
 ?>
 
 <div style="display:flex;align-items:center;gap:14px;margin-bottom:20px">

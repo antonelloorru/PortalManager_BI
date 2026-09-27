@@ -57,7 +57,7 @@ $fmt_date = function ($d) {
 <html lang="it">
 <head>
 <meta charset="UTF-8">
-<title>Scheda dispositivi — <?= $h($emp['first_name'].' '.$emp['last_name']) ?></title>
+<title>Scheda dispositivi — <?= $h($emp['last_name'].' '.$emp['first_name']) ?></title>
 <style>
   @page { size: A4; margin: 1.5cm; }
   * { box-sizing: border-box; }
@@ -111,7 +111,7 @@ $fmt_date = function ($d) {
 </div>
 
 <div class="person-box">
-  <div><strong>Dipendente:</strong><br><?= $h($emp['first_name'].' '.$emp['last_name']) ?></div>
+  <div><strong>Dipendente:</strong><br><?= $h($emp['last_name'].' '.$emp['first_name']) ?></div>
   <div><strong>Matricola:</strong> <?= $h($emp['employee_code'] ?? '—') ?><br>
        <strong>Cod. fiscale:</strong> <?= $h($emp['fiscal_code'] ?? '—') ?></div>
   <div><strong>Azienda:</strong> <?= $h($emp['company_name'] ?? '—') ?><br>
@@ -279,7 +279,7 @@ $fmt_date = function ($d) {
 
 <!-- DICHIARAZIONE FIRMA -->
 <div style="margin-top: 20px; padding: 10px 14px; background: #fffbeb; border-left: 4px solid #f59e0b; border-radius: 0 4px 4px 0; font-size: 10px; color: #78350f;">
-  Il sottoscritto <strong><?= $h($emp['first_name'].' '.$emp['last_name']) ?></strong>
+  Il sottoscritto <strong><?= $h($emp['last_name'].' '.$emp['first_name']) ?></strong>
   dichiara di aver ricevuto in dotazione i dispositivi/strumenti aziendali sopra elencati,
   impegnandosi al loro corretto utilizzo, alla custodia diligente e alla restituzione in caso
   di cessazione del rapporto di lavoro o di richiesta dall'azienda.
@@ -288,7 +288,7 @@ $fmt_date = function ($d) {
 <div class="signature-area">
   <div class="signature-box">
     <strong>Il dipendente</strong>
-    <?= $h($emp['first_name'].' '.$emp['last_name']) ?>
+    <?= $h($emp['last_name'].' '.$emp['first_name']) ?>
   </div>
   <div class="signature-box">
     <strong>Per l'azienda</strong>

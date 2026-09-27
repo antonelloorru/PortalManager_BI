@@ -14,12 +14,8 @@
  */
 header('Content-Type: text/html; charset=utf-8');
 
-$filtri = [];
-foreach ([['linee','Linee'],['settori','Settori'],['incaricati','Incaricati'],
-          ['sedi','Sedi'],['modalita','Modalità'],['fasce','Fasce'],['durate','Durate']] as [$k,$l]) {
-    if (!empty($f[$k])) $filtri[] = $l . ': ' . implode(', ', $f[$k]);
-}
-if ($f['ricavo'] !== '') $filtri[] = 'Natura: ' . ($f['ricavo'] === '1' ? 'a ricavo' : 'interne');
+// v1.9.77 — descrizione unica dei filtri (compreso Codice Contratto / PM Project)
+$filtri = $it->descrizioneFiltri($f, $vCtr ?? []);
 
 /**
  * v1.9.17 — report PERSONALE quando l'incaricato selezionato è uno solo.
@@ -193,6 +189,22 @@ $gRic = $it->giorniRiconcilia($f);
     <span style="display:inline-block;width:9px;height:6px;background:#7c3aed;margin-left:8px"></span> reperibilità
     <span style="display:inline-block;width:9px;height:0;border-top:2px dashed #16a34a;margin-left:8px;vertical-align:middle"></span> target ore ordinarie
   </p>
+</div>
+<?php endif; ?>
+
+<?php if ($incOn('andamento') && !empty($trendG['rows'] ?? [])):   // v1.9.73 — andamento giornaliero
+    require_once __DIR__ . '/PmCharts.php';
+    $pmGD  = PmCharts::fillDays($trendG['rows'], $trendG['from'], $trendG['to'], 'giorno', ['ore_ordinarie', 'ore_fuori', 'ore_reperibilita', 'ore_non_classificate']);
+    $pmFer = array_filter($pmGD, fn($d) => (int)date('N', strtotime($d['d'])) < 6);
+    $pmMedia = $pmFer ? array_sum(array_column($pmFer, 'ore_ordinarie')) / count($pmFer) : 0; ?>
+<div class="blocco" style="page-break-inside:avoid">
+  <h2>Andamento giornaliero — ore<?= count($pmGD) >= 92 ? ' (ultimi 92 giorni)' : '' ?></h2>
+  <?= PmCharts::dailyStacked($pmGD, [
+        ['key' => 'ore_ordinarie',        'label' => 'Ore ordinarie',        'color' => '#2563eb'],
+        ['key' => 'ore_fuori',            'label' => 'Fuori orario',         'color' => '#f59e0b'],
+        ['key' => 'ore_reperibilita',     'label' => 'Reperibilità',         'color' => '#7c3aed'],
+        ['key' => 'ore_non_classificate', 'label' => 'Fascia non rilevata',  'color' => '#94a3b8'],
+      ], ['unit' => 'h', 'height' => 190, 'target' => round($pmMedia, 1), 'targetLabel' => 'media ore ordinarie (feriali)']) ?>
 </div>
 <?php endif; ?>
 
@@ -376,7 +388,7 @@ $gRic = $it->giorniRiconcilia($f);
         <?php foreach ($righe4 as $x): ?>
           <tr><td><?=h($x['descrizione_tariffa'])?></td>
             <td class="r"><?=number_format((float)$x['interventi'], 0, ',', '.')?></td>
-            <td><?=h($x['reperibilita'])?></td>
+            <td><?=ItServiceModel::reperibilitaHtml($x['reperibilita'])?></td>
             <td class="r"><?=number_format((float)$x['ore'], 2, ',', '.')?></td>
             <td class="r"><?=$x['tariffa_ora'] !== null
                   ? number_format((float)$x['tariffa_ora'], 2, ',', '.') : '—'?></td>

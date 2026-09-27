@@ -31,17 +31,18 @@ try {
     $gLin  = $dm->perDimensione($f, 'linea_servizio', 10);
     $gSta  = $dm->perDimensione($f, 'stato');
     $agenti = $ag === '' ? $dm->agenti($f) : [];
-    $per   = $ag !== '' ? $dm->perimetro($ag) : [];
+    $per   = $ag !== '' ? $dm->perimetro($ag, $f) : [];
     $vAg   = $dm->elencoAgenti();
     $vSta  = $dm->valori('stato');
     $vLin  = $dm->valori('linea_servizio');
+    $vCtr  = $dm->valoriContratti();   // v1.9.78 — filtro globale contratto
     // v1.8.95 — stato dell'alerting, mostrato solo nella vista direzionale:
     // e' configurazione di sistema, non informazione operativa per l'agente
     $alert = $ag === '' ? (new AlertEngine($pdo))->stato() : [];
 } catch (Throwable $e) {
     $pronto = false; $errore = $e->getMessage();
     $q = $per = []; $att = $cmm = $trend = $gMod = $gLin = $gSta = $agenti = [];
-    $vAg = $vSta = $vLin = []; $alert = [];
+    $vAg = $vSta = $vLin = []; $alert = []; $vCtr = [];
 }
 
 $COL = ['#2563eb','#16a34a','#f59e0b','#dc2626','#7c3aed','#0891b2','#db2777','#65a30d',
@@ -88,6 +89,16 @@ if ($pronto && ($_GET['export'] ?? '') === 'xlsx') {
         $t['ore'], $t['costo']];
     $w->addSheet('Andamento', $r4);
 
+    // v1.9.78 — perimetro dell'estrazione
+    $rf = [['Parametro', 'Valore'], ['Perimetro', ['aperte' => 'solo commesse aperte', 'tutte' => 'tutte le commesse', 'ricavo' => 'solo a ricavo'][$f['solo']]]];
+    if ($f['contratti']) $rf[] = ['Contratto / PM Project', implode(', ', array_map(fn($v) => PmContractFilter::label($v, $vCtr), $f['contratti']))];
+    if ($ag !== '')        $rf[] = ['Agente', $ag];
+    foreach (['stato' => 'Stato', 'linee' => 'Linee', 'aziende' => 'Aziende'] as $k => $l) if ($f[$k]) $rf[] = [$l, implode(', ', $f[$k])];
+    if ($f['q'] !== '')       $rf[] = ['Ricerca', $f['q']];
+    if ($f['cliente'] !== '') $rf[] = ['Cliente', $f['cliente']];
+    $rf[] = ['Generato il', date('d/m/Y H:i')];
+    $w->addSheet('Filtri', $rf);
+
     $suff = $ag !== '' ? '_' . preg_replace('/[^a-zA-Z0-9]+/', '_', $ag) : '';
     write_log('Projects', 'info', 'Export report direzionale' . ($ag !== '' ? " ($ag)" : ''), $u_id);
     $w->download("report_commesse{$suff}_" . date('Y-m-d') . ".xlsx");
@@ -127,7 +138,7 @@ require_once('header.php');
 $qs = function (array $over = []) use ($f) {
     $p = ['agente' => $f['agente'], 'solo' => $f['solo'],
           'q' => $f['q'], 'cliente' => $f['cliente']];
-    foreach (['stato','linee','aziende'] as $k) if (!empty($f[$k])) $p[$k] = implode(',', $f[$k]);
+    foreach (['stato','linee','aziende','contratti'] as $k) if (!empty($f[$k])) $p[$k] = implode(',', $f[$k]);
     return url_safe('dir_report', array_merge(array_filter($p, fn($v) => $v !== '' && $v !== []), $over));
 };
 ?>
@@ -137,6 +148,7 @@ $qs = function (array $over = []) use ($f) {
     <i class="fa-solid fa-chart-pie"></i>
     <?= $ag !== '' ? 'Scheda commerciale — ' . h($ag) : 'Report direzionale commesse' ?>
   </h1>
+  <?php if (class_exists('PmSnapshot')) echo PmSnapshot::badge(); ?>
   <?php if ($ag !== '' && $per): ?>
     <p style="color:var(--muted);font-size:12px;margin-top:2px">
       Perimetro: <strong><?=$n($per['suo'])?> commesse</strong> su <?=$n($per['tot'])?>
@@ -151,6 +163,8 @@ $qs = function (array $over = []) use ($f) {
   <?php endif; ?>
 </div>
 
+<?= PmContractFilter::banner($f['contratti'], $vCtr, $qs(['contratti' => null, 'contratti_set' => 1]),
+        $f['solo'] === 'aperte' ? 'perimetro: solo commesse aperte' : '') ?>
 <?php if (!$pronto): ?>
   <div class="alert alert-warning"><strong>Dati non disponibili.</strong>
     Eseguire la migration v1.8.94.
@@ -166,7 +180,7 @@ $qs = function (array $over = []) use ($f) {
 <?php
   $attivi = ($ag !== '') + ($f['q'] !== '') + ($f['cliente'] !== '')
           + (count($f['stato']) > 0) + (count($f['linee']) > 0)
-          + (count($f['aziende']) > 0) + ($f['solo'] !== 'aperte');
+          + (count($f['aziende']) > 0) + ($f['solo'] !== 'aperte') + (count($f['contratti']) > 0);
 ?>
 <details class="pm-panel" <?= $attivi > 0 ? 'open' : '' ?>>
   <summary>
@@ -177,6 +191,13 @@ $qs = function (array $over = []) use ($f) {
   <div class="pm-panel-body">
     <form method="get">
       <?= route_slug_field() ?>
+
+      <div class="pm-group">
+        <h4>Contratto</h4>
+        <div class="pm-grid-auto">
+          <?= PmContractFilter::field($vCtr, $f['contratti'], 'vale anche per Relazione IT, Service Desk, DGB') ?>
+        </div>
+      </div>
 
       <div class="pm-group">
         <h4>Ricerca</h4>
@@ -224,7 +245,7 @@ $qs = function (array $over = []) use ($f) {
 
       <div class="pm-actions">
         <button class="btn btn-primary btn-sm"><i class="fa-solid fa-filter"></i> Applica</button>
-        <a class="btn btn-sm" href="<?=url_safe('dir_report')?>">Azzera</a>
+        <a class="btn btn-sm" href="<?=url_safe('dir_report', ['contratti_set' => 1])?>">Azzera</a>
         <a class="btn btn-sm" href="<?=$qs(['export'=>'xlsx'])?>">
           <i class="fa-solid fa-file-excel"></i> XLSX</a>
         <a class="btn btn-sm" href="<?=$qs(['print'=>'1'])?>" target="_blank">

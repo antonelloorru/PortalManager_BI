@@ -43,6 +43,36 @@ final class Env
         return self::$data[$key] ?? $default;
     }
 
+    /**
+     * Persiste (merge) chiavi in .env.php in modo atomico. Valore null rimuove la chiave.
+     * I segreti restano fuori dal DB e non-web-accessible (.htaccess + chmod 0600).
+     */
+    public static function persist(array $kv): bool
+    {
+        self::load();
+        $appBase = defined('APP_BASE') ? APP_BASE : dirname(__DIR__);
+        $envFile = $appBase . '/.env.php';
+
+        $current = self::$data;
+        foreach ($kv as $k => $v) {
+            if ($v === null) { unset($current[$k]); unset(self::$data[$k]); }
+            else            { $current[$k] = (string)$v; self::$data[$k] = (string)$v; }
+        }
+
+        $lines = ["<?php\n// .env.php (aggiornato il " . date('c') . ")\n// NON committare questo file nel repository.\nreturn [\n"];
+        foreach ($current as $k => $v) {
+            $lines[] = "    " . var_export((string)$k, true) . " => " . var_export((string)$v, true) . ",\n";
+        }
+        $lines[] = "];\n";
+
+        $tmp = $envFile . '.tmp';
+        if (@file_put_contents($tmp, implode('', $lines), LOCK_EX) === false) return false;
+        @chmod($tmp, 0600);
+        if (!@rename($tmp, $envFile)) { @unlink($tmp); return false; }
+        @chmod($envFile, 0600);
+        return true;
+    }
+
     public static function isProduction(): bool
     {
         return self::get('APP_ENV', 'production') === 'production';

@@ -509,7 +509,7 @@ $role_labels = [
     <div style="border:1px solid #e2e8f0;border-radius:8px;padding:12px;background:#fafbfc;position:relative">
       <div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:6px">
         <div>
-          <div style="font-weight:700;font-size:13px;color:#0f172a"><?= h(trim($r['first_name'] . ' ' . $r['last_name'])) ?></div>
+          <div style="font-weight:700;font-size:13px;color:#0f172a"><?= h(trim($r['last_name'] . ' ' . $r['first_name'])) ?></div>
           <?php if ($r['job_title']): ?><div style="font-size:11px;color:#64748b"><?= h($r['job_title']) ?></div><?php endif; ?>
         </div>
         <?= bv_chip($role_label, $role_color) ?>

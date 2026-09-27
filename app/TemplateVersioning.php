@@ -116,7 +116,7 @@ final class TemplateVersioning
     {
         $stmt = $pdo->prepare(
             "SELECT t.*,
-                    CONCAT(COALESCE(e.first_name,''), ' ', COALESCE(e.last_name,'')) AS created_by_name
+                    CONCAT(COALESCE(e.last_name,''), ' ', COALESCE(e.first_name,'')) AS created_by_name
               FROM position_templates t
               LEFT JOIN users u ON u.id = t.created_by
               LEFT JOIN employees e ON e.id = u.employee_id

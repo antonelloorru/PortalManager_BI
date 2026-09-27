@@ -146,7 +146,7 @@ final class ProfessionalStore
         $cnt->execute($a); $total = (int)$cnt->fetchColumn();
 
         $st = $this->pdo->prepare(
-            "SELECT p.*, CONCAT(COALESCE(e.first_name,''),' ',COALESCE(e.last_name,'')) AS emp_name
+            "SELECT p.*, CONCAT(COALESCE(e.last_name,''),' ',COALESCE(e.first_name,'')) AS emp_name
                FROM cm_professionals p LEFT JOIN employees e ON e.id=p.employee_id
               WHERE $wsql ORDER BY p.last_name, p.first_name LIMIT $limit OFFSET $offset"
         );

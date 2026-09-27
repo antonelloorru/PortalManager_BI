@@ -742,7 +742,7 @@ $all_locations = $pdo->query("SELECT id, location_name, company_id FROM company_
 $history = [];
 try {
     $hq = $pdo->prepare(
-        "SELECT ecl.*, CONCAT(COALESCE(eu.first_name,''),' ',COALESCE(eu.last_name,'')) AS by_name
+        "SELECT ecl.*, CONCAT(COALESCE(eu.last_name,''),' ',COALESCE(eu.first_name,'')) AS by_name
            FROM entity_change_log ecl
            LEFT JOIN users uh ON uh.id = ecl.changed_by
            LEFT JOIN employees eu ON eu.id = uh.employee_id
@@ -838,7 +838,7 @@ function doc_link(string $fname, string $label): string {
     </div>
     <div>
       <h1 style="font-size:20px;font-weight:800;margin-bottom:4px">
-        <?=h($emp['first_name'].' '.$emp['last_name'])?>
+        <?=h($emp['last_name'].' '.$emp['first_name'])?>
       </h1>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <?php if($emp['business_email']): ?>
@@ -1520,7 +1520,7 @@ if (!empty($linked_candidate_ids)) {
 
 $docs_q = $pdo->prepare(
     "SELECT pd.*,
-            CONCAT(COALESCE(eu.first_name,''), ' ', COALESCE(eu.last_name,'')) AS uploaded_by_name
+            CONCAT(COALESCE(eu.last_name,''), ' ', COALESCE(eu.first_name,'')) AS uploaded_by_name
        FROM person_documents pd
        LEFT JOIN users u ON u.id = pd.uploaded_by
        LEFT JOIN employees eu ON eu.id = u.employee_id

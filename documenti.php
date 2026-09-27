@@ -186,8 +186,8 @@ if ($f_type) { $where .= " AND pd.doc_type=?"; $prm[] = $f_type; }
 
 $dq = $pdo->prepare(
     "SELECT pd.*,
-            CONCAT(c.first_name,' ',c.last_name) cand_name, c.status cand_status,
-            CONCAT(e.first_name,' ',e.last_name) emp_name, e.employee_code,
+            CONCAT(c.last_name,' ',c.first_name) cand_name, c.status cand_status,
+            CONCAT(e.last_name,' ',e.first_name) emp_name, e.employee_code,
             u.display_name uploader_name
      FROM person_documents pd
      LEFT JOIN candidates c ON pd.candidate_id=c.id
@@ -205,12 +205,12 @@ $person_type = '';
 if ($cand_id) {
     $p = $pdo->prepare("SELECT first_name, last_name, status FROM candidates WHERE id=?");
     $p->execute([$cand_id]); $pi = $p->fetch(); $p->closeCursor();
-    if ($pi) { $person_name = $pi['first_name'] . ' ' . $pi['last_name']; $person_type = 'Candidato'; }
+    if ($pi) { $person_name = $pi['last_name'] . ' ' . $pi['first_name']; $person_type = 'Candidato'; }
 }
 if ($emp_id) {
     $p = $pdo->prepare("SELECT first_name, last_name, employee_code FROM employees WHERE id=?");
     $p->execute([$emp_id]); $pi = $p->fetch(); $p->closeCursor();
-    if ($pi) { $person_name = $pi['first_name'] . ' ' . $pi['last_name'] . ($pi['employee_code'] ? " ({$pi['employee_code']})" : ''); $person_type = 'Dipendente'; }
+    if ($pi) { $person_name = $pi['last_name'] . ' ' . $pi['first_name'] . ($pi['employee_code'] ? " ({$pi['employee_code']})" : ''); $person_type = 'Dipendente'; }
 }
 
 // Liste per form

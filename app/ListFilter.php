@@ -18,7 +18,8 @@
  *  - Search bar testuale (filtra TUTTE le righe per qualsiasi parola)
  *  - Pannello filtri avanzati (auto-generato per colonna)
  *  - Viste salvate (set di filtri riutilizzabili)
- *  - Export CSV / XLSX / PDF (stampabile) / DOCX
+ *  - Export CSV / XLSX / PDF (stampabile) / DOCX / ODT
+ *  - Filtri per colonna tipizzati: elenco (multi-selezione con ricerca), intervallo numerico, intervallo date, testo
  *  - Contatore righe visibili
  *  - Zero dipendenze (vanilla JS + CSS)
  * ════════════════════════════════════════════════════════════════════════
@@ -131,6 +132,9 @@ class ListFilter
         <button type="button" data-format="docx">
           <i class="fa-solid fa-file-word"></i> Word (.docx)
         </button>
+        <button type="button" data-format="odt">
+          <i class="fa-solid fa-file-lines"></i> OpenDocument (.odt)
+        </button>
       </div>
     </div>
 
@@ -151,6 +155,58 @@ class ListFilter
     </div>
   </div>
 </div>
+        <?php
+    }
+
+    /** Pagine in cui l'aggancio automatico non ha senso (cruscotti, profilo, configurazioni). */
+    private const AUTO_SKIP = [
+        'index', 'login', 'unauthorized', 'user_profile', 'notifications', '2fa_verify', '2fa_settings',
+        'sso_settings', 'system_console', 'menu_customizer', 'branding', 'install', 'diag', 'pm_diagnostic',
+    ];
+
+    /**
+     * v1.9.71 — Aggancio automatico alle pagine che NON usano già ListFilter (filtri
+     * server-side): barra di ricerca, filtri per colonna tipizzati, viste salvate ed
+     * export CSV/XLSX/PDF/DOCX/ODT sulla tabella risultati principale.
+     *
+     * Chiamata da footer.php. La tabella scelta è quella visibile con più righe
+     * (minimo 5), escluse tabelle annidate, in modali, di stampa o marcate
+     * data-pm-nofilter. Una pagina può disattivarlo con $GLOBALS['PM_NO_AUTOFILTER'] = true.
+     */
+    public static function renderAuto(string $page): void
+    {
+        if (self::$assets_printed) return;                          // la pagina usa già ListFilter
+        if (!empty($GLOBALS['PM_NO_AUTOFILTER'])) return;
+        $base = preg_replace('/\.php$/', '', $page);
+        if ($base === '' || in_array($base, self::AUTO_SKIP, true) || str_ends_with($base, '_print')) return;
+        ?>
+<div id="pm-lf-auto-host" hidden>
+<?php self::render('auto_' . $base, '#pm-lf-auto-table', ['compact' => true, 'export_filename' => $base]); ?>
+</div>
+<script>
+(function () {
+    var host = document.getElementById('pm-lf-auto-host');
+    if (!host) return;
+    var best = null, bestRows = 0;
+    document.querySelectorAll('table').forEach(function (t) {
+        if (host.contains(t) || t.closest('.lf-toolbar, [data-pm-nofilter], .modal, dialog, [role="dialog"], .nostampa, .pm-print, .no-autofilter')) return;
+        if (t.parentElement && t.parentElement.closest('table')) return;          // tabella annidata
+        if (!t.tHead || !t.tHead.querySelector('th')) return;                      // senza intestazioni
+        var body = t.tBodies[0]; if (!body) return;
+        var rows = body.rows.length;
+        if (rows < 5) return;
+        var visible = !!(t.offsetWidth || t.offsetHeight || t.getClientRects().length);
+        var score = rows + (visible ? 100000 : 0);
+        if (score > bestRows) { bestRows = score; best = t; }
+    });
+    var bar = host.querySelector('.lf-toolbar');
+    if (!best || !bar) { host.parentNode.removeChild(host); return; }
+    if (!best.id) best.id = 'pm-lf-auto-table';
+    bar.dataset.table = '#' + best.id;
+    best.parentNode.insertBefore(bar, best);
+    host.parentNode.removeChild(host);
+})();
+</script>
         <?php
     }
 
@@ -311,6 +367,13 @@ class ListFilter
 .lf-export-menu button[data-format="xlsx"] i { color: #047857; }
 .lf-export-menu button[data-format="pdf"]  i { color: #dc2626; }
 .lf-export-menu button[data-format="docx"] i { color: #2563eb; }
+.lf-export-menu button[data-format="odt"]  i { color: #0e7490; }
+/* v1.9.71 — filtri tipizzati */
+.lf-range { display: flex; gap: 4px; }
+.lf-range input { width: 50%; min-width: 0; }
+.lf-adv-note { font-size: 10px; color: #b45309; min-height: 0; }
+.lf-adv-set .pm-ms-wrap { min-width: 0; width: 100%; }
+.lf-adv-set select.lf-set { width: 100%; min-height: 34px; }
 
 .lf-views-list {
     max-height: 240px;
@@ -527,36 +590,164 @@ class ListFilter
         const $rowsShown = root.querySelector('.lf-rows-shown');
         const $activeCount = root.querySelector('.lf-active-count');
 
-        // ── Costruisco lista filtri per colonna dalle <th> ──
+        // ── v1.9.71: filtri per colonna TIPIZZATI ─────────────────────────────
+        // Il tipo si ricava dai dati della colonna:
+        //  - elenco (≤ 150 valori distinti) → multi-selezione con ricerca e conteggi
+        //  - numero (importi, ore, %)       → intervallo min / max
+        //  - data (gg/mm/aaaa o aaaa-mm-gg) → intervallo da / a
+        //  - testo libero                   → "contiene"
         const headers = Array.from(table.querySelectorAll('thead th'))
                               .map(th => (th.textContent || '').trim());
         const colCount = headers.length;
-        const filters = {};   // {colIndex: {type, value}}
+        const filters = {};    // {colIndex: {type:'contains'|'in'|'range', ...}}
+        const controls = {};   // {colIndex: {kind, set(f), clear()}}
+        const EMPTY = '(vuoto)';
 
-        // Crea un input per ogni colonna nel pannello filtri avanzati
+        function cellText(td) { return td ? (td.textContent || '').trim().replace(/\s+/g, ' ') : ''; }
+        function isBlankTxt(t) { return t === '' || t === '—' || t === '-' || t === '–'; }
+        function parseNum(t) {
+            let s = String(t).replace(/\u00a0/g, ' ').trim();
+            if (!/\d/.test(s)) return null;
+            s = s.replace(/^[€$£]\s*/, '').replace(/\s*(€|%|h|ore|gg|km|pz)\.?$/i, '').replace(/\s/g, '');
+            if (!/^[-+]?[\d.,]+$/.test(s)) return null;
+            if (s.indexOf(',') !== -1) s = s.replace(/\./g, '').replace(',', '.');          // 1.234,56
+            else if (/^[-+]?\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, '');           // 1.234
+            const n = parseFloat(s);
+            return isNaN(n) ? null : n;
+        }
+        function parseDateKey(t) {        // → aaaammgg (numero) o null
+            let m = String(t).trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+            if (m) return (+m[3]) * 10000 + (+m[2]) * 100 + (+m[1]);
+            m = String(t).trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+            if (m) return (+m[1]) * 10000 + (+m[2]) * 100 + (+m[3]);
+            return null;
+        }
+        function inputDateKey(v) { const m = String(v || '').match(/^(\d{4})-(\d{2})-(\d{2})$/); return m ? (+m[1]) * 10000 + (+m[2]) * 100 + (+m[3]) : null; }
+
+        function columnProfile(idx) {
+            const vals = [];
+            getRowNodes().forEach(r => { if (!r.classList.contains('lf-noskip')) vals.push(cellText(r.querySelectorAll('td')[idx])); });
+            const filled = vals.filter(v => !isBlankTxt(v));
+            const counts = new Map();
+            vals.forEach(v => { const k = isBlankTxt(v) ? EMPTY : v; counts.set(k, (counts.get(k) || 0) + 1); });
+            let kind = 'text';
+            if (filled.length) {
+                const nNum = filled.filter(v => parseNum(v) !== null).length;
+                const nDate = filled.filter(v => parseDateKey(v) !== null).length;
+                if (nDate / filled.length >= 0.9) kind = 'date';
+                else if (nNum / filled.length >= 0.9 && counts.size > 12) kind = 'num';   // pochi valori numerici: meglio l'elenco
+                else {
+                    // elenco per valori brevi o ripetuti (nominativi, stati, codici);
+                    // testo lungo e quasi sempre diverso (note, descrizioni) → "contiene"
+                    const avgLen = filled.reduce((a, v) => a + v.length, 0) / filled.length;
+                    if (counts.size <= 150 && (avgLen <= 40 || counts.size <= vals.length * 0.5)) kind = 'set';
+                }
+            }
+            return { kind, counts };
+        }
+
         headers.forEach((header, idx) => {
-            if (!header || header === '' || header === '#') return; // skip vuote/numeri
-
+            if (!header || header === '' || header === '#') return;
+            const prof = columnProfile(idx);
             const wrap = document.createElement('div');
-            wrap.className = 'lf-adv-field';
-
+            wrap.className = 'lf-adv-field lf-adv-' + prof.kind;
             const lbl = document.createElement('label');
             lbl.textContent = header;
             wrap.appendChild(lbl);
 
-            const inp = document.createElement('input');
-            inp.type = 'text';
-            inp.placeholder = 'Contiene…';
-            inp.dataset.colIndex = idx;
-            inp.addEventListener('input', () => {
-                filters[idx] = { type: 'contains', value: inp.value };
-                applyFilters();
-                updateActiveCount();
-            });
-            wrap.appendChild(inp);
-
+            if (prof.kind === 'set') {
+                const sel = document.createElement('select');
+                sel.multiple = true;
+                sel.className = 'lf-set';
+                sel.dataset.placeholder = 'Tutti';
+                const keys = Array.from(prof.counts.keys()).sort((a, b) =>
+                    a === EMPTY ? 1 : b === EMPTY ? -1 : a.localeCompare(b, 'it', { numeric: true, sensitivity: 'base' }));
+                keys.forEach(k => {
+                    const o = document.createElement('option');
+                    o.value = k; o.textContent = k + ' (' + prof.counts.get(k) + ')';
+                    sel.appendChild(o);
+                });
+                sel.addEventListener('change', () => {
+                    const v = Array.from(sel.selectedOptions).map(o => o.value);
+                    if (v.length) filters[idx] = { type: 'in', values: v }; else delete filters[idx];
+                    applyFilters(); updateActiveCount();
+                });
+                wrap.appendChild(sel);
+                if (window.PmMultiselect) window.PmMultiselect.enhance(sel);
+                controls[idx] = {
+                    kind: 'set',
+                    set(f) { const vs = (f && f.type === 'in') ? f.values : [];
+                             Array.from(sel.options).forEach(o => { o.selected = vs.indexOf(o.value) !== -1; });
+                             if (window.PmMultiselect) window.PmMultiselect.refresh(sel); },
+                    clear() { this.set(null); }
+                };
+            } else if (prof.kind === 'num' || prof.kind === 'date') {
+                const box = document.createElement('div');
+                box.className = 'lf-range';
+                const a = document.createElement('input'), b = document.createElement('input');
+                [a, b].forEach((inp, i) => {
+                    inp.type = prof.kind === 'date' ? 'date' : 'number';
+                    if (prof.kind === 'num') inp.step = 'any';
+                    inp.placeholder = i === 0 ? 'da' : 'a';
+                    inp.title = (i === 0 ? 'Minimo' : 'Massimo') + ' (' + header + ')';
+                    inp.addEventListener('input', () => {
+                        if (a.value === '' && b.value === '') delete filters[idx];
+                        else filters[idx] = { type: 'range', kind: prof.kind, min: a.value, max: b.value };
+                        applyFilters(); updateActiveCount();
+                    });
+                    box.appendChild(inp);
+                });
+                wrap.appendChild(box);
+                controls[idx] = {
+                    kind: prof.kind,
+                    set(f) { a.value = (f && f.type === 'range') ? (f.min || '') : ''; b.value = (f && f.type === 'range') ? (f.max || '') : ''; },
+                    clear() { a.value = ''; b.value = ''; }
+                };
+            } else {
+                const inp = document.createElement('input');
+                inp.type = 'text';
+                inp.placeholder = 'Contiene…';
+                inp.dataset.colIndex = idx;
+                inp.addEventListener('input', () => {
+                    if (inp.value === '') delete filters[idx]; else filters[idx] = { type: 'contains', value: inp.value };
+                    applyFilters(); updateActiveCount();
+                });
+                wrap.appendChild(inp);
+                controls[idx] = {
+                    kind: 'text',
+                    set(f) { inp.value = (f && f.type === 'contains') ? (f.value || '') : ''; },
+                    clear() { inp.value = ''; }
+                };
+            }
+            const note = document.createElement('div');
+            note.className = 'lf-adv-note';
+            wrap.appendChild(note);
+            const c = controls[idx];
+            const baseClear = c.clear.bind(c);
+            c.note = t => { note.textContent = t || ''; };
+            c.clear = () => { baseClear(); note.textContent = ''; };
             $advGrid.appendChild(wrap);
         });
+
+        function isActive(f) {
+            if (!f) return false;
+            if (f.type === 'in') return Array.isArray(f.values) && f.values.length > 0;
+            if (f.type === 'range') return (f.min !== undefined && f.min !== '') || (f.max !== undefined && f.max !== '');
+            return !!f.value;     // 'contains' (anche viste salvate prima della v1.9.71)
+        }
+        function matchFilter(f, raw) {
+            if (f.type === 'in') return f.values.indexOf(isBlankTxt(raw) ? EMPTY : raw) !== -1;
+            if (f.type === 'range') {
+                const v = f.kind === 'date' ? parseDateKey(raw) : parseNum(raw);
+                if (v === null) return false;
+                const lo = f.min === '' || f.min === undefined ? null : (f.kind === 'date' ? inputDateKey(f.min) : parseFloat(f.min));
+                const hi = f.max === '' || f.max === undefined ? null : (f.kind === 'date' ? inputDateKey(f.max) : parseFloat(f.max));
+                if (lo !== null && !isNaN(lo) && v < lo) return false;
+                if (hi !== null && !isNaN(hi) && v > hi) return false;
+                return true;
+            }
+            return raw.toLowerCase().indexOf(String(f.value).toLowerCase()) !== -1;
+        }
 
         // ── Accesso alle righe ──────────────────────────────────────────────
         // v1.8.44: quando la tabella è gestita da DataTables, il DOM contiene
@@ -594,13 +785,8 @@ class ListFilter
                 if (pass) {
                     for (const colIdx in filters) {
                         const f = filters[colIdx];
-                        if (!f || !f.value) continue;
-                        const cell = cells[colIdx];
-                        if (!cell) continue;
-                        const cellText = cell.textContent.toLowerCase();
-                        if (cellText.indexOf(f.value.toLowerCase()) === -1) {
-                            pass = false; break;
-                        }
+                        if (!isActive(f)) continue;
+                        if (!matchFilter(f, cellText(cells[colIdx]))) { pass = false; break; }
                     }
                 }
 
@@ -615,7 +801,7 @@ class ListFilter
 
         function updateActiveCount() {
             let n = 0;
-            for (const k in filters) if (filters[k] && filters[k].value) n++;
+            for (const k in filters) if (isActive(filters[k])) n++;
             if (n > 0) {
                 $activeCount.style.display = 'inline-block';
                 $activeCount.textContent = n;
@@ -647,7 +833,7 @@ class ListFilter
         $btnReset.addEventListener('click', () => {
             $search.value = '';
             $clear.classList.remove('visible');
-            $advGrid.querySelectorAll('input').forEach(i => i.value = '');
+            for (const k in controls) controls[k].clear();
             for (const k in filters) delete filters[k];
             applyFilters();
             updateActiveCount();
@@ -763,12 +949,20 @@ class ListFilter
             $search.value = f.search || '';
             $clear.classList.toggle('visible', $search.value !== '');
             for (const k in filters) delete filters[k];
+            for (const k in controls) controls[k].clear();
             if (f.columns) {
                 Object.assign(filters, f.columns);
-                $advGrid.querySelectorAll('input').forEach(inp => {
-                    const idx = inp.dataset.colIndex;
-                    inp.value = (filters[idx] && filters[idx].value) ? filters[idx].value : '';
-                });
+                for (const k in filters) {
+                    const c = controls[k];
+                    if (!c) continue;
+                    // vista salvata prima della v1.9.71 ("contiene") su una colonna ora a elenco:
+                    // il filtro resta applicato, il controllo lo segnala
+                    if (filters[k] && filters[k].type === 'contains' && c.kind !== 'text') {
+                        c.note('dalla vista: contiene "' + filters[k].value + '"');
+                        continue;
+                    }
+                    c.set(filters[k]);
+                }
             }
             applyFilters();
             updateActiveCount();
@@ -800,6 +994,7 @@ class ListFilter
             else if (format === 'xlsx') exportXlsx(data, fname);
             else if (format === 'pdf')  exportPdf(data, fname);
             else if (format === 'docx') exportDocx(data, fname);
+            else if (format === 'odt')  postExport('odt', data, fname);
 
             toast(data.rows.length.toLocaleString('it-IT') + (all ? ' righe (elenco completo)' : ' righe filtrate'), 'success');
         }

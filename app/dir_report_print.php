@@ -11,6 +11,11 @@ $filtri = [];
 if ($f['solo'] !== 'aperte') $filtri[] = 'Perimetro: ' . ($f['solo'] === 'tutte' ? 'tutte le commesse' : 'solo a ricavo');
 if (!empty($f['stato'])) $filtri[] = 'Stato: ' . implode(', ', $f['stato']);
 if (!empty($f['linee'])) $filtri[] = 'Linee: ' . implode(', ', $f['linee']);
+if (!empty($f['aziende'])) $filtri[] = 'Aziende: ' . implode(', ', $f['aziende']);
+if (($f['q'] ?? '') !== '')       $filtri[] = 'Ricerca: ' . $f['q'];
+if (($f['cliente'] ?? '') !== '') $filtri[] = 'Cliente: ' . $f['cliente'];
+// v1.9.78 — filtro globale contratto
+if (!empty($f['contratti'])) array_unshift($filtri, PmContractFilter::describe($f['contratti'], $vCtr ?? []));
 ?><!DOCTYPE html>
 <html lang="it"><head><meta charset="utf-8">
 <title><?= $ag !== '' ? 'Scheda commerciale — ' . h($ag) : 'Report direzionale commesse' ?></title>

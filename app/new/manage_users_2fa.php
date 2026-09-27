@@ -83,7 +83,7 @@ try {
 
 if ($schema_v22) {
     $sql = "SELECT u.id, u.email, u.role_id, u.status,
-                   COALESCE(u.display_name, CONCAT(e.first_name, ' ', e.last_name), u.email) AS display_name,
+                   COALESCE(u.display_name, CONCAT(e.last_name, ' ', e.first_name), u.email) AS display_name,
                    r.name AS role_name,
                    t.totp_authorized, t.totp_enabled, t.totp_secret,
                    t.email_otp_authorized, t.email_otp_enabled,
@@ -98,7 +98,7 @@ if ($schema_v22) {
              ORDER BY u.role_id, display_name";
 } else {
     $sql = "SELECT u.id, u.email, u.role_id, u.status,
-                   CONCAT(u.first_name, ' ', u.last_name) AS display_name,
+                   CONCAT(u.last_name, ' ', u.first_name) AS display_name,
                    r.name AS role_name,
                    t.totp_authorized, t.totp_enabled, t.totp_secret,
                    t.email_otp_authorized, t.email_otp_enabled,

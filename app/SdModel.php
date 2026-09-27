@@ -2,6 +2,10 @@
 /**
  * SdModel — letture per la sezione Service Desk.
  *
+ * v1.9.78 — filtro globale Codice Contratto / PM Project (PmContractFilter) su tutte le
+ * letture che dipendono dal periodo e su OBJ_2 / OBJ_2.3: ticket via ticket collegati,
+ * moduli/costi/attivita' via codice commessa, assenze via persone coinvolte.
+ *
  * Tutte le interrogazioni passano dalle viste della v1.8.82/83: la logica di
  * classificazione L1/L2 e delle sei classi di gestione sta in SQL, non qui.
  * Duplicarla in PHP creerebbe due definizioni da tenere allineate, e la prima
@@ -14,7 +18,16 @@ final class SdModel
 {
     private PDO $pdo;
 
-    public function __construct(PDO $pdo) { $this->pdo = $pdo; }
+    /** v1.9.73 — nome da interrogare per ciascuna vista: copia aggiornata se lenta, altrimenti la vista. */
+    private array $v = [];
+
+    public function __construct(PDO $pdo)
+    {
+        $this->pdo = $pdo;
+        require_once __DIR__ . '/PmSnapshot.php';
+        require_once __DIR__ . '/PmContractFilter.php';
+        $this->v = PmSnapshot::names($pdo, ['v_cm_assenze_serie', 'v_cm_nomi', 'v_cm_sd_addetti_mese', 'v_cm_sd_attivita', 'v_cm_sd_commesse', 'v_cm_sd_costi_valorizzati', 'v_cm_sd_messaggi', 'v_cm_sd_moduli', 'v_cm_sd_nome_moduli', 'v_cm_sd_obj21_quadro', 'v_cm_sd_obj23_code', 'v_cm_sd_obj23_ripartizione', 'v_cm_sd_obj2_linee', 'v_cm_sd_obj2_quadro', 'v_cm_sd_operativita', 'v_cm_sd_presa_carico', 'v_cm_sd_scheda_tecnico', 'v_cm_sd_team', 'v_cm_sd_tecnici_uo', 'v_cm_sd_tecnico_mese', 'v_cm_sd_ticket']);
+    }
 
     /**
      * Normalizza i filtri della pagina.
@@ -37,6 +50,10 @@ final class SdModel
             // ripartizione e l'andamento restavano generali, e affiancati a una
             // scheda personale sembravano suoi.
             'tec'   => trim((string)($q['tec'] ?? '')),
+            // v1.9.78 — filtro globale Codice Contratto / PM Project. I ticket non
+            // portano la commessa: il legame passa dal ticket dell'attivita' DGB
+            // (contratto) e dal ticket del rapportino (commessa). Vedi PmContractFilter.
+            'contratti' => PmContractFilter::fromRequest($q),
         ];
 
         $d = static fn($v) => preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)$v) ? $v : '';
@@ -61,13 +78,73 @@ final class SdModel
         return $f;
     }
 
+    /* ── v1.9.78 — filtro contratto ─────────────────────────────────────── */
+    private ?PmContractFilter $cf = null;
+
+    /** Filtro contratto risolto una volta per richiesta (codici, id DGB, ticket). */
+    public function cf(array $f): PmContractFilter
+    {
+        $v = $f['contratti'] ?? [];
+        if ($this->cf === null || $this->cf->values() !== PmContractFilter::norm($v)) $this->cf = new PmContractFilter($this->pdo, $v);
+        return $this->cf;
+    }
+
+    /** " AND <col> IN (...)" se il filtro e' attivo, "" altrimenti. $kind: code | pid | id | ticket. */
+    private function ctr(array $f, string $kind, string $col, array &$a): string
+    {
+        return $this->cf($f)->andSql($kind, $col, $a);
+    }
+
+    /** Opzioni del filtro contratto (elenco globale: i ticket possono riguardare qualunque commessa). */
+    public function valoriContratti(): array
+    {
+        return PmContractFilter::options($this->pdo);
+    }
+
+    /**
+     * Persone coinvolte nei contratti selezionati nel periodo, nella forma dei ticket:
+     * chi ha preso in carico un ticket collegato + chi ha un modulo sulle commesse.
+     * Serve alle assenze, che non hanno una commessa: con il filtro si mostrano
+     * quelle delle persone che hanno lavorato sul contratto.
+     */
+    private ?array $persone = null;
+    private function personeContratto(array $f): array
+    {
+        if ($this->persone !== null) return $this->persone;
+        $cf = $this->cf($f); $out = [];
+        try {
+            $a = [];
+            $w = $cf->sql('ticket', 'pc.`ticket`', $a);
+            $st = $this->pdo->prepare("SELECT DISTINCT pc.`tecnico` FROM `{$this->v['v_cm_sd_presa_carico']}` pc WHERE $w");
+            $st->execute($a); $out = $st->fetchAll(PDO::FETCH_COLUMN); $st->closeCursor();
+            $a = [$f['from'], $f['to']];
+            $w = $cf->sql('code', 'r.`project_code`', $a);
+            $st = $this->pdo->prepare(
+                "SELECT DISTINCT b.`nome_ticket` FROM `cm_intervention_reports` r
+                   JOIN `{$this->v['v_cm_sd_nome_moduli']}` b ON b.`nome_moduli` = r.`technician_raw`
+                  WHERE r.`report_date` BETWEEN ? AND ? AND $w");
+            $st->execute($a); $out = array_merge($out, $st->fetchAll(PDO::FETCH_COLUMN)); $st->closeCursor();
+        } catch (Throwable $e) {}
+        return $this->persone = array_values(array_unique(array_filter(array_map('strval', $out), fn($x) => $x !== '')));
+    }
+
+    /** Condizione sulle persone per le assenze (vuota se il filtro non e' attivo). */
+    private function ctrPersone(array $f, string $col, array &$a): string
+    {
+        if (!$this->cf($f)->active()) return '';
+        $p = $this->personeContratto($f);
+        if (!$p) return ' AND 0=1';
+        foreach ($p as $x) $a[] = $x;
+        return " AND $col IN (" . implode(',', array_fill(0, count($p), '?')) . ")";
+    }
+
     /** Clausola condivisa da pannello, elenchi ed export: un solo punto di verita'. */
     private function where(array $f): array
     {
         // v1.8.88 — il filtro tecnico si applica con un JOIN, non con IN o
         // EXISTS.
         //
-        // Su `v_cm_sd_ticket`, che e' una vista costruita su altre viste,
+        // Su `{$this->v['v_cm_sd_ticket']}`, che e' una vista costruita su altre viste,
         // MariaDB risolve male la sottoquery: `IN` ed `EXISTS` restituivano
         // 2 ticket dove il join ne trova 520. Verificato in SQL puro, non e' un
         // errore della clausola ma dell'ottimizzatore su viste annidate.
@@ -93,11 +170,13 @@ final class SdModel
         // proprieta' del ticket: un ticket puo' essere stato lavorato da entrambi
         if ($f['level'] === 'L1') $w[] = "t.`msg_l1` > 0";
         if ($f['level'] === 'L2') $w[] = "t.`msg_l2` > 0";
+        // v1.9.78 — filtro contratto sui ticket collegati
+        if ($this->cf($f)->active()) $w[] = $this->cf($f)->sql('ticket', 't.`ticket`', $a);
 
         // il JOIN precede i parametri della WHERE nell'ordine di sostituzione
         $join = ''; $pre = [];
         if (!empty($f['tec'])) {
-            $join = " JOIN `v_cm_sd_presa_carico` pc
+            $join = " JOIN `{$this->v['v_cm_sd_presa_carico']}` pc
                         ON pc.`ticket` = t.`ticket` AND pc.`tecnico` = ? ";
             $pre[] = $f['tec'];
         }
@@ -120,7 +199,7 @@ final class SdModel
                     SUM(t.`stato` = 'CLOSED')                                   AS chiusi,
                     ROUND(AVG(t.`messaggi`), 1)                                 AS messaggi_medi,
                     ROUND(AVG(NULLIF(t.`durata_ore`, 0)), 1)                    AS durata_media
-                  FROM `v_cm_sd_ticket` t $j
+                  FROM `{$this->v['v_cm_sd_ticket']}` t $j
                  WHERE $w";
         $st = $this->pdo->prepare($sql);
         $st->execute($a);
@@ -138,7 +217,7 @@ final class SdModel
         // i ticket che richiedono un intervento: mai presi in carico, piu' quelli
         // con cliente senza risposta ancora aperti
         $st2 = $this->pdo->prepare(
-            "SELECT COUNT(*) FROM `v_cm_sd_ticket` t $j
+            "SELECT COUNT(*) FROM `{$this->v['v_cm_sd_ticket']}` t $j
               WHERE $w AND (t.`gestione` = 'mai preso in carico'
                         OR (t.`gestione` = 'cliente senza risposta scritta' AND t.`stato` <> 'CLOSED'))");
         $st2->execute($a);
@@ -156,7 +235,7 @@ final class SdModel
             "SELECT t.`gestione`, COUNT(*) AS ticket,
                     SUM(t.`stato` = 'CLOSED') AS chiusi,
                     ROUND(AVG(NULLIF(t.`durata_ore`, 0)), 1) AS durata_media
-               FROM `v_cm_sd_ticket` t $j
+               FROM `{$this->v['v_cm_sd_ticket']}` t $j
               WHERE $w
               GROUP BY t.`gestione`
               ORDER BY ticket DESC");
@@ -225,11 +304,49 @@ final class SdModel
      * 'AAAA-MM-GG' — e `grana` lo dichiara, cosi' chi disegna sa cosa sta
      * ricevendo.
      */
+    /**
+     * v1.9.73 — Andamento GIORNALIERO dei ticket, sempre disponibile.
+     * Il grafico adattivo diventa mensile oltre `sd_trend_giorni_soglia` (92 giorni):
+     * con il periodo predefinito la vista giornaliera non compariva mai. Qui si usa
+     * lo stesso conteggio di trend() sugli ultimi $maxGiorni giorni del periodo.
+     * @return array{from:string,to:string,rows:array}
+     */
+    public function trendGiornaliero(array $f, int $maxGiorni = 92): array
+    {
+        require_once __DIR__ . '/PmCharts.php';
+        [$da, $a] = PmCharts::window((string)$f['from'], (string)$f['to'], $maxGiorni);
+        $jT = ''; $args = [];
+        if (!empty($f['tec'])) {
+            $jT = " JOIN `{$this->v['v_cm_sd_presa_carico']}` pc ON pc.`ticket` = t.`ticket` AND pc.`tecnico` = ? ";
+            $args[] = $f['tec'];
+        }
+        array_push($args, $da . ' 00:00:00', $a . ' 23:59:59');
+        $wc = $this->ctr($f, 'ticket', 't.`ticket`', $args);   // v1.9.78
+        $st = $this->pdo->prepare(
+            "SELECT DATE(t.`aperto_il`) AS giorno,
+                    COUNT(*)                                                         AS ticket,
+                    SUM(t.`gestione` = 'risolto dal Service Desk')                   AS risolti_l1,
+                    SUM(t.`gestione` = 'escalation di 2 livello verso specialisti')  AS escalation,
+                    SUM(t.`gestione` = 'presa in carico diretta da specialisti')     AS diretti,
+                    SUM(t.`gestione` = 'mai preso in carico')                        AS mai_presi
+               FROM `{$this->v['v_cm_sd_ticket']}` t $jT
+              WHERE t.`aperto_il` IS NOT NULL AND t.`aperto_il` BETWEEN ? AND ? $wc
+              GROUP BY DATE(t.`aperto_il`) ORDER BY giorno");
+        $st->execute($args);
+        $rows = $st->fetchAll(PDO::FETCH_ASSOC);
+        $st->closeCursor();
+        foreach ($rows as &$r) {   // ciò che non rientra nelle quattro classi resta visibile come "altro"
+            $r['altro'] = max(0, (int)$r['ticket'] - (int)$r['risolti_l1'] - (int)$r['escalation'] - (int)$r['diretti'] - (int)$r['mai_presi']);
+        }
+        unset($r);
+        return ['from' => $da, 'to' => $a, 'rows' => $rows];
+    }
+
     public function trend(array $f, int $mesi = 12): array
     {
         $jT = ''; $argsT = [];
         if (!empty($f['tec'])) {
-            $jT = " JOIN `v_cm_sd_presa_carico` pc
+            $jT = " JOIN `{$this->v['v_cm_sd_presa_carico']}` pc
                       ON pc.`ticket` = t.`ticket` AND pc.`tecnico` = ? ";
             $argsT[] = $f['tec'];
         }
@@ -239,6 +356,7 @@ final class SdModel
         // quella iniziale: chi sceglieva un trimestre vedeva un anno, e i numeri
         // del grafico non corrispondevano a quelli degli indicatori sopra.
         array_push($argsT, $f['from'] . ' 00:00:00', $f['to'] . ' 23:59:59');
+        $wc = $this->ctr($f, 'ticket', 't.`ticket`', $argsT);   // v1.9.78
 
         // giorni coperti dal periodo, estremi compresi
         $giorni = $this->giorniPeriodo($f);
@@ -253,9 +371,9 @@ final class SdModel
                     SUM(t.`gestione` = 'escalation di 2 livello verso specialisti') AS escalation,
                     SUM(t.`gestione` = 'presa in carico diretta da specialisti')    AS diretti,
                     SUM(t.`gestione` = 'mai preso in carico')                    AS mai_presi
-               FROM `v_cm_sd_ticket` t $jT
+               FROM `{$this->v['v_cm_sd_ticket']}` t $jT
               WHERE t.`aperto_il` IS NOT NULL
-                AND t.`aperto_il` BETWEEN ? AND ?
+                AND t.`aperto_il` BETWEEN ? AND ? $wc
               GROUP BY ym ORDER BY ym");
         $st->execute($argsT);
         $out = $st->fetchAll(PDO::FETCH_ASSOC);
@@ -281,7 +399,7 @@ final class SdModel
             "SELECT t.`ticket`, t.`oggetto`, t.`coda`, t.`stato`, t.`messaggi`,
                     t.`aperto_il`, t.`gestione`, t.`presidio`,
                     TIMESTAMPDIFF(DAY, t.`aperto_il`, NOW()) AS giorni
-               FROM `v_cm_sd_ticket` t $j
+               FROM `{$this->v['v_cm_sd_ticket']}` t $j
               WHERE $w AND (t.`gestione` = 'mai preso in carico'
                         OR (t.`gestione` = 'cliente senza risposta scritta' AND t.`stato` <> 'CLOSED'))
               ORDER BY giorni DESC LIMIT " . (int)$limite);
@@ -294,6 +412,8 @@ final class SdModel
     /** Operativita' per tecnico nel periodo. */
     public function operatori(array $f): array
     {
+        $a = [$f['from'] . ' 00:00:00', $f['to'] . ' 23:59:59', $f['tec'] ?? '', $f['tec'] ?? ''];
+        $wc = $this->ctr($f, 'ticket', 'm.`ticket_code`', $a);   // v1.9.78
         $st = $this->pdo->prepare(
             // v1.8.91 — ordinato per COGNOME e nome: le due fonti scrivono il
             // nome in ordini opposti, e un ORDER BY sulla colonna ordinerebbe
@@ -307,15 +427,14 @@ final class SdModel
                     SUM(m.`msg_type` = 'INTERNAL_NOTE') AS note,
                     COUNT(DISTINCT m.`ticket_code`)     AS ticket,
                     COUNT(DISTINCT m.`queue_name`)      AS code
-               FROM `v_cm_sd_messaggi` m
-          LEFT JOIN `v_cm_nomi` n ON n.`forma` = m.`author_name`
+               FROM `{$this->v['v_cm_sd_messaggi']}` m
+          LEFT JOIN `{$this->v['v_cm_nomi']}` n ON n.`forma` = m.`author_name`
               WHERE m.`received_at` BETWEEN ? AND ?
                 AND m.`author_name` IS NOT NULL AND m.`author_name` <> ''
-                AND (? = '' OR m.`author_name` = ?)
+                AND (? = '' OR m.`author_name` = ?) $wc
               GROUP BY m.`author_name`, n.`ordina`
               ORDER BY n.`ordina` IS NULL, n.`ordina`, m.`author_name`");
-        $st->execute([$f['from'] . ' 00:00:00', $f['to'] . ' 23:59:59',
-                      $f['tec'] ?? '', $f['tec'] ?? '']);
+        $st->execute($a);
         $out = $st->fetchAll(PDO::FETCH_ASSOC);
         $st->closeCursor();
         return $out;
@@ -329,7 +448,7 @@ final class SdModel
             "SELECT COALESCE(t.`coda`, '(nessuna)') AS coda, COUNT(*) AS ticket,
                     SUM(t.`msg_l1` > 0) AS con_l1,
                     SUM(t.`gestione` = 'mai preso in carico') AS scoperti
-               FROM `v_cm_sd_ticket` t $j
+               FROM `{$this->v['v_cm_sd_ticket']}` t $j
               WHERE $w GROUP BY coda ORDER BY ticket DESC");
         $st->execute($a);
         $out = $st->fetchAll(PDO::FETCH_ASSOC);
@@ -349,13 +468,15 @@ final class SdModel
     public function scheda(string $tecnico, array $f): array
     {
         $st = $this->pdo->prepare(
-            "SELECT * FROM `v_cm_sd_scheda_tecnico` WHERE `tecnico` = ?");
+            "SELECT * FROM `{$this->v['v_cm_sd_scheda_tecnico']}` WHERE `tecnico` = ?");
         $st->execute([$tecnico]);
         $r = $st->fetch(PDO::FETCH_ASSOC) ?: [];
         $st->closeCursor();
         if (!$r) return [];
 
         // le misure del PERIODO selezionato, distinte da quelle complessive
+        $a2 = [$tecnico, $f['from'] . ' 00:00:00', $f['to'] . ' 23:59:59'];
+        $a3 = $a2;
         $st2 = $this->pdo->prepare(
             "SELECT COUNT(*) AS messaggi,
                     SUM(m.`msg_type` = 'SUPPORT_MSG')   AS risposte,
@@ -363,9 +484,9 @@ final class SdModel
                     COUNT(DISTINCT m.`ticket_code`)     AS ticket,
                     COUNT(DISTINCT m.`queue_name`)      AS code,
                     COUNT(DISTINCT DATE(m.`received_at`)) AS giorni
-               FROM `v_cm_sd_messaggi` m
-              WHERE m.`author_name` = ? AND m.`received_at` BETWEEN ? AND ?");
-        $st2->execute([$tecnico, $f['from'] . ' 00:00:00', $f['to'] . ' 23:59:59']);
+               FROM `{$this->v['v_cm_sd_messaggi']}` m
+              WHERE m.`author_name` = ? AND m.`received_at` BETWEEN ? AND ?" . $this->ctr($f, 'ticket', 'm.`ticket_code`', $a2));
+        $st2->execute($a2);
         $r['periodo'] = $st2->fetch(PDO::FETCH_ASSOC) ?: [];
         $st2->closeCursor();
 
@@ -374,10 +495,10 @@ final class SdModel
                     SUM(t.`gestione` = 'risolto dal Service Desk')                  AS risolti,
                     SUM(t.`gestione` = 'escalation di 2 livello verso specialisti') AS scalati,
                     ROUND(AVG(TIMESTAMPDIFF(MINUTE, t.`aperto_il`, p.`prima_risposta`)) / 60, 1) AS ore_1a
-               FROM `v_cm_sd_presa_carico` p
-               JOIN `v_cm_sd_ticket` t ON t.`ticket` = p.`ticket`
-              WHERE p.`tecnico` = ? AND p.`prima_risposta` BETWEEN ? AND ?");
-        $st3->execute([$tecnico, $f['from'] . ' 00:00:00', $f['to'] . ' 23:59:59']);
+               FROM `{$this->v['v_cm_sd_presa_carico']}` p
+               JOIN `{$this->v['v_cm_sd_ticket']}` t ON t.`ticket` = p.`ticket`
+              WHERE p.`tecnico` = ? AND p.`prima_risposta` BETWEEN ? AND ?" . $this->ctr($f, 'ticket', 'p.`ticket`', $a3));
+        $st3->execute($a3);
         $r['periodo_esito'] = $st3->fetch(PDO::FETCH_ASSOC) ?: [];
         $st3->closeCursor();
 
@@ -389,6 +510,27 @@ final class SdModel
     {
         // v1.9.9 — il periodo impostato. Il grafico prendeva gli ultimi 12 mesi
         // qualunque cosa fosse selezionato nei filtri.
+        // v1.9.78 — con il filtro contratto la vista aggregata non basta: stesso
+        // conteggio di v_cm_sd_tecnico_mese sui soli messaggi dei ticket collegati
+        if ($this->cf($f)->active()) {
+            $a = [$tecnico];
+            $w = "m.`author_name` = ? AND m.`received_at` IS NOT NULL";
+            if (!empty($f['from']) && !empty($f['to'])) {
+                $w .= " AND m.`received_at` BETWEEN ? AND ?";
+                $a[] = $f['from'] . ' 00:00:00'; $a[] = $f['to'] . ' 23:59:59';
+            }
+            $w .= $this->ctr($f, 'ticket', 'm.`ticket_code`', $a);
+            $st = $this->pdo->prepare(
+                "SELECT DATE_FORMAT(m.`received_at`, '%Y-%m') AS anno_mese, COUNT(*) AS messaggi,
+                        SUM(m.`msg_type` = 'SUPPORT_MSG') AS risposte, SUM(m.`msg_type` = 'INTERNAL_NOTE') AS note,
+                        COUNT(DISTINCT m.`ticket_code`) AS ticket
+                   FROM `{$this->v['v_cm_sd_messaggi']}` m WHERE $w
+                  GROUP BY anno_mese ORDER BY anno_mese DESC LIMIT " . (int)$mesi);
+            $st->execute($a);
+            $out = array_reverse($st->fetchAll(PDO::FETCH_ASSOC));
+            $st->closeCursor();
+            return $out;
+        }
         $w = "`tecnico` = ?"; $a = [$tecnico];
         if (!empty($f['from']) && !empty($f['to'])) {
             $w .= " AND `anno_mese` BETWEEN ? AND ?";
@@ -397,7 +539,7 @@ final class SdModel
         }
         $st = $this->pdo->prepare(
             "SELECT `anno_mese`, `messaggi`, `risposte`, `note`, `ticket`
-               FROM `v_cm_sd_tecnico_mese`
+               FROM `{$this->v['v_cm_sd_tecnico_mese']}`
               WHERE $w
               ORDER BY `anno_mese` DESC LIMIT " . (int)$mesi);
         $st->execute($a);
@@ -416,10 +558,11 @@ final class SdModel
             $w .= " AND m.`received_at` BETWEEN ? AND ?";
             $a[] = $f['from'] . ' 00:00:00'; $a[] = $f['to'] . ' 23:59:59';
         }
+        $w .= $this->ctr($f, 'ticket', 'm.`ticket_code`', $a);   // v1.9.78
         $st = $this->pdo->prepare(
             "SELECT COALESCE(m.`queue_name`, '(nessuna)') AS coda,
                     COUNT(*) AS messaggi, COUNT(DISTINCT m.`ticket_code`) AS ticket
-               FROM `v_cm_sd_messaggi` m
+               FROM `{$this->v['v_cm_sd_messaggi']}` m
               WHERE $w GROUP BY coda ORDER BY ticket DESC");
         $st->execute($a);
         $out = $st->fetchAll(PDO::FETCH_ASSOC);
@@ -430,15 +573,17 @@ final class SdModel
     /** I ticket presi in carico dal singolo nel periodo. */
     public function schedaTicket(string $tecnico, array $f, int $limite = 100): array
     {
+        $a = [$tecnico, $f['from'] . ' 00:00:00', $f['to'] . ' 23:59:59'];
         $st = $this->pdo->prepare(
             "SELECT t.`ticket`, t.`oggetto`, t.`coda`, t.`stato`, t.`gestione`,
                     t.`messaggi`, t.`aperto_il`, t.`durata_ore`,
                     ROUND(TIMESTAMPDIFF(MINUTE, t.`aperto_il`, p.`prima_risposta`) / 60, 1) AS ore_1a
-               FROM `v_cm_sd_presa_carico` p
-               JOIN `v_cm_sd_ticket` t ON t.`ticket` = p.`ticket`
-              WHERE p.`tecnico` = ? AND p.`prima_risposta` BETWEEN ? AND ?
+               FROM `{$this->v['v_cm_sd_presa_carico']}` p
+               JOIN `{$this->v['v_cm_sd_ticket']}` t ON t.`ticket` = p.`ticket`
+              WHERE p.`tecnico` = ? AND p.`prima_risposta` BETWEEN ? AND ?"
+              . $this->ctr($f, 'ticket', 'p.`ticket`', $a) . "
               ORDER BY t.`aperto_il` DESC LIMIT " . (int)$limite);
-        $st->execute([$tecnico, $f['from'] . ' 00:00:00', $f['to'] . ' 23:59:59']);
+        $st->execute($a);
         $out = $st->fetchAll(PDO::FETCH_ASSOC);
         $st->closeCursor();
         return $out;
@@ -453,6 +598,8 @@ final class SdModel
      */
     public function moduliContratto(string $tecnico, array $f): array
     {
+        $a = [$tecnico, $f['from'], $f['to']];
+        $wc = $this->ctr($f, 'code', 'r.`project_code`', $a);   // v1.9.78
         $st = $this->pdo->prepare(
             "SELECT COALESCE(cm.`label`, p.`service_line`, '(nessuna linea)') AS contratto,
                     COALESCE(p.`service_line`, '(nessuna)')       AS codice,
@@ -463,13 +610,13 @@ final class SdModel
                     ROUND(SUM(COALESCE(r.`extra_hours`,0)), 2)    AS ore_extra,
                     COUNT(DISTINCT r.`project_code`)              AS commesse
                FROM `cm_intervention_reports` r
-               JOIN `v_cm_sd_nome_moduli` b ON b.`nome_moduli` = r.`technician_raw`
+               JOIN `{$this->v['v_cm_sd_nome_moduli']}` b ON b.`nome_moduli` = r.`technician_raw`
           LEFT JOIN `cm_projects` p         ON p.`id` = r.`project_id`
           LEFT JOIN `cm_contract_models` cm ON cm.`service_line` = p.`service_line`
-              WHERE b.`nome_ticket` = ? AND r.`report_date` BETWEEN ? AND ?
+              WHERE b.`nome_ticket` = ? AND r.`report_date` BETWEEN ? AND ? $wc
               GROUP BY contratto, codice, modello, ha_ricavo
               ORDER BY ore DESC");
-        $st->execute([$tecnico, $f['from'], $f['to']]);
+        $st->execute($a);
         $out = $st->fetchAll(PDO::FETCH_ASSOC);
         $st->closeCursor();
         return $out;
@@ -478,6 +625,8 @@ final class SdModel
     /** Riepilogo dei moduli nel periodo: totale, a ricavo, interne. */
     public function moduliRiepilogo(string $tecnico, array $f): array
     {
+        $a = [$tecnico, $f['from'], $f['to']];
+        $wc = $this->ctr($f, 'code', 'r.`project_code`', $a);   // v1.9.78
         $st = $this->pdo->prepare(
             "SELECT COUNT(*)                                      AS moduli,
                     ROUND(SUM(COALESCE(r.`quantity_hours`,0)), 2) AS ore,
@@ -487,11 +636,11 @@ final class SdModel
                     COUNT(DISTINCT r.`project_code`)              AS commesse,
                     COUNT(DISTINCT COALESCE(cm.`model`,'x'))      AS modelli
                FROM `cm_intervention_reports` r
-               JOIN `v_cm_sd_nome_moduli` b ON b.`nome_moduli` = r.`technician_raw`
+               JOIN `{$this->v['v_cm_sd_nome_moduli']}` b ON b.`nome_moduli` = r.`technician_raw`
           LEFT JOIN `cm_projects` p         ON p.`id` = r.`project_id`
           LEFT JOIN `cm_contract_models` cm ON cm.`service_line` = p.`service_line`
-              WHERE b.`nome_ticket` = ? AND r.`report_date` BETWEEN ? AND ?");
-        $st->execute([$tecnico, $f['from'], $f['to']]);
+              WHERE b.`nome_ticket` = ? AND r.`report_date` BETWEEN ? AND ? $wc");
+        $st->execute($a);
         $r = $st->fetch(PDO::FETCH_ASSOC) ?: [];
         $st->closeCursor();
         $r['ore_interne'] = round((float)($r['ore'] ?? 0) - (float)($r['ore_ricavo'] ?? 0), 2);
@@ -513,6 +662,8 @@ final class SdModel
      */
     public function moduliCodice(string $tecnico, array $f): array
     {
+        $a = [$tecnico, $f['from'], $f['to']];
+        $wc = $this->ctr($f, 'code', 'r.`project_code`', $a);   // v1.9.78
         $st = $this->pdo->prepare(
             "SELECT COALESCE(p.`service_line`, '(nessuna)')   AS codice,
                     COALESCE(cm.`label`, p.`service_line`)    AS etichetta,
@@ -522,13 +673,13 @@ final class SdModel
                     ROUND(SUM(COALESCE(r.`quantity_hours`,0)), 2) AS ore,
                     COUNT(DISTINCT r.`project_code`)          AS commesse
                FROM `cm_intervention_reports` r
-               JOIN `v_cm_sd_nome_moduli` b ON b.`nome_moduli` = r.`technician_raw`
+               JOIN `{$this->v['v_cm_sd_nome_moduli']}` b ON b.`nome_moduli` = r.`technician_raw`
           LEFT JOIN `cm_projects` p         ON p.`id` = r.`project_id`
           LEFT JOIN `cm_contract_models` cm ON cm.`service_line` = p.`service_line`
-              WHERE b.`nome_ticket` = ? AND r.`report_date` BETWEEN ? AND ?
+              WHERE b.`nome_ticket` = ? AND r.`report_date` BETWEEN ? AND ? $wc
               GROUP BY codice, etichetta, modello, ha_ricavo
               ORDER BY ore DESC");
-        $st->execute([$tecnico, $f['from'], $f['to']]);
+        $st->execute($a);
         $out = $st->fetchAll(PDO::FETCH_ASSOC);
         $st->closeCursor();
         return $out;
@@ -540,6 +691,8 @@ final class SdModel
      */
     public function codiciLinea(array $f): array
     {
+        $ac = [];
+        $wc = $this->ctr($f, 'code', 'r.`project_code`', $ac);   // v1.9.78
         $st = $this->pdo->prepare(
             "SELECT COALESCE(p.`service_line`, '(nessuna)')   AS codice,
                     COALESCE(cm.`label`, p.`service_line`)    AS etichetta,
@@ -549,15 +702,16 @@ final class SdModel
                     COUNT(DISTINCT b.`nome_ticket`)           AS tecnici,
                     COUNT(DISTINCT r.`project_code`)          AS commesse
                FROM `cm_intervention_reports` r
-               JOIN `v_cm_sd_nome_moduli` b ON b.`nome_moduli` = r.`technician_raw`
+               JOIN `{$this->v['v_cm_sd_nome_moduli']}` b ON b.`nome_moduli` = r.`technician_raw`
           LEFT JOIN `cm_projects` p         ON p.`id` = r.`project_id`
           LEFT JOIN `cm_contract_models` cm ON cm.`service_line` = p.`service_line`
               WHERE r.`report_date` BETWEEN ? AND ?"
-              . ($f['tec'] !== '' ? " AND b.`nome_ticket` = ?" : "") . "
+              . ($f['tec'] !== '' ? " AND b.`nome_ticket` = ?" : "") . " $wc
               GROUP BY codice, etichetta, ha_ricavo
               ORDER BY ore DESC");
         $a = [$f['from'], $f['to']];
         if ($f['tec'] !== '') $a[] = $f['tec'];
+        foreach ($ac as $x) $a[] = $x;
         $st->execute($a);
         $out = $st->fetchAll(PDO::FETCH_ASSOC);
         $st->closeCursor();
@@ -573,6 +727,8 @@ final class SdModel
      */
     public function aziendeEsecutrici(array $f): array
     {
+        $ac = [];
+        $wc = $this->ctr($f, 'code', 'r.`project_code`', $ac);   // v1.9.78
         $st = $this->pdo->prepare(
             "SELECT COALESCE(az.`name`, '(non attribuita)')   AS azienda,
                     COUNT(*)                                  AS moduli,
@@ -581,14 +737,15 @@ final class SdModel
                     COUNT(DISTINCT r.`project_code`)          AS commesse,
                     COUNT(DISTINCT p.`service_line`)          AS linee
                FROM `cm_intervention_reports` r
-               JOIN `v_cm_sd_nome_moduli` b ON b.`nome_moduli` = r.`technician_raw`
+               JOIN `{$this->v['v_cm_sd_nome_moduli']}` b ON b.`nome_moduli` = r.`technician_raw`
           LEFT JOIN `cm_projects` p  ON p.`id` = r.`project_id`
           LEFT JOIN `companies` az   ON az.`id` = p.`exec_company_id`
               WHERE r.`report_date` BETWEEN ? AND ?"
-              . ($f['tec'] !== '' ? " AND b.`nome_ticket` = ?" : "") . "
+              . ($f['tec'] !== '' ? " AND b.`nome_ticket` = ?" : "") . " $wc
               GROUP BY azienda ORDER BY ore DESC");
         $a = [$f['from'], $f['to']];
         if ($f['tec'] !== '') $a[] = $f['tec'];
+        foreach ($ac as $x) $a[] = $x;
         $st->execute($a);
         $out = $st->fetchAll(PDO::FETCH_ASSOC);
         $st->closeCursor();
@@ -608,6 +765,11 @@ final class SdModel
             $wt = "x.`received_at` BETWEEN ? AND ?";
             $at[] = $f['from'] . ' 00:00:00'; $at[] = $f['to'] . ' 23:59:59';
         }
+        // v1.9.78 — filtro contratto: messaggi, totale di coda e prese in carico
+        // sugli stessi ticket, cosi' la quota resta un rapporto omogeneo
+        $wt .= $this->ctr($f, 'ticket', 'x.`ticket_code`', $at);
+        $ap = []; $wp = $this->cf($f)->active() ? ' WHERE ' . $this->cf($f)->sql('ticket', '`ticket`', $ap) : '';
+        $wm .= $this->ctr($f, 'ticket', 'm.`ticket_code`', $a);
         $st = $this->pdo->prepare(
             "SELECT COALESCE(m.`queue_name`, '(nessuna)')   AS coda,
                     COUNT(DISTINCT m.`ticket_code`)         AS ticket,
@@ -617,18 +779,18 @@ final class SdModel
                     CASE WHEN COALESCE(tot.`ticket_coda`, 0) > 0
                          THEN ROUND(100 * COUNT(DISTINCT m.`ticket_code`)
                                   / tot.`ticket_coda`, 1) END AS quota_coda_pct
-               FROM `v_cm_sd_messaggi` m
+               FROM `{$this->v['v_cm_sd_messaggi']}` m
           LEFT JOIN (SELECT COALESCE(x.`queue_name`,'(nessuna)') AS coda,
                             COUNT(DISTINCT x.`ticket_code`) AS ticket_coda
                        FROM `cm_sd_messages` x WHERE $wt GROUP BY coda) tot
                  ON tot.`coda` = COALESCE(m.`queue_name`, '(nessuna)')
           LEFT JOIN (SELECT `tecnico`, COALESCE(`coda`,'(nessuna)') AS coda, COUNT(*) AS presi
-                       FROM `v_cm_sd_presa_carico` GROUP BY `tecnico`, coda) pc
+                       FROM `{$this->v['v_cm_sd_presa_carico']}`$wp GROUP BY `tecnico`, coda) pc
                  ON pc.`tecnico` = ? AND pc.`coda` = COALESCE(m.`queue_name`, '(nessuna)')
               WHERE $wm
               GROUP BY coda, pc.`presi`, tot.`ticket_coda`
               ORDER BY ticket DESC");
-        $st->execute(array_merge($at, [$tecnico], $a));
+        $st->execute(array_merge($at, $ap, [$tecnico], $a));
         $out = $st->fetchAll(PDO::FETCH_ASSOC);
         $st->closeCursor();
         return $out;
@@ -642,19 +804,25 @@ final class SdModel
         // componenti concorda con gli indicatori in testa alla pagina.
         try {
             if (empty($f['from']) || empty($f['to'])) {
-                // v1.9.9 — `v_cm_sd_operativita` NON ha la colonna `ordina`:
+                // v1.9.9 — `{$this->v['v_cm_sd_operativita']}` NON ha la colonna `ordina`:
                 // l'ORDER BY su di essa faceva fallire la query, e il try/catch
                 // restituiva un elenco vuoto. La tabella dei componenti era
                 // vuota da prima di questa release, senza alcun segnale.
-                // La chiave di ordinamento viene da `v_cm_nomi`.
+                // La chiave di ordinamento viene da `{$this->v['v_cm_nomi']}`.
                 return $this->pdo->query(
                     "SELECT o.*, COALESCE(n.`ordina`, LOWER(o.`tecnico`)) AS ordina
-                       FROM `v_cm_sd_operativita` o
-                  LEFT JOIN `v_cm_nomi` n ON n.`forma` = o.`tecnico`
+                       FROM `{$this->v['v_cm_sd_operativita']}` o
+                  LEFT JOIN `{$this->v['v_cm_nomi']}` n ON n.`forma` = o.`tecnico`
                       WHERE o.`livello` = 'L1'
                       ORDER BY ordina, o.`tecnico`")
                     ->fetchAll(PDO::FETCH_ASSOC);
             }
+            // v1.9.78 — filtro contratto in ciascuna delle tre sottoquery
+            $a1 = [$f['from'].' 00:00:00', $f['to'].' 23:59:59'];
+            $a2 = $a1; $a3 = [$f['from'], $f['to']];
+            $w1 = $this->ctr($f, 'ticket', 'pc.`ticket`', $a1);
+            $w2 = $this->ctr($f, 'ticket', '`ticket_code`', $a2);
+            $w3 = $this->ctr($f, 'code', '`commessa`', $a3);
             $st = $this->pdo->prepare(
                 "SELECT o.`tecnico`, o.`livello`, o.`sotto_unita`,
                         COALESCE(p.`presi`, 0)                    AS presi_in_carico,
@@ -673,31 +841,29 @@ final class SdModel
                              THEN ROUND(100*md.`ore_ric`/md.`ore`,1) END AS pct_a_ricavo,
                         COALESCE(md.`commesse`, 0)                AS commesse,
                         COALESCE(n.`ordina`, LOWER(o.`tecnico`))  AS ordina
-                   FROM `v_cm_sd_operativita` o
-              LEFT JOIN `v_cm_nomi` n ON n.`forma` = o.`tecnico`
+                   FROM `{$this->v['v_cm_sd_operativita']}` o
+              LEFT JOIN `{$this->v['v_cm_nomi']}` n ON n.`forma` = o.`tecnico`
               LEFT JOIN (SELECT pc.`tecnico`, COUNT(*) AS presi,
                                 SUM(t.`gestione`='risolto dal Service Desk') AS risolti,
                                 SUM(t.`gestione`='escalation di 2 livello verso specialisti') AS scalati,
                                 ROUND(AVG(TIMESTAMPDIFF(MINUTE,t.`aperto_il`,pc.`prima_risposta`))/60,1) AS ore_1a
-                           FROM `v_cm_sd_presa_carico` pc
-                           JOIN `v_cm_sd_ticket` t ON t.`ticket` = pc.`ticket`
-                          WHERE pc.`prima_risposta` BETWEEN ? AND ?
+                           FROM `{$this->v['v_cm_sd_presa_carico']}` pc
+                           JOIN `{$this->v['v_cm_sd_ticket']}` t ON t.`ticket` = pc.`ticket`
+                          WHERE pc.`prima_risposta` BETWEEN ? AND ? $w1
                           GROUP BY pc.`tecnico`) p ON p.`tecnico` = o.`tecnico`
               LEFT JOIN (SELECT `author_name`, COUNT(*) AS messaggi,
                                 COUNT(DISTINCT `queue_name`) AS code
-                           FROM `v_cm_sd_messaggi`
-                          WHERE `received_at` BETWEEN ? AND ?
+                           FROM `{$this->v['v_cm_sd_messaggi']}`
+                          WHERE `received_at` BETWEEN ? AND ? $w2
                           GROUP BY `author_name`) ms ON ms.`author_name` = o.`tecnico`
               LEFT JOIN (SELECT `tecnico`, COUNT(*) AS moduli, SUM(`ore`) AS ore,
                                 SUM(CASE WHEN `ha_ricavo`=1 THEN `ore` ELSE 0 END) AS ore_ric,
                                 COUNT(DISTINCT `commessa`) AS commesse
-                           FROM `v_cm_sd_moduli` WHERE `giorno` BETWEEN ? AND ?
+                           FROM `{$this->v['v_cm_sd_moduli']}` WHERE `giorno` BETWEEN ? AND ? $w3
                           GROUP BY `tecnico`) md ON md.`tecnico` = o.`tecnico`
                   WHERE o.`livello` = 'L1'
                   ORDER BY ordina, o.`tecnico`");
-            $st->execute([$f['from'].' 00:00:00', $f['to'].' 23:59:59',
-                          $f['from'].' 00:00:00', $f['to'].' 23:59:59',
-                          $f['from'], $f['to']]);
+            $st->execute(array_merge($a1, $a2, $a3));
             $out = $st->fetchAll(PDO::FETCH_ASSOC);
             $st->closeCursor();
             return $out;
@@ -709,7 +875,7 @@ final class SdModel
     {
         try {
             return $this->pdo->query(
-                "SELECT * FROM `v_cm_sd_scheda_tecnico`
+                "SELECT * FROM `{$this->v['v_cm_sd_scheda_tecnico']}`
                   WHERE `livello` = 'L1'
                   ORDER BY `ordina` IS NULL, `ordina`, `tecnico`")
                 ->fetchAll(PDO::FETCH_ASSOC);
@@ -727,6 +893,49 @@ final class SdModel
         } catch (Throwable $e) { return []; }
     }
 
+
+    // ── v1.9.75 — ripartizione oraria dei moduli ────────────────────────────
+    private ?string $sdKey = null;
+
+    /**
+     * Colonna di v_cm_sd_moduli con il codice del modulo (rapportino), se esiste.
+     * Serve ad agganciare il rapportino e ripartire le ore con la regola unica
+     * (app/PmOrario.php). Stringa vuota = non disponibile: resta la fascia del modulo.
+     */
+    public function sdKey(): string
+    {
+        if ($this->sdKey !== null) return $this->sdKey;
+        $this->sdKey = '';
+        try {
+            $st = $this->pdo->prepare("SELECT COLUMN_NAME FROM information_schema.COLUMNS
+                                        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?
+                                          AND COLUMN_NAME IN ('modulo','report_code','codice_modulo')
+                                        ORDER BY FIELD(COLUMN_NAME,'modulo','report_code','codice_modulo') LIMIT 1");
+            $st->execute([$this->v['v_cm_sd_moduli']]);
+            $this->sdKey = (string)($st->fetchColumn() ?: '');
+        } catch (Throwable $e) {}
+        return $this->sdKey;
+    }
+
+    /** Quantità di ore ordinarie / fuori orario per la riga del modulo (alias $a) + JOIN necessario. */
+    private function sdSplit(string $a = 'm'): array
+    {
+        $ore = "COALESCE($a.`ore`,0)";
+        $fas = "LOWER(TRIM(COALESCE($a.`fascia_oraria`,'')))";
+        $key = $this->sdKey();
+        if ($key === '') {
+            return ['ord' => "(CASE WHEN $fas = 'in orario' THEN $ore ELSE 0 END)",
+                    'fuori' => "(CASE WHEN $fas = 'fuori orario' THEN $ore ELSE 0 END)", 'join' => ''];
+        }
+        require_once __DIR__ . '/PmOrario.php';
+        $spl = PmOrario::ordinarieSql('ir.`start_at`', 'ir.`end_at`', $ore, $this->pdo);
+        return [
+            'ord'   => "(CASE WHEN ir.`id` IS NOT NULL THEN $spl WHEN $fas = 'in orario' THEN $ore ELSE 0 END)",
+            'fuori' => "(CASE WHEN ir.`id` IS NOT NULL THEN $ore - $spl WHEN $fas = 'fuori orario' THEN $ore ELSE 0 END)",
+            'join'  => " LEFT JOIN `cm_intervention_reports` ir ON ir.`id` = (SELECT MIN(x.`id`) FROM `cm_intervention_reports` x WHERE x.`report_code` = $a.`$key`) ",
+        ];
+    }
+
     /**
      * v1.9.5 — Il quadro di squadra.
      *
@@ -735,24 +944,25 @@ final class SdModel
      */
     public function teamQuadro(array $f): array
     {
+        $sp = $this->sdSplit('m');   // v1.9.75
+        $ac = []; $wc = $this->ctr($f, 'code', 'm.`commessa`', $ac);   // v1.9.78
         $st = $this->pdo->prepare(
             "SELECT COUNT(*)                                              AS moduli,
                     ROUND(SUM(m.`ore`), 2)                                AS ore,
                     ROUND(SUM(m.`ore_extra`), 2)                          AS ore_extra,
                     ROUND(SUM(CASE WHEN m.`ha_ricavo` = 1 THEN m.`ore` ELSE 0 END), 2) AS ore_ricavo,
-                    ROUND(SUM(CASE WHEN m.`fascia_oraria` = 'fuori orario'
-                              THEN m.`ore` ELSE 0 END), 2)                AS ore_fuori,
-                    ROUND(SUM(CASE WHEN m.`fascia_oraria` = 'in orario'
-                              THEN m.`ore` ELSE 0 END), 2)                AS ore_in_orario,
+                    ROUND(SUM({$sp['fuori']}), 2)                        AS ore_fuori,
+                    ROUND(SUM({$sp['ord']}), 2)                          AS ore_in_orario,
                     COUNT(DISTINCT m.`tecnico`)                           AS tecnici,
                     COUNT(DISTINCT m.`commessa`)                          AS commesse,
                     COUNT(DISTINCT m.`codice_linea`)                      AS linee,
                     COUNT(DISTINCT CONCAT(m.`tecnico`, '|', m.`giorno`))  AS giornate_uomo
-               FROM `v_cm_sd_moduli` m
+               FROM `{$this->v['v_cm_sd_moduli']}` m {$sp['join']}
               WHERE m.`giorno` BETWEEN ? AND ?"
-              . ($f['tec'] !== '' ? " AND m.`tecnico` = ?" : ""));
+              . ($f['tec'] !== '' ? " AND m.`tecnico` = ?" : "") . $wc);
         $a = [$f['from'], $f['to']];
         if ($f['tec'] !== '') $a[] = $f['tec'];
+        foreach ($ac as $x) $a[] = $x;
         $st->execute($a);
         $r = $st->fetch(PDO::FETCH_ASSOC) ?: [];
         $st->closeCursor();
@@ -766,6 +976,10 @@ final class SdModel
     /** Il dettaglio per componente della squadra. */
     public function teamDettaglio(array $f): array
     {
+        $sp = $this->sdSplit('m');   // v1.9.75
+        $a1 = [$f['from'].' 00:00:00', $f['to'].' 23:59:59']; $a2 = [$f['from'], $f['to']];   // v1.9.78
+        $w1 = $this->ctr($f, 'ticket', 'p.`ticket`', $a1);
+        $w2 = $this->ctr($f, 'code', 'm.`commessa`', $a2);
         $st = $this->pdo->prepare(
             "SELECT t.`nome` AS tecnico, t.`sotto_unita`,
                     COALESCE(nm.`ordina`, LOWER(t.`nome`))                AS ordina,
@@ -779,25 +993,25 @@ final class SdModel
                     COALESCE(md.`commesse`, 0)                            AS commesse,
                     COALESCE(md.`linee`, 0)                               AS linee,
                     COALESCE(md.`giornate`, 0)                            AS giornate
-               FROM `v_cm_sd_team` t
-          LEFT JOIN `v_cm_nomi` nm ON nm.`forma` = t.`nome`
+               FROM `{$this->v['v_cm_sd_team']}` t
+          LEFT JOIN `{$this->v['v_cm_nomi']}` nm ON nm.`forma` = t.`nome`
           LEFT JOIN (SELECT p.`tecnico`, COUNT(*) AS presi
-                       FROM `v_cm_sd_presa_carico` p
-                      WHERE p.`prima_risposta` BETWEEN ? AND ?
+                       FROM `{$this->v['v_cm_sd_presa_carico']}` p
+                      WHERE p.`prima_risposta` BETWEEN ? AND ? $w1
                       GROUP BY p.`tecnico`) pc ON pc.`tecnico` = t.`nome`
           LEFT JOIN (SELECT `tecnico`, COUNT(*) AS moduli, SUM(`ore`) AS ore,
                             SUM(`ore_extra`) AS ore_extra,
-                            SUM(CASE WHEN `fascia_oraria`='in orario' THEN `ore` ELSE 0 END) AS ore_in,
-                            SUM(CASE WHEN `fascia_oraria`='fuori orario' THEN `ore` ELSE 0 END) AS ore_fuori,
+                            SUM({$sp['ord']}) AS ore_in,
+                            SUM({$sp['fuori']}) AS ore_fuori,
                             SUM(CASE WHEN `ha_ricavo`=1 THEN `ore` ELSE 0 END) AS ore_ricavo,
                             COUNT(DISTINCT `commessa`) AS commesse,
                             COUNT(DISTINCT `codice_linea`) AS linee,
                             COUNT(DISTINCT `giorno`) AS giornate
-                       FROM `v_cm_sd_moduli`
-                      WHERE `giorno` BETWEEN ? AND ?
-                      GROUP BY `tecnico`) md ON md.`tecnico` = t.`nome`
+                       FROM `{$this->v['v_cm_sd_moduli']}` m {$sp['join']}
+                      WHERE m.`giorno` BETWEEN ? AND ? $w2
+                      GROUP BY m.`tecnico`) md ON md.`tecnico` = t.`nome`
               ORDER BY ordina, t.`nome`");
-        $st->execute([$f['from'].' 00:00:00', $f['to'].' 23:59:59', $f['from'], $f['to']]);
+        $st->execute(array_merge($a1, $a2));
         $out = $st->fetchAll(PDO::FETCH_ASSOC);
         $st->closeCursor();
         foreach ($out as &$r) {
@@ -812,42 +1026,69 @@ final class SdModel
     /** Interventi e ore per fascia oraria. */
     public function teamFascia(array $f): array
     {
-        $st = $this->pdo->prepare(
-            "SELECT `fascia_oraria`, COUNT(*) AS interventi, ROUND(SUM(`ore`), 2) AS ore,
-                    ROUND(SUM(`ore_extra`), 2) AS ore_extra,
-                    COUNT(DISTINCT `tecnico`) AS tecnici,
-                    COUNT(DISTINCT `giorno`) AS giornate,
-                    ROUND(AVG(`ore`), 2) AS ore_medie
-               FROM `v_cm_sd_moduli`
-              WHERE `giorno` BETWEEN ? AND ?"
-              . ($f['tec'] !== '' ? " AND `tecnico` = ?" : "") . "
-              GROUP BY `fascia_oraria` ORDER BY ore DESC");
         $a = [$f['from'], $f['to']];
         if ($f['tec'] !== '') $a[] = $f['tec'];
+        $tec = $f['tec'] !== '' ? " AND m.`tecnico` = ?" : "";
+        $tec .= $this->ctr($f, 'code', 'm.`commessa`', $a);   // v1.9.78
+        if ($this->sdKey() === '') {           // senza codice modulo: fascia del modulo intero (come prima)
+            $st = $this->pdo->prepare(
+                "SELECT m.`fascia_oraria`, COUNT(*) AS interventi, ROUND(SUM(m.`ore`), 2) AS ore,
+                        ROUND(SUM(m.`ore_extra`), 2) AS ore_extra,
+                        COUNT(DISTINCT m.`tecnico`) AS tecnici, COUNT(DISTINCT m.`giorno`) AS giornate,
+                        ROUND(AVG(m.`ore`), 2) AS ore_medie
+                   FROM `{$this->v['v_cm_sd_moduli']}` m
+                  WHERE m.`giorno` BETWEEN ? AND ? $tec
+                  GROUP BY m.`fascia_oraria` ORDER BY ore DESC");
+            $st->execute($a);
+            $out = $st->fetchAll(PDO::FETCH_ASSOC); $st->closeCursor();
+            return $out;
+        }
+        // v1.9.75 — ore ripartite: un modulo 12:00-00:00 conta 5 h in orario e il resto fuori orario
+        $sp = $this->sdSplit('m');
+        $st = $this->pdo->prepare(
+            "SELECT SUM(x.o > 0) AS mi, ROUND(SUM(x.o), 2) AS oi, COUNT(DISTINCT CASE WHEN x.o > 0 THEN x.tecnico END) AS ti,
+                    COUNT(DISTINCT CASE WHEN x.o > 0 THEN x.giorno END) AS gi,
+                    SUM(x.u > 0) AS mf, ROUND(SUM(x.u), 2) AS of, COUNT(DISTINCT CASE WHEN x.u > 0 THEN x.tecnico END) AS tf,
+                    COUNT(DISTINCT CASE WHEN x.u > 0 THEN x.giorno END) AS gf, ROUND(SUM(x.e), 2) AS ex
+               FROM (SELECT m.`tecnico` AS tecnico, m.`giorno` AS giorno, {$sp['ord']} AS o, {$sp['fuori']} AS u,
+                            COALESCE(m.`ore_extra`,0) AS e
+                       FROM `{$this->v['v_cm_sd_moduli']}` m {$sp['join']}
+                      WHERE m.`giorno` BETWEEN ? AND ? $tec) x");
         $st->execute($a);
-        $out = $st->fetchAll(PDO::FETCH_ASSOC);
-        $st->closeCursor();
-        return $out;
+        $r = $st->fetch(PDO::FETCH_ASSOC) ?: []; $st->closeCursor();
+        $out = [
+            ['fascia_oraria' => 'in orario',    'interventi' => (int)($r['mi'] ?? 0), 'ore' => (float)($r['oi'] ?? 0), 'ore_extra' => 0.0,
+             'tecnici' => (int)($r['ti'] ?? 0), 'giornate' => (int)($r['gi'] ?? 0)],
+            ['fascia_oraria' => 'fuori orario', 'interventi' => (int)($r['mf'] ?? 0), 'ore' => (float)($r['of'] ?? 0), 'ore_extra' => (float)($r['ex'] ?? 0),
+             'tecnici' => (int)($r['tf'] ?? 0), 'giornate' => (int)($r['gf'] ?? 0)],
+        ];
+        foreach ($out as &$o) $o['ore_medie'] = $o['interventi'] > 0 ? round($o['ore'] / $o['interventi'], 2) : 0;
+        unset($o);
+        usort($out, fn($p, $q) => $q['ore'] <=> $p['ore']);
+        return array_values(array_filter($out, fn($o) => $o['interventi'] > 0 || $o['ore'] > 0));
     }
 
     /** Interventi e ore per tipologia di contratto, con la fascia. */
     public function teamContratto(array $f): array
     {
+        $sp = $this->sdSplit('m');   // v1.9.75
+        $ac = []; $wc = $this->ctr($f, 'code', 'm.`commessa`', $ac);   // v1.9.78
         $st = $this->pdo->prepare(
-            "SELECT `codice_linea`, `contratto`, `modello`, `ha_ricavo`,
-                    COUNT(*) AS interventi, ROUND(SUM(`ore`), 2) AS ore,
-                    ROUND(SUM(CASE WHEN `fascia_oraria`='in orario' THEN `ore` ELSE 0 END), 2) AS ore_in,
-                    ROUND(SUM(CASE WHEN `fascia_oraria`='fuori orario' THEN `ore` ELSE 0 END), 2) AS ore_fuori,
-                    ROUND(SUM(`ore_extra`), 2) AS ore_extra,
-                    COUNT(DISTINCT `tecnico`) AS tecnici,
-                    COUNT(DISTINCT `commessa`) AS commesse
-               FROM `v_cm_sd_moduli`
-              WHERE `giorno` BETWEEN ? AND ?"
-              . ($f['tec'] !== '' ? " AND `tecnico` = ?" : "") . "
-              GROUP BY `codice_linea`, `contratto`, `modello`, `ha_ricavo`
+            "SELECT m.`codice_linea`, m.`contratto`, m.`modello`, m.`ha_ricavo`,
+                    COUNT(*) AS interventi, ROUND(SUM(m.`ore`), 2) AS ore,
+                    ROUND(SUM({$sp['ord']}), 2) AS ore_in,
+                    ROUND(SUM({$sp['fuori']}), 2) AS ore_fuori,
+                    ROUND(SUM(m.`ore_extra`), 2) AS ore_extra,
+                    COUNT(DISTINCT m.`tecnico`) AS tecnici,
+                    COUNT(DISTINCT m.`commessa`) AS commesse
+               FROM `{$this->v['v_cm_sd_moduli']}` m {$sp['join']}
+              WHERE m.`giorno` BETWEEN ? AND ?"
+              . ($f['tec'] !== '' ? " AND m.`tecnico` = ?" : "") . $wc . "
+              GROUP BY m.`codice_linea`, m.`contratto`, m.`modello`, m.`ha_ricavo`
               ORDER BY ore DESC");
         $a = [$f['from'], $f['to']];
         if ($f['tec'] !== '') $a[] = $f['tec'];
+        foreach ($ac as $x) $a[] = $x;
         $st->execute($a);
         $out = $st->fetchAll(PDO::FETCH_ASSOC);
         $st->closeCursor();
@@ -874,17 +1115,17 @@ final class SdModel
                                     THEN CONCAT(' — ', t.`sotto_unita`) ELSE '' END) AS etichetta,
                         1 AS in_team,
                         COALESCE(n.`ordina`, LOWER(t.`nome`)) AS ordina
-                   FROM `v_cm_sd_team` t
-              LEFT JOIN `v_cm_nomi` n ON n.`forma` = t.`nome`
+                   FROM `{$this->v['v_cm_sd_team']}` t
+              LEFT JOIN `{$this->v['v_cm_nomi']}` n ON n.`forma` = t.`nome`
                   UNION
                  SELECT m.`author_name`,
                         CONCAT(m.`author_name`, ' — ', COALESCE(m.`livello`, 'L2')),
                         0,
                         COALESCE(n2.`ordina`, LOWER(m.`author_name`))
-                   FROM `v_cm_sd_messaggi` m
-              LEFT JOIN `v_cm_nomi` n2 ON n2.`forma` = m.`author_name`
+                   FROM `{$this->v['v_cm_sd_messaggi']}` m
+              LEFT JOIN `{$this->v['v_cm_nomi']}` n2 ON n2.`forma` = m.`author_name`
                   WHERE m.`author_name` IS NOT NULL AND m.`author_name` <> ''
-                    AND m.`author_name` NOT IN (SELECT `nome` FROM `v_cm_sd_team`)
+                    AND m.`author_name` NOT IN (SELECT `nome` FROM `{$this->v['v_cm_sd_team']}`)
                   ORDER BY `in_team` DESC, `ordina`");
             $out = $st->fetchAll(PDO::FETCH_ASSOC);
             $st->closeCursor();
@@ -895,7 +1136,7 @@ final class SdModel
     /**
      * v1.9.7 — Assenze del team: ferie, permessi, recuperi, malattia, visite.
      *
-     * `v_cm_assenze_serie` (v1.8.81) usa la forma "Nome Cognome", la stessa dei
+     * `{$this->v['v_cm_assenze_serie']}` (v1.8.81) usa la forma "Nome Cognome", la stessa dei
      * ticket: il legame e' diretto e non serve il ponte dei nomi.
      *
      * `altre` e' la parte di totale che le quattro voci non spiegano: nei dati
@@ -909,6 +1150,7 @@ final class SdModel
      */
     public function assenzeTeam(array $f): array
     {
+        $ap = []; $wp = $this->ctrPersone($f, 'a.`operatore`', $ap);   // v1.9.78
         $st = $this->pdo->prepare(
             "SELECT a.`operatore`                             AS tecnico,
                     COALESCE(n.`ordina`, LOWER(a.`operatore`)) AS ordina,
@@ -921,15 +1163,16 @@ final class SdModel
                     ROUND(SUM(a.`totale_assenze`) - SUM(a.`ferie` + a.`permessi`
                           + a.`recuperi` + a.`malattia`), 2)   AS altre,
                     COUNT(DISTINCT a.`giorno`)                AS giorni
-               FROM `v_cm_assenze_serie` a
-               JOIN `v_cm_sd_team` t ON t.`nome` = a.`operatore`
-          LEFT JOIN `v_cm_nomi` n    ON n.`forma` = a.`operatore`
+               FROM `{$this->v['v_cm_assenze_serie']}` a
+               JOIN `{$this->v['v_cm_sd_team']}` t ON t.`nome` = a.`operatore`
+          LEFT JOIN `{$this->v['v_cm_nomi']}` n    ON n.`forma` = a.`operatore`
               WHERE a.`giorno` BETWEEN ? AND ?"
-              . ($f['tec'] !== '' ? " AND a.`operatore` = ?" : "") . "
+              . ($f['tec'] !== '' ? " AND a.`operatore` = ?" : "") . $wp . "
               GROUP BY a.`operatore`, n.`ordina`
               ORDER BY ordina, a.`operatore`");
         $a = [$f['from'], $f['to']];
         if ($f['tec'] !== '') $a[] = $f['tec'];
+        foreach ($ap as $x) $a[] = $x;
         $st->execute($a);
         $out = $st->fetchAll(PDO::FETCH_ASSOC);
         $st->closeCursor();
@@ -944,6 +1187,7 @@ final class SdModel
     /** Il totale delle assenze del team, per gli indicatori. */
     public function assenzeQuadro(array $f): array
     {
+        $ap = []; $wp = $this->ctrPersone($f, 'a.`operatore`', $ap);   // v1.9.78
         $st = $this->pdo->prepare(
             "SELECT ROUND(SUM(a.`ferie`), 2)          AS ferie,
                     ROUND(SUM(a.`permessi`), 2)       AS permessi,
@@ -955,12 +1199,13 @@ final class SdModel
                           + a.`recuperi` + a.`malattia`), 2) AS altre,
                     COUNT(DISTINCT a.`operatore`)     AS persone,
                     COUNT(DISTINCT a.`giorno`)        AS giorni
-               FROM `v_cm_assenze_serie` a
-               JOIN `v_cm_sd_team` t ON t.`nome` = a.`operatore`
+               FROM `{$this->v['v_cm_assenze_serie']}` a
+               JOIN `{$this->v['v_cm_sd_team']}` t ON t.`nome` = a.`operatore`
               WHERE a.`giorno` BETWEEN ? AND ?"
-              . ($f['tec'] !== '' ? " AND a.`operatore` = ?" : ""));
+              . ($f['tec'] !== '' ? " AND a.`operatore` = ?" : "") . $wp);
         $a = [$f['from'], $f['to']];
         if ($f['tec'] !== '') $a[] = $f['tec'];
+        foreach ($ap as $x) $a[] = $x;
         $st->execute($a);
         $r = $st->fetch(PDO::FETCH_ASSOC) ?: [];
         $st->closeCursor();
@@ -971,6 +1216,7 @@ final class SdModel
     /** Andamento mensile delle assenze, per il grafico. */
     public function assenzeMesi(array $f): array
     {
+        $ap = []; $wp = $this->ctrPersone($f, 'a.`operatore`', $ap);   // v1.9.78
         $st = $this->pdo->prepare(
             "SELECT a.`anno_mese` AS ym,
                     ROUND(SUM(a.`ferie`), 2)          AS ferie,
@@ -978,13 +1224,14 @@ final class SdModel
                     ROUND(SUM(a.`recuperi`), 2)       AS recuperi,
                     ROUND(SUM(a.`malattia`), 2)       AS malattia,
                     ROUND(SUM(a.`totale_assenze`), 2) AS totale
-               FROM `v_cm_assenze_serie` a
-               JOIN `v_cm_sd_team` t ON t.`nome` = a.`operatore`
+               FROM `{$this->v['v_cm_assenze_serie']}` a
+               JOIN `{$this->v['v_cm_sd_team']}` t ON t.`nome` = a.`operatore`
               WHERE a.`giorno` BETWEEN ? AND ?"
-              . ($f['tec'] !== '' ? " AND a.`operatore` = ?" : "") . "
+              . ($f['tec'] !== '' ? " AND a.`operatore` = ?" : "") . $wp . "
               GROUP BY a.`anno_mese` ORDER BY a.`anno_mese`");
         $a = [$f['from'], $f['to']];
         if ($f['tec'] !== '') $a[] = $f['tec'];
+        foreach ($ap as $x) $a[] = $x;
         $st->execute($a);
         $out = $st->fetchAll(PDO::FETCH_ASSOC);
         $st->closeCursor();
@@ -997,30 +1244,121 @@ final class SdModel
      * Il perimetro e' un parametro (`sd_linee_perimetro`): quali contratti siano
      * "Service Desk" e' una domanda aziendale, non tecnica.
      */
-    public function obj2Quadro(): array
+    public function obj2Quadro(array $f = []): array
     {
+        if ($this->cf($f)->active()) return $this->obj2QuadroFiltrato($f);   // v1.9.78
         try {
-            $r = $this->pdo->query("SELECT * FROM `v_cm_sd_obj2_quadro`")->fetch(PDO::FETCH_ASSOC);
+            $r = $this->pdo->query("SELECT * FROM `{$this->v['v_cm_sd_obj2_quadro']}`")->fetch(PDO::FETCH_ASSOC);
             return $r ?: [];
         } catch (Throwable $e) { return []; }
     }
 
-    /** OBJ_2: il dettaglio per linea di servizio. */
-    public function obj2Linee(): array
+    /**
+     * v1.9.78 — OBJ_2 ristretto ai contratti selezionati: stesse grandezze di
+     * v_cm_sd_obj2_quadro, calcolate su commesse, moduli e ticket collegati.
+     */
+    private function obj2QuadroFiltrato(array $f): array
     {
+        $cf = $this->cf($f); $r = [];
+        try {
+            $a = []; $w = $cf->sql('code', '`commessa`', $a);
+            $st = $this->pdo->prepare(
+                "SELECT COUNT(*) AS commesse, SUM(`aperta` = 1) AS commesse_aperte,
+                        COUNT(DISTINCT `cliente`) AS clienti, ROUND(SUM(`valore`), 2) AS valore_totale,
+                        ROUND(SUM(CASE WHEN `aperta` = 1 THEN `valore` ELSE 0 END), 2) AS valore_aperte,
+                        ROUND(SUM(`maturato`), 2) AS maturato, ROUND(SUM(`costi`), 2) AS costi,
+                        ROUND(SUM(`margine`), 2) AS margine,
+                        CASE WHEN SUM(`valore`) > 0 THEN ROUND(100 * SUM(`margine`) / SUM(`valore`), 1) END AS margine_pct
+                   FROM `{$this->v['v_cm_sd_commesse']}` WHERE $w");
+            $st->execute($a); $r = $st->fetch(PDO::FETCH_ASSOC) ?: []; $st->closeCursor();
+
+            $a = []; $w = $cf->sql('pid', 'r.`project_id`', $a);
+            $st = $this->pdo->prepare(
+                "SELECT COUNT(DISTINCT r.`technician_raw`) FROM `cm_intervention_reports` r
+                   JOIN `{$this->v['v_cm_sd_commesse']}` c ON c.`commessa_id` = r.`project_id`
+                  WHERE r.`technician_raw` <> '' AND $w");
+            $st->execute($a); $r['addetti_distinti'] = (int)$st->fetchColumn(); $st->closeCursor();
+
+            $mesi = $this->obj2Addetti(100000, $f);
+            $n = count($mesi); $ore = array_sum(array_map(fn($m) => (float)$m['ore'], $mesi));
+            $r['addetti_medi_mese'] = $n ? round(array_sum(array_map(fn($m) => (int)$m['addetti'], $mesi)) / $n, 1) : null;
+            $r['addetti_picco']     = $n ? max(array_map(fn($m) => (int)$m['addetti'], $mesi)) : null;
+            $r['mesi_con_attivita'] = $n;
+            $r['ore_totali']        = round($ore, 2);
+            $fte = (float)$this->impostazione('sd_ore_mese_fte', 0);
+            $r['fte_equivalenti']   = ($n && $fte > 0) ? round($ore / ($n * $fte), 1) : null;
+
+            $a = []; $w = $cf->sql('ticket', 't.`ticket`', $a);
+            $st = $this->pdo->prepare(
+                "SELECT COUNT(*) AS ticket, SUM(t.`gestione` <> 'mai preso in carico') AS ticket_presi,
+                        SUM(t.`gestione` = 'risolto dal Service Desk') AS ticket_risolti,
+                        SUM(t.`gestione` = 'escalation di 2 livello verso specialisti') AS ticket_scalati,
+                        SUM(t.`gestione` = 'presa in carico diretta da specialisti') AS ticket_diretti,
+                        SUM(t.`gestione` = 'mai preso in carico') AS ticket_mai_presi,
+                        CASE WHEN SUM(t.`gestione` <> 'mai preso in carico') > 0
+                             THEN ROUND(100 * SUM(t.`gestione` = 'escalation di 2 livello verso specialisti')
+                                      / SUM(t.`gestione` <> 'mai preso in carico'), 1) END AS escalation_pct
+                   FROM `{$this->v['v_cm_sd_ticket']}` t WHERE $w");
+            $st->execute($a); $r += ($st->fetch(PDO::FETCH_ASSOC) ?: []); $st->closeCursor();
+        } catch (Throwable $e) {}
+        return $r;
+    }
+
+    /** OBJ_2: il dettaglio per linea di servizio. */
+    public function obj2Linee(array $f = []): array
+    {
+        if ($this->cf($f)->active()) {   // v1.9.78 — stesso calcolo di v_cm_sd_obj2_linee sulla selezione
+            try {
+                $a = []; $w = $this->cf($f)->sql('code', 'c.`commessa`', $a);
+                $st = $this->pdo->prepare(
+                    "SELECT c.`codice_linea`, c.`contratto`, c.`modello`, c.`ha_ricavo`,
+                            COUNT(*) AS commesse, SUM(c.`aperta` = 1) AS aperte,
+                            ROUND(SUM(c.`valore`), 2) AS valore, ROUND(SUM(c.`maturato`), 2) AS maturato,
+                            ROUND(SUM(c.`costi`), 2) AS costi, ROUND(SUM(c.`margine`), 2) AS margine,
+                            ROUND(SUM(c.`margine_maturato`), 2) AS margine_maturato,
+                            CASE WHEN SUM(c.`valore`) > 0 THEN ROUND(100 * SUM(c.`margine`) / SUM(c.`valore`), 1) END AS margine_pct,
+                            COUNT(DISTINCT c.`cliente`) AS clienti
+                       FROM `{$this->v['v_cm_sd_commesse']}` c WHERE $w
+                      GROUP BY c.`codice_linea`, c.`contratto`, c.`modello`, c.`ha_ricavo`
+                      ORDER BY valore DESC");
+                $st->execute($a);
+                $out = $st->fetchAll(PDO::FETCH_ASSOC); $st->closeCursor();
+                $tot = array_sum(array_map(fn($r) => (float)$r['valore'], $out));
+                foreach ($out as &$r) $r['quota_valore_pct'] = $tot > 0 ? round(100 * (float)$r['valore'] / $tot, 1) : null;
+                unset($r);
+                return $out;
+            } catch (Throwable $e) { return []; }
+        }
         try {
             return $this->pdo->query(
-                "SELECT * FROM `v_cm_sd_obj2_linee` ORDER BY `valore` DESC")
+                "SELECT * FROM `{$this->v['v_cm_sd_obj2_linee']}` ORDER BY `valore` DESC")
                 ->fetchAll(PDO::FETCH_ASSOC);
         } catch (Throwable $e) { return []; }
     }
 
     /** OBJ_2: gli addetti mese per mese. */
-    public function obj2Addetti(int $mesi = 24): array
+    public function obj2Addetti(int $mesi = 24, array $f = []): array
     {
+        if ($this->cf($f)->active()) {   // v1.9.78 — stesso calcolo di v_cm_sd_addetti_mese sulla selezione
+            try {
+                $a = []; $w = $this->cf($f)->sql('pid', 'r.`project_id`', $a);
+                $st = $this->pdo->prepare(
+                    "SELECT DATE_FORMAT(r.`report_date`, '%Y-%m') AS anno_mese,
+                            COUNT(DISTINCT r.`technician_raw`) AS addetti, COUNT(*) AS moduli,
+                            ROUND(SUM(COALESCE(r.`quantity_hours`, 0)), 2) AS ore,
+                            COUNT(DISTINCT r.`project_code`) AS commesse
+                       FROM `cm_intervention_reports` r
+                       JOIN `{$this->v['v_cm_sd_commesse']}` c ON c.`commessa_id` = r.`project_id`
+                      WHERE r.`report_date` IS NOT NULL AND r.`technician_raw` <> '' AND $w
+                      GROUP BY anno_mese ORDER BY anno_mese DESC LIMIT " . max(1, $mesi));
+                $st->execute($a);
+                $out = array_reverse($st->fetchAll(PDO::FETCH_ASSOC)); $st->closeCursor();
+                return $out;
+            } catch (Throwable $e) { return []; }
+        }
         try {
             $st = $this->pdo->query(
-                "SELECT * FROM `v_cm_sd_addetti_mese`
+                "SELECT * FROM `{$this->v['v_cm_sd_addetti_mese']}`
                   ORDER BY `anno_mese` DESC LIMIT " . max(1, $mesi));
             $out = array_reverse($st->fetchAll(PDO::FETCH_ASSOC));
             $st->closeCursor();
@@ -1029,31 +1367,81 @@ final class SdModel
     }
 
     /** OBJ_2.3: la ripartizione per classe di gestione. */
-    public function obj23Ripartizione(): array
+    public function obj23Ripartizione(array $f = []): array
     {
+        if ($this->cf($f)->active()) {   // v1.9.78 — stesso calcolo di v_cm_sd_obj23_ripartizione sui ticket collegati
+            try {
+                $a = []; $w = $this->cf($f)->sql('ticket', 't.`ticket`', $a);
+                $st = $this->pdo->prepare(
+                    "SELECT t.`gestione`, COUNT(*) AS ticket, COUNT(DISTINCT t.`coda`) AS code,
+                            ROUND(AVG(t.`messaggi`), 1) AS messaggi_medi,
+                            ROUND(AVG(CASE WHEN t.`gestione` <> 'mai preso in carico' THEN t.`durata_ore` END), 1) AS durata_media_ore,
+                            MIN(t.`aperto_il`) AS dal, MAX(t.`aperto_il`) AS al
+                       FROM `{$this->v['v_cm_sd_ticket']}` t WHERE $w
+                      GROUP BY t.`gestione` ORDER BY ticket DESC");
+                $st->execute($a);
+                $out = $st->fetchAll(PDO::FETCH_ASSOC); $st->closeCursor();
+                $tot = array_sum(array_map(fn($r) => (int)$r['ticket'], $out));
+                foreach ($out as &$r) $r['quota_pct'] = $tot > 0 ? round(100 * (int)$r['ticket'] / $tot, 1) : null;
+                unset($r);
+                return $out;
+            } catch (Throwable $e) { return []; }
+        }
         try {
             return $this->pdo->query(
-                "SELECT * FROM `v_cm_sd_obj23_ripartizione` ORDER BY `ticket` DESC")
+                "SELECT * FROM `{$this->v['v_cm_sd_obj23_ripartizione']}` ORDER BY `ticket` DESC")
                 ->fetchAll(PDO::FETCH_ASSOC);
         } catch (Throwable $e) { return []; }
     }
 
     /** OBJ_2.3: la ripartizione per coda. */
-    public function obj23Code(int $limite = 20): array
+    public function obj23Code(int $limite = 20, array $f = []): array
     {
+        if ($this->cf($f)->active()) {   // v1.9.78 — stesso calcolo di v_cm_sd_obj23_code sui ticket collegati
+            try {
+                $a = []; $w = $this->cf($f)->sql('ticket', 't.`ticket`', $a);
+                $st = $this->pdo->prepare(
+                    "SELECT COALESCE(t.`coda`, '(nessuna)') AS coda, COUNT(*) AS ticket,
+                            SUM(t.`gestione` = 'risolto dal Service Desk') AS risolti,
+                            SUM(t.`gestione` = 'escalation di 2 livello verso specialisti') AS scalati,
+                            SUM(t.`gestione` = 'presa in carico diretta da specialisti') AS diretti,
+                            SUM(t.`gestione` = 'mai preso in carico') AS mai_presi,
+                            CASE WHEN SUM(t.`gestione` <> 'mai preso in carico') > 0
+                                 THEN ROUND(100 * SUM(t.`gestione` = 'escalation di 2 livello verso specialisti')
+                                          / SUM(t.`gestione` <> 'mai preso in carico'), 1) END AS escalation_pct,
+                            ROUND(AVG(CASE WHEN t.`gestione` <> 'mai preso in carico' THEN t.`durata_ore` END), 1) AS durata_media_ore
+                       FROM `{$this->v['v_cm_sd_ticket']}` t WHERE $w
+                      GROUP BY coda ORDER BY ticket DESC LIMIT " . max(1, $limite));
+                $st->execute($a);
+                $out = $st->fetchAll(PDO::FETCH_ASSOC); $st->closeCursor();
+                $tot = array_sum(array_map(fn($r) => (int)$r['ticket'], $out));
+                foreach ($out as &$r) $r['quota_pct'] = $tot > 0 ? round(100 * (int)$r['ticket'] / $tot, 1) : null;
+                unset($r);
+                return $out;
+            } catch (Throwable $e) { return []; }
+        }
         try {
             return $this->pdo->query(
-                "SELECT * FROM `v_cm_sd_obj23_code` ORDER BY `ticket` DESC LIMIT " . max(1, $limite))
+                "SELECT * FROM `{$this->v['v_cm_sd_obj23_code']}` ORDER BY `ticket` DESC LIMIT " . max(1, $limite))
                 ->fetchAll(PDO::FETCH_ASSOC);
         } catch (Throwable $e) { return []; }
     }
 
     /** OBJ_2: le commesse del perimetro, per l'export. */
-    public function obj2Commesse(int $limite = 2000): array
+    public function obj2Commesse(int $limite = 2000, array $f = []): array
     {
+        if ($this->cf($f)->active()) {   // v1.9.78
+            try {
+                $a = []; $w = $this->cf($f)->sql('code', '`commessa`', $a);
+                $st = $this->pdo->prepare("SELECT * FROM `{$this->v['v_cm_sd_commesse']}` WHERE $w ORDER BY `valore` DESC LIMIT " . max(1, $limite));
+                $st->execute($a);
+                $out = $st->fetchAll(PDO::FETCH_ASSOC); $st->closeCursor();
+                return $out;
+            } catch (Throwable $e) { return []; }
+        }
         try {
             return $this->pdo->query(
-                "SELECT * FROM `v_cm_sd_commesse` ORDER BY `valore` DESC LIMIT " . max(1, $limite))
+                "SELECT * FROM `{$this->v['v_cm_sd_commesse']}` ORDER BY `valore` DESC LIMIT " . max(1, $limite))
                 ->fetchAll(PDO::FETCH_ASSOC);
         } catch (Throwable $e) { return []; }
     }
@@ -1068,12 +1456,13 @@ final class SdModel
     public function obj21Quadro(array $f = []): array
     {
         try {
-            if (empty($f['from']) || empty($f['to'])) {
-                $r = $this->pdo->query("SELECT * FROM `v_cm_sd_obj21_quadro`")->fetch(PDO::FETCH_ASSOC);
+            if ((empty($f['from']) || empty($f['to'])) && !$this->cf($f)->active()) {
+                $r = $this->pdo->query("SELECT * FROM `{$this->v['v_cm_sd_obj21_quadro']}`")->fetch(PDO::FETCH_ASSOC);
                 return $r ?: [];
             }
+            $ac = []; $wc = $this->ctr($f, 'code', '`commessa`', $ac);   // v1.9.78
             $st = $this->pdo->prepare(
-                "SELECT (SELECT COUNT(*) FROM `v_cm_sd_tecnici_uo`)          AS tecnici_uo,
+                "SELECT (SELECT COUNT(*) FROM `{$this->v['v_cm_sd_tecnici_uo']}`)          AS tecnici_uo,
                         COUNT(*)                                             AS interventi,
                         ROUND(SUM(`ore`), 2)                                 AS ore,
                         SUM(`natura` = 'fatturabile')                        AS interventi_fatt,
@@ -1092,11 +1481,12 @@ final class SdModel
                         SUM(`tariffa_ora` IS NOT NULL)                       AS righe_con_tariffa,
                         (SELECT COUNT(*) FROM `cm_sd_listino` WHERE `tariffa_ora` IS NOT NULL) AS linee_a_listino,
                         (SELECT COUNT(*) FROM `cm_sd_listino`)               AS linee_listino
-                   FROM `v_cm_sd_attivita`
+                   FROM `{$this->v['v_cm_sd_attivita']}`
                   WHERE `giorno` BETWEEN ? AND ?"
-                  . ($f['tec'] !== '' ? " AND `tecnico` = ?" : ""));
+                  . ($f['tec'] !== '' ? " AND `tecnico` = ?" : "") . $wc);
             $a = [$f['from'], $f['to']];
             if (($f['tec'] ?? '') !== '') $a[] = $f['tec'];
+            foreach ($ac as $x) $a[] = $x;
             $st->execute($a);
             $r = $st->fetch(PDO::FETCH_ASSOC) ?: [];
             $st->closeCursor();
@@ -1131,6 +1521,7 @@ final class SdModel
                 $a[] = $f['from']; $a[] = $f['to'];
             }
             if (($f['tec'] ?? '') !== '') { $w .= " AND `tecnico` = ?"; $a[] = $f['tec']; }
+            $w .= $this->ctr($f, 'code', '`commessa`', $a);   // v1.9.78
 
             $st = $this->pdo->prepare(
                 "SELECT `codice_linea`, `contratto`, `modello`,
@@ -1145,7 +1536,7 @@ final class SdModel
                         SUM(`valore_addebitato` IS NOT NULL)        AS righe_addebitate,
                         ROUND(SUM(`valore_listino`), 2)             AS valore_listino,
                         MAX(`tariffa_ora`)                          AS tariffa_ora
-                   FROM `v_cm_sd_attivita`
+                   FROM `{$this->v['v_cm_sd_attivita']}`
                   WHERE $w
                   GROUP BY `codice_linea`, `contratto`, `modello`
                   ORDER BY ore DESC");
@@ -1169,6 +1560,7 @@ final class SdModel
             if (!empty($f['from']) && !empty($f['to'])) {
                 $w = "`giorno` BETWEEN ? AND ?"; $a[] = $f['from']; $a[] = $f['to'];
             }
+            $w .= $this->ctr($f, 'code', '`commessa`', $a);   // v1.9.78
             $st = $this->pdo->prepare(
                 "SELECT t.`nome` AS tecnico, t.`unita`, t.`ordina`,
                         COALESCE(a.`interventi`, 0)              AS interventi,
@@ -1181,7 +1573,7 @@ final class SdModel
                         ROUND(COALESCE(a.`valore_listino`, 0), 2)    AS valore_listino,
                         COALESCE(a.`commesse`, 0)                AS commesse,
                         COALESCE(a.`giornate`, 0)                AS giornate
-                   FROM `v_cm_sd_tecnici_uo` t
+                   FROM `{$this->v['v_cm_sd_tecnici_uo']}` t
               LEFT JOIN (SELECT `tecnico`, COUNT(*) AS interventi, SUM(`ore`) AS ore,
                                 SUM(CASE WHEN `natura`='fatturabile' THEN `ore` ELSE 0 END) AS ore_fatt,
                                 SUM(CASE WHEN `natura`='interna' THEN `ore` ELSE 0 END) AS ore_int,
@@ -1189,7 +1581,7 @@ final class SdModel
                                 SUM(`valore_listino`) AS valore_listino,
                                 COUNT(DISTINCT `commessa`) AS commesse,
                                 COUNT(DISTINCT `giorno`) AS giornate
-                           FROM `v_cm_sd_attivita` WHERE $w
+                           FROM `{$this->v['v_cm_sd_attivita']}` WHERE $w
                           GROUP BY `tecnico`) a ON a.`tecnico` = t.`nome`
                   ORDER BY t.`ordina`, t.`nome`");
             $st->execute($a);
@@ -1285,7 +1677,8 @@ final class SdModel
                 $w = "`giorno` BETWEEN ? AND ?"; $a[] = $f['from']; $a[] = $f['to'];
             }
             if (($f['tec'] ?? '') !== '') { $w .= " AND `tecnico` = ?"; $a[] = $f['tec']; }
-            $st = $this->pdo->prepare("$select FROM `v_cm_sd_costi_valorizzati` WHERE $w $coda");
+            $w .= $this->ctr($f, 'code', '`commessa`', $a);   // v1.9.78
+            $st = $this->pdo->prepare("$select FROM `{$this->v['v_cm_sd_costi_valorizzati']}` WHERE $w $coda");
             $st->execute($a);
             $out = $st->fetchAll(PDO::FETCH_ASSOC);
             $st->closeCursor();
@@ -1310,7 +1703,7 @@ final class SdModel
     {
         try {
             return $this->pdo->query(
-                "SELECT `nome`, `sotto_unita` FROM `v_cm_sd_team` ORDER BY `nome`")
+                "SELECT `nome`, `sotto_unita` FROM `{$this->v['v_cm_sd_team']}` ORDER BY `nome`")
                 ->fetchAll(PDO::FETCH_ASSOC);
         } catch (Throwable $e) { return []; }
     }

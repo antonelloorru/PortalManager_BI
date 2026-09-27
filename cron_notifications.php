@@ -47,7 +47,7 @@ foreach ($alert_levels as $level => $days) {
 
     foreach ($certs_due as $cert) {
         $title = "Scadenza certificazione — {$days} giorni";
-        $msg   = "{$cert['cert_name']} di {$cert['first_name']} {$cert['last_name']}"
+        $msg   = "{$cert['cert_name']} di {$cert['last_name']} {$cert['first_name']}"
                . " scade il " . date('d/m/Y', strtotime($cert['expiry_date']))
                . " ({$cert['brand_name']})";
         $link  = "report_certificazioni.php";
@@ -68,7 +68,7 @@ foreach ($alert_levels as $level => $days) {
                 $body = str_replace(
                     ['{DIPENDENTE}', '{CERTIFICAZIONE}', '{BRAND}', '{DATA_SCADENZA}'],
                     [
-                        $cert['first_name'] . ' ' . $cert['last_name'],
+                        $cert['last_name'] . ' ' . $cert['first_name'],
                         $cert['cert_name'],
                         $cert['brand_name'],
                         date('d/m/Y', strtotime($cert['expiry_date'])),
@@ -204,7 +204,7 @@ foreach ($exam_days as $days) {
             $pt_label = $plan_type_labels[$exam['plan_type'] ?? 'esame_certificazione'] ?? 'Evento';
             $cert_info = $exam['cert_name'] ? "{$exam['cert_name']}" . ($exam['brand_name'] ? " ({$exam['brand_name']})" : '') : $pt_label;
             $title = "$pt_label tra {$days} giorn" . ($days === 1 ? 'o' : 'i');
-            $msg_text = "$cert_info — {$exam['first_name']} {$exam['last_name']} il "
+            $msg_text = "$cert_info — {$exam['last_name']} {$exam['first_name']} il "
                       . date('d/m/Y', strtotime($exam['planned_date']));
             if ($exam['exam_center']) $msg_text .= " presso {$exam['exam_center']}";
 
@@ -237,7 +237,7 @@ foreach ($exam_days as $days) {
                 // HTML email
                 $portalUrl = rtrim($settings['app_url'] ?? '', '/') . '/programmazione.php';
                 $htmlBody = CalendarHelper::buildNotificationHtml(
-                    $exam['first_name'] . ' ' . $exam['last_name'],
+                    $exam['last_name'] . ' ' . $exam['first_name'],
                     "⏰ Promemoria: $eventTitle",
                     $pt_label, $exam['planned_date'],
                     $exam['brand_name'] ?? '', $exam['cert_name'] ?? '',
@@ -296,7 +296,7 @@ if ($renewal_days > 0) {
 
         foreach ($renewals as $ren) {
             $title = "Finestra rinnovo — {$ren['cert_name']}";
-            $msg_text = "{$ren['cert_name']} ({$ren['brand_name']}) di {$ren['first_name']} {$ren['last_name']} "
+            $msg_text = "{$ren['cert_name']} ({$ren['brand_name']}) di {$ren['last_name']} {$ren['first_name']} "
                       . "è scaduta da {$renewal_days} giorni. Pianificare il rinnovo.";
 
             if ($ren['user_id']) {

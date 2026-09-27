@@ -129,6 +129,7 @@ class MenuManager
                     ['page' => 'import_commesse_db','label' => 'Connessione al gestionale',   'icon' => 'fa-database'],
                     ['page' => 'import_commesse',   'label' => 'Import commesse da file',     'icon' => 'fa-file-import'],
                     ['page' => 'import_intervention_reports','label' => 'Import rapporti da file','icon' => 'fa-file-arrow-up'],
+                    ['page' => 'pratix_import',      'label' => 'Import Pratix',               'icon' => 'fa-file-import'],
                     ['page' => 'import_professionals','label' => 'Import professionisti',     'icon' => 'fa-id-card-clip'],
                     ['page' => 'import_control',    'label' => 'Controllo & Riconciliazione', 'icon' => 'fa-clipboard-check'],
 
@@ -183,6 +184,8 @@ class MenuManager
                 'items'   => [
                     ['page' => 'menu_customizer',      'label' => 'Personalizza menu',      'icon' => 'fa-bars-staggered'],
                     ['page' => 'system_console',       'label' => 'Console di sistema',     'icon' => 'fa-sliders'],
+                    ['page' => 'sso_settings',         'label' => 'SSO Microsoft 365 / MFA','icon' => 'fa-right-to-bracket'],
+                    ['page' => 'perf_center',          'label' => 'Prestazioni',            'icon' => 'fa-gauge-high'],
                     // v1.9.21 — diagnostica errori PHP, riservata al super admin:
                     // il registro contiene percorsi e frammenti di query
                     ['page' => 'system_errors',        'label' => 'Diagnostica errori',    'icon' => 'fa-bug'],

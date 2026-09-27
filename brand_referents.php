@@ -142,7 +142,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $can_edit) {
                 if (!isset($role_field_map[$rtype])) continue;
 
                 [$f_name, $f_email, $f_phone] = $role_field_map[$rtype];
-                $full_name = trim($ref['first_name'] . ' ' . $ref['last_name']);
+                $full_name = trim($ref['last_name'] . ' ' . $ref['first_name']);
                 $email = $ref['work_email'] ?: $ref['personal_email'];
                 $phone = $ref['phone'];
 

@@ -243,9 +243,9 @@ final class RecycleBin
         // La JOIN con users/employees può fallire su schemi ridotti: in tal caso si degrada a query base.
         try {
             $st = $this->pdo->prepare(
-                "SELECT d.*, TRIM(CONCAT(COALESCE(e.first_name,''),' ',COALESCE(e.last_name,''))) AS deleted_by_name,
+                "SELECT d.*, TRIM(CONCAT(COALESCE(e.last_name,''),' ',COALESCE(e.first_name,''))) AS deleted_by_name,
                         u.display_name AS deleted_by_alt, u.email AS deleted_by_email,
-                        TRIM(CONCAT(COALESCE(er.first_name,''),' ',COALESCE(er.last_name,''))) AS restored_by_name
+                        TRIM(CONCAT(COALESCE(er.last_name,''),' ',COALESCE(er.first_name,''))) AS restored_by_name
                    FROM cm_deleted_records d
                    LEFT JOIN users u   ON u.id = d.deleted_by      LEFT JOIN employees e  ON e.id = u.employee_id
                    LEFT JOIN users ur  ON ur.id = d.restored_by    LEFT JOIN employees er ON er.id = ur.employee_id

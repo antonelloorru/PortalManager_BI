@@ -91,7 +91,7 @@ final class PositionHistory
     {
         $stmt = $pdo->prepare(
             "SELECT h.*,
-                    CONCAT(COALESCE(e.first_name,''), ' ', COALESCE(e.last_name,'')) AS changed_by_name
+                    CONCAT(COALESCE(e.last_name,''), ' ', COALESCE(e.first_name,'')) AS changed_by_name
               FROM position_status_history h
               LEFT JOIN users u ON u.id = h.changed_by
               LEFT JOIN employees e ON e.id = u.employee_id
@@ -109,7 +109,7 @@ final class PositionHistory
     {
         $stmt = $pdo->prepare(
             "SELECT h.*,
-                    CONCAT(COALESCE(e.first_name,''), ' ', COALESCE(e.last_name,'')) AS changed_by_name
+                    CONCAT(COALESCE(e.last_name,''), ' ', COALESCE(e.first_name,'')) AS changed_by_name
               FROM position_compensation_history h
               LEFT JOIN users u ON u.id = h.changed_by
               LEFT JOIN employees e ON e.id = u.employee_id

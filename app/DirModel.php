@@ -2,6 +2,9 @@
 /**
  * DirModel — letture per il report direzionale e le schede commerciale.
  *
+ * v1.9.78 — filtro globale Codice Contratto / PM Project (PmContractFilter) su quadro,
+ * agenti, grafici, commesse, attenzione, andamento, perimetro ed export.
+ *
  * Le due destinazioni condividono le stesse query: la scheda dell'agente e' il
  * report direzionale ristretto al suo perimetro. Duplicare le query per i due
  * casi le farebbe divergere alla prima modifica, e i due documenti mostrerebbero
@@ -14,7 +17,16 @@ final class DirModel
 {
     private PDO $pdo;
 
-    public function __construct(PDO $pdo) { $this->pdo = $pdo; }
+    /** v1.9.73 — nome da interrogare per ciascuna vista: copia aggiornata se lenta, altrimenti la vista. */
+    private array $v = [];
+
+    public function __construct(PDO $pdo)
+    {
+        $this->pdo = $pdo;
+        require_once __DIR__ . '/PmSnapshot.php';
+        require_once __DIR__ . '/PmContractFilter.php';
+        $this->v = PmSnapshot::names($pdo, ['v_cm_dir_andamento', 'v_cm_dir_attenzione', 'v_cm_dir_commessa']);
+    }
 
     public function normFilters(array $q): array
     {
@@ -40,8 +52,25 @@ final class DirModel
             // codice bisognava uscire dalla sezione.
             'q'        => trim((string)($q['q'] ?? '')),
             'cliente'  => trim((string)($q['cliente'] ?? '')),
+            // v1.9.78 — filtro globale Codice Contratto / PM Project
+            'contratti' => PmContractFilter::fromRequest($q),
         ];
         return $f;
+    }
+
+    /** v1.9.78 — filtro contratto risolto una volta per richiesta. */
+    private ?PmContractFilter $cf = null;
+    public function cf(array $f): PmContractFilter
+    {
+        $v = $f['contratti'] ?? [];
+        if ($this->cf === null || $this->cf->values() !== PmContractFilter::norm($v)) $this->cf = new PmContractFilter($this->pdo, $v);
+        return $this->cf;
+    }
+
+    /** Opzioni del filtro contratto: le commesse del portafoglio direzionale. */
+    public function valoriContratti(): array
+    {
+        return PmContractFilter::options($this->pdo, "SELECT `commessa` AS code FROM `{$this->v['v_cm_dir_commessa']}`");
     }
 
     /** Clausola condivisa da quadro, elenchi ed export. */
@@ -69,6 +98,8 @@ final class DirModel
                 foreach ($f[$k] as $v) $a[] = $v;
             }
         }
+        $cf = $this->cf($f);
+        if ($cf->active()) $w[] = $cf->sql('code', 'c.`commessa`', $a);   // v1.9.78
         return [implode(' AND ', $w), $a];
     }
 
@@ -102,7 +133,7 @@ final class DirModel
                     SUM(c.`aperta`=1 AND c.`divergenza_pct` >= 20) AS divergenti,
                     SUM(c.`aperta`=1 AND c.`giorni_a_scadenza` BETWEEN 0 AND 30) AS in_scadenza,
                     SUM(c.`aperta`=1 AND c.`giorni_senza_movimenti` > 90) AS ferme
-               FROM `v_cm_dir_commessa` c WHERE $w");
+               FROM `{$this->v['v_cm_dir_commessa']}` c WHERE $w");
         $st->execute($a);
         $r = $st->fetch(PDO::FETCH_ASSOC) ?: [];
         $st->closeCursor();
@@ -130,7 +161,7 @@ final class DirModel
                     SUM(c.`aperta`=1 AND c.`divergenza_pct` >= 20) AS divergenti,
                     SUM(c.`aperta`=1 AND c.`giorni_a_scadenza` BETWEEN 0 AND 30) AS in_scadenza,
                     SUM(c.`aperta`=1 AND c.`giorni_senza_movimenti` > 90) AS ferme
-               FROM `v_cm_dir_commessa` c WHERE $w
+               FROM `{$this->v['v_cm_dir_commessa']}` c WHERE $w
               GROUP BY c.`agente` ORDER BY valore DESC");
         $st->execute($a);
         $out = $st->fetchAll(PDO::FETCH_ASSOC);
@@ -154,7 +185,7 @@ final class DirModel
                     ROUND(SUM(CASE WHEN c.`ha_ricavo`=1 THEN c.`valore` ELSE 0 END), 2) AS valore,
                     ROUND(SUM(CASE WHEN c.`ha_ricavo`=1 THEN c.`margine` ELSE 0 END), 2) AS margine,
                     ROUND(SUM(c.`ore`), 2) AS ore
-               FROM `v_cm_dir_commessa` c WHERE $w
+               FROM `{$this->v['v_cm_dir_commessa']}` c WHERE $w
               GROUP BY voce ORDER BY valore DESC LIMIT " . (int)$limite);
         $st->execute($a);
         $out = $st->fetchAll(PDO::FETCH_ASSOC);
@@ -173,13 +204,15 @@ final class DirModel
         $w = ['1=1']; $a = [];
         if ($f['agente'] !== '') { $w[] = "`agente` = ?"; $a[] = $f['agente']; }
         if (!empty($f['linee'])) {
-            $w[] = "`commessa` IN (SELECT `commessa` FROM `v_cm_dir_commessa`
+            $w[] = "`commessa` IN (SELECT `commessa` FROM `{$this->v['v_cm_dir_commessa']}`
                                     WHERE `linea_servizio` IN ("
                  . implode(',', array_fill(0, count($f['linee']), '?')) . "))";
             foreach ($f['linee'] as $v) $a[] = $v;
         }
+        $cf = $this->cf($f);
+        if ($cf->active()) $w[] = $cf->sql('code', '`commessa`', $a);   // v1.9.78
         $st = $this->pdo->prepare(
-            "SELECT * FROM `v_cm_dir_attenzione` WHERE " . implode(' AND ', $w)
+            "SELECT * FROM `{$this->v['v_cm_dir_attenzione']}` WHERE " . implode(' AND ', $w)
           . " ORDER BY `priorita`, `valore` DESC LIMIT " . (int)$limite);
         $st->execute($a);
         $out = $st->fetchAll(PDO::FETCH_ASSOC);
@@ -192,7 +225,7 @@ final class DirModel
     {
         [$w, $a] = $this->where($f);
         $st = $this->pdo->prepare(
-            "SELECT * FROM `v_cm_dir_commessa` c WHERE $w
+            "SELECT * FROM `{$this->v['v_cm_dir_commessa']}` c WHERE $w
               ORDER BY c.`valore` DESC LIMIT " . (int)$limite);
         $st->execute($a);
         $out = $st->fetchAll(PDO::FETCH_ASSOC);
@@ -203,6 +236,29 @@ final class DirModel
     /** Andamento mensile del perimetro. */
     public function andamento(array $f, int $mesi = 12): array
     {
+        // v1.9.78 — con il filtro contratto la vista aggregata (mese x agente) non
+        // basta: stesso calcolo di v_cm_dir_andamento sulle tabelle, ristretto
+        // alle commesse selezionate.
+        $cf = $this->cf($f);
+        if ($cf->active()) {
+            $a = [$mesi];
+            $w = ["DATE_FORMAT(ir.`report_date`, '%Y-%m') >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL ? MONTH), '%Y-%m')",
+                  "ir.`report_date` IS NOT NULL"];
+            if ($f['agente'] !== '') { $w[] = "COALESCE(p.`commercial_ref`, '(non attribuita)') = ?"; $a[] = $f['agente']; }
+            $w[] = $cf->sql('pid', 'ir.`project_id`', $a);
+            $st = $this->pdo->prepare(
+                "SELECT DATE_FORMAT(ir.`report_date`, '%Y-%m') AS ym,
+                        COUNT(DISTINCT ir.`project_id`) AS commesse, COUNT(*) AS interventi,
+                        ROUND(SUM(COALESCE(ir.`quantity_hours`, 0)), 2) AS ore,
+                        ROUND(SUM(COALESCE(ir.`company_cost_import`, 0)), 2) AS costo
+                   FROM `cm_intervention_reports` ir JOIN `cm_projects` p ON p.`id` = ir.`project_id`
+                  WHERE " . implode(' AND ', $w) . "
+                  GROUP BY ym ORDER BY ym");
+            $st->execute($a);
+            $out = $st->fetchAll(PDO::FETCH_ASSOC);
+            $st->closeCursor();
+            return $out;
+        }
         $w = ["a.`anno_mese` >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL ? MONTH), '%Y-%m')"];
         $a = [$mesi];
         if ($f['agente'] !== '') { $w[] = "a.`agente` = ?"; $a[] = $f['agente']; }
@@ -210,7 +266,7 @@ final class DirModel
             "SELECT a.`anno_mese` AS ym, SUM(a.`commesse_movimentate`) AS commesse,
                     SUM(a.`interventi`) AS interventi, ROUND(SUM(a.`ore`), 2) AS ore,
                     ROUND(SUM(a.`costo`), 2) AS costo
-               FROM `v_cm_dir_andamento` a WHERE " . implode(' AND ', $w)
+               FROM `{$this->v['v_cm_dir_andamento']}` a WHERE " . implode(' AND ', $w)
           . " GROUP BY a.`anno_mese` ORDER BY a.`anno_mese`");
         $st->execute($a);
         $out = $st->fetchAll(PDO::FETCH_ASSOC);
@@ -223,7 +279,7 @@ final class DirModel
     {
         try {
             return $this->pdo->query(
-                "SELECT DISTINCT `agente` FROM `v_cm_dir_commessa`
+                "SELECT DISTINCT `agente` FROM `{$this->v['v_cm_dir_commessa']}`
                   WHERE `agente` <> '' ORDER BY `agente`")->fetchAll(PDO::FETCH_COLUMN);
         } catch (Throwable $e) { return []; }
     }
@@ -235,7 +291,7 @@ final class DirModel
         if (!in_array($dim, $ok, true)) return [];
         try {
             return $this->pdo->query(
-                "SELECT DISTINCT `$dim` FROM `v_cm_dir_commessa`
+                "SELECT DISTINCT `$dim` FROM `{$this->v['v_cm_dir_commessa']}`
                   WHERE `$dim` IS NOT NULL AND `$dim` <> '' ORDER BY `$dim`")
                 ->fetchAll(PDO::FETCH_COLUMN);
         } catch (Throwable $e) { return []; }
@@ -248,16 +304,21 @@ final class DirModel
      * scheda che mostra 12 commesse senza dire che il portafoglio ne ha 1.062
      * lascia credere di aver visto tutto.
      */
-    public function perimetro(string $agente): array
+    public function perimetro(string $agente, array $f = []): array
     {
+        // v1.9.78 — con il filtro contratto il perimetro e' misurato dentro la selezione
+        $a = [$agente, $agente];
+        $wc = '';
+        $cf = $this->cf($f);
+        if ($cf->active()) $wc = ' WHERE ' . $cf->sql('code', '`commessa`', $a);
         $st = $this->pdo->prepare(
             "SELECT COUNT(*) AS tot,
                     SUM(`agente` = ?) AS suo,
                     ROUND(SUM(CASE WHEN `ha_ricavo`=1 THEN `valore` ELSE 0 END), 2) AS valore_tot,
                     ROUND(SUM(CASE WHEN `agente` = ? AND `ha_ricavo`=1
                               THEN `valore` ELSE 0 END), 2) AS valore_suo
-               FROM `v_cm_dir_commessa`");
-        $st->execute([$agente, $agente]);
+               FROM `{$this->v['v_cm_dir_commessa']}`$wc");
+        $st->execute($a);
         $r = $st->fetch(PDO::FETCH_ASSOC) ?: [];
         $st->closeCursor();
         $r['pct_commesse'] = ((int)($r['tot'] ?? 0)) > 0

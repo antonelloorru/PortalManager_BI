@@ -188,7 +188,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['execute_hire'])) {
             $pdo->commit();
 
             write_log('Recruiting', 'success',
-                "Candidato #$candidate_id ({$candidate['first_name']} {$candidate['last_name']}) " .
+                "Candidato #$candidate_id ({$candidate['last_name']} {$candidate['first_name']}) " .
                 "assunto come dipendente #$new_emp_id (posizione #$position_id)" .
                 ($auto_closed ? ' - posizione AUTO-CHIUSA' : ''),
                 $u_id);
@@ -244,7 +244,7 @@ require_once('header.php');
     <i class="fa-solid fa-user-tag"></i> Candidato selezionato
   </h3>
   <div style="font-size:13px;color:#15803d">
-    <strong><?= h($candidate['first_name'] . ' ' . $candidate['last_name']) ?></strong>
+    <strong><?= h($candidate['last_name'] . ' ' . $candidate['first_name']) ?></strong>
     <?php if ($candidate['email']): ?> · <?= h($candidate['email']) ?><?php endif; ?>
     <?php if ($candidate['phone']): ?> · <?= h($candidate['phone']) ?><?php endif; ?>
   </div>
@@ -447,7 +447,7 @@ require_once('header.php');
     </div>
     <div style="display:flex;gap:10px">
       <button type="submit" class="btn btn-primary" style="background:#16a34a"
-              onclick="return confirm('Confermi la trasformazione di <?= h(addslashes($candidate['first_name'].' '.$candidate['last_name'])) ?> in dipendente?\n\nL\'operazione è irreversibile via UI.')">
+              onclick="return confirm('Confermi la trasformazione di <?= h(addslashes($candidate['last_name'].' '.$candidate['first_name'])) ?> in dipendente?\n\nL\'operazione è irreversibile via UI.')">
         <i class="fa-solid fa-user-check"></i> Esegui assunzione
       </button>
       <a href="<?= url_safe('candidato_profilo', ['id' => $candidate_id]) ?>" class="btn">

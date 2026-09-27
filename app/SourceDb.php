@@ -86,6 +86,37 @@ final class SourceDb
         return $out === false ? '' : $out;
     }
 
+    /**
+     * v1.9.72 — Configurazione di connessione dalla riga salvata in cm_source_db.
+     * Unico punto che legge le credenziali: usato dalla sincronizzazione manuale e da
+     * quella pianificata (worker senza cron, cron_sync.php), che quindi non possono
+     * più divergere. La password è in `password_enc`, cifrata AES-256-GCM con APP_SECRET.
+     *
+     * @throws RuntimeException se la password salvata non si decifra (APP_SECRET diverso
+     *         o assente nel processo): meglio un errore esplicito che un tentativo di
+     *         accesso senza password ("Access denied ... using password: NO").
+     */
+    public static function configFromRow(array $row): array
+    {
+        $enc   = (string)($row['password_enc'] ?? '');
+        $plain = $enc === '' ? '' : self::decrypt($enc);
+        if ($enc !== '' && $plain === '') {
+            throw new RuntimeException('Impossibile decifrare la password del gestionale: '
+                . 'APP_SECRET in .env.php non disponibile o diverso da quello usato al salvataggio. '
+                . 'Reinserire la password nella configurazione della connessione.');
+        }
+        return [
+            'driver'   => (string)($row['driver'] ?? ''),
+            'host'     => (string)($row['host'] ?? ''),
+            'port'     => (int)($row['port'] ?? 0),
+            'dbname'   => (string)($row['dbname'] ?? ''),
+            'username' => (string)($row['username'] ?? ''),
+            'password' => $plain,
+            'timeout'  => (int)($row['timeout'] ?? 10),
+            'schema'   => $row['source_schema'] ?? null,
+        ];
+    }
+
     // ── Connessione ─────────────────────────────────────────────────────────
 
     /**

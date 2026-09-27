@@ -23,7 +23,7 @@ final class Router
      */
     public const PAGES = [
         // Core
-        'index', 'login', 'logout', 'unauthorized', 'user_profile', 'employee_profile', 'employee_cv', 'device_manager', 'device_export', 'device_print', 'device_import', 'notifications',
+        'index', 'login', 'logout', 'unauthorized', 'auth_microsoft', 'user_profile', 'employee_profile', 'employee_cv', 'device_manager', 'device_export', 'device_print', 'device_import', 'notifications',
 
         // 2FA (v4.1)
         '2fa_verify', '2fa_settings',
@@ -51,7 +51,7 @@ final class Router
         'manage_enum_proposals', 'system_backup', 'credly_sync',
 
         // Gestione Commesse (v1.8.x)
-        'manage_projects', 'project_dashboard', 'project_gantt', 'workload_overview', 'service_desk', 'it_service', 'dir_report', 'pratix_orders', 'sync_commesse',
+        'manage_projects', 'project_dashboard', 'project_gantt', 'workload_overview', 'service_desk', 'it_service', 'dir_report', 'pratix_orders', 'pratix_import', 'sync_commesse',
         'dgb_activities', 'manage_rate_bands', 'import_commesse', 'import_commesse_db',
         'tech_registry', 'tech_units',
         'professionals', 'import_professionals', 'import_intervention_reports',
@@ -78,7 +78,7 @@ final class Router
         'schema_check_upgrade', 'health_check', 'system_update',
         // v1.8.16: pagine Sistema/manutenzione ad accesso solo per path esatto
         // (l'anonimizzazione via slug ne rompeva l'accesso e le sotto-sezioni)
-        'system_console', 'system_errors', 'recycle_bin', 'verify_integrity', 'cleanup_orphans',
+        'system_console', 'sso_settings', 'perf_center', 'system_errors', 'recycle_bin', 'verify_integrity', 'cleanup_orphans',
         'migrate_links', 'diag', 'file_manager',
     ];
 

@@ -55,7 +55,7 @@ $where_sql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
 
 $sql = "SELECT p.*,
                b.name AS brand_name,
-               CONCAT(COALESCE(e.first_name,''), ' ', COALESCE(e.last_name,'')) AS team_leader_name,
+               CONCAT(COALESCE(e.last_name,''), ' ', COALESCE(e.first_name,'')) AS team_leader_name,
                (SELECT COUNT(*) FROM candidate_applications a WHERE a.position_id = p.id) AS applications_count,
                (SELECT GROUP_CONCAT(c.name ORDER BY c.name SEPARATOR ', ')
                   FROM position_clients pc JOIN clients c ON c.id = pc.client_id

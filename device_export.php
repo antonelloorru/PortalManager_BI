@@ -34,7 +34,7 @@ if (!$emp) {
     die('Dipendente non trovato');
 }
 
-$emp_label = trim($emp['first_name'] . ' ' . $emp['last_name']);
+$emp_label = trim($emp['last_name'] . ' ' . $emp['first_name']);
 $emp_code  = $emp['employee_code'] ?: "ID{$emp_id}";
 
 // Carico tutti i dispositivi

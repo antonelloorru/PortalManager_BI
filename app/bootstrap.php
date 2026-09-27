@@ -94,3 +94,19 @@ if (file_exists(__DIR__ . '/Version.php')) {
         } catch (Throwable $e) { /* no-op: mai bloccare il bootstrap */ }
     }
 }
+
+// ── v1.9.70: scheduler applicativo senza cron (sincronizzazione gestionale) ──
+// Registrato a fine richiesta: la pagina è già stata prodotta, l'utente non attende.
+// Il controllo è limitato a una volta al minuto per istanza (throttling su file).
+if (PHP_SAPI !== 'cli' && file_exists(__DIR__ . '/CronlessScheduler.php')) {
+    require_once __DIR__ . '/CronlessScheduler.php';
+    register_shutdown_function(['CronlessScheduler', 'tick']);
+}
+
+// ── v1.9.73: profiler delle query (Super Admin, attivabile da Sistema → Prestazioni) ──
+// MariaDB registra durata di ogni query della connessione; footer.php le mostra.
+if (PHP_SAPI !== 'cli' && !empty($_SESSION['pm_profile']) && (int)($_SESSION['role_id'] ?? 0) === 1
+    && isset($pdo) && $pdo instanceof PDO) {
+    try { $pdo->exec("SET profiling = 1, profiling_history_size = 100"); $GLOBALS['PM_PROFILE_T0'] = microtime(true); }
+    catch (Throwable $e) { /* profiler non disponibile: la pagina funziona comunque */ }
+}

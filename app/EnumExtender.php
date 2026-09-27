@@ -267,7 +267,7 @@ class EnumExtender
         if ($tableFilter !== null && $tableFilter !== '') { $where[] = "ep.target_table = ?"; $params[] = $tableFilter; }
 
         $sql = "SELECT ep.*,
-                       CONCAT(COALESCE(e.first_name,''),' ',COALESCE(e.last_name,'')) AS user_name
+                       CONCAT(COALESCE(e.last_name,''),' ',COALESCE(e.first_name,'')) AS user_name
                   FROM enum_proposals ep
                   LEFT JOIN users u ON u.id = ep.decided_by
                   LEFT JOIN employees e ON e.id = u.employee_id

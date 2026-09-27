@@ -104,7 +104,7 @@ final class EntityChangeLog
     {
         $s = $this->pdo->prepare(
             "SELECT ecl.*,
-                    CONCAT(COALESCE(e.first_name,''), ' ', COALESCE(e.last_name,'')) AS user_name
+                    CONCAT(COALESCE(e.last_name,''), ' ', COALESCE(e.first_name,'')) AS user_name
                FROM entity_change_log ecl
                LEFT JOIN users u    ON u.id = ecl.changed_by
                LEFT JOIN employees e ON e.id = u.employee_id
@@ -123,7 +123,7 @@ final class EntityChangeLog
     {
         $s = $this->pdo->prepare(
             "SELECT ecl.*,
-                    CONCAT(COALESCE(e.first_name,''), ' ', COALESCE(e.last_name,'')) AS user_name
+                    CONCAT(COALESCE(e.last_name,''), ' ', COALESCE(e.first_name,'')) AS user_name
                FROM entity_change_log ecl
                LEFT JOIN users u    ON u.id = ecl.changed_by
                LEFT JOIN employees e ON e.id = u.employee_id

@@ -2,12 +2,15 @@
 /**
  * ItServiceModel — letture per la Relazione di Servizio IT.
  *
+ * v1.9.78 — filtro contratto delegato a PmContractFilter (condiviso con SD, direzionale, DGB).
+ * v1.9.77 — filtro globale Codice Contratto / PM Project (`contratti`) su tutti i dataset.
+ *
  * v1.9.42 — fix Riepilogo/Dettaglio per Codice Contratto: dgb_forms_contract e
  * dgb_operator portati a LEFT JOIN (dgb_forms_contract e' vuota finche' non
  * sincronizzata → l'INNER JOIN scartava tutte le righe). Identita' contratto
  * spostata su a.id_contract; etichetta da cm_projects.project_code con fallback.
  *
- * Ogni interrogazione passa da `v_cm_it_servizio`, che espone una riga per
+ * Ogni interrogazione passa da `{$this->v['v_cm_it_servizio']}`, che espone una riga per
  * intervento con tutte le sue dimensioni. Le aggregazioni sono costruite qui
  * perche' le combinazioni richieste — piu' linee, piu' settori, piu' modalita'
  * insieme — non si esprimono in una vista fissa.
@@ -45,7 +48,16 @@ final class ItServiceModel
         'anno_mese'         => 'Mese',
     ];
 
-    public function __construct(PDO $pdo) { $this->pdo = $pdo; }
+    /** v1.9.73 — nome da interrogare per ciascuna vista: copia aggiornata se lenta, altrimenti la vista. */
+    private array $v = [];
+
+    public function __construct(PDO $pdo)
+    {
+        $this->pdo = $pdo;
+        require_once __DIR__ . '/PmSnapshot.php';
+        require_once __DIR__ . '/PmContractFilter.php';
+        $this->v = PmSnapshot::names($pdo, ['v_cm_it_distanze_mancanti', 'v_cm_it_giorni_base', 'v_cm_it_servizio', 'v_cm_sd_costi_valorizzati']);
+    }
 
     public function normFilters(array $q): array
     {
@@ -69,6 +81,10 @@ final class ItServiceModel
             'fasce'     => $arr($q['fasce']     ?? []),
             'durate'    => $arr($q['durate']    ?? []),
             'sedi'      => $arr($q['sedi']      ?? []),
+            // v1.9.77 — filtro globale Codice Contratto / PM Project: codice
+            // commessa (cm_projects.project_code) oppure 'dgb:<id_contract>'
+            // v1.9.78 — filtro condiviso fra le pagine (PmContractFilter, persistente in sessione)
+            'contratti' => PmContractFilter::fromRequest($q),
             'ricavo'    => in_array($q['ricavo'] ?? '', ['1', '0'], true) ? (string)$q['ricavo'] : '',
             // v1.9.8 — ricerca libera e cliente, come nel pannello di
             // Commesse/Progetti: senza, per isolare una commessa bisognava
@@ -86,7 +102,7 @@ final class ItServiceModel
             try {
                 $r = $this->pdo->query(
                     "SELECT DATE_FORMAT(MAX(`giorno`), '%Y-%m-01') a, LAST_DAY(MAX(`giorno`)) b
-                       FROM `v_cm_it_servizio`")->fetch(PDO::FETCH_ASSOC);
+                       FROM `{$this->v['v_cm_it_servizio']}`")->fetch(PDO::FETCH_ASSOC);
                 $f['from'] = $f['from'] ?: (string)($r['a'] ?? date('Y-m-01'));
                 $f['to']   = $f['to']   ?: (string)($r['b'] ?? date('Y-m-t'));
             } catch (Throwable $e) {
@@ -124,6 +140,7 @@ final class ItServiceModel
             }
         }
         if ($f['ricavo'] !== '') { $w[] = "s.`ha_ricavo` = ?"; $a[] = (int)$f['ricavo']; }
+        if ($c = $this->ctrCond('s.`commessa`', $f, $a)) $w[] = $c;
 
         if ($f['q'] !== '') {
             $w[] = "(s.`commessa` LIKE ? OR s.`cliente` LIKE ? OR s.`modulo` LIKE ?)";
@@ -134,10 +151,68 @@ final class ItServiceModel
         return [implode(' AND ', $w), $a];
     }
 
+    /* ── v1.9.77 — filtro globale Codice Contratto / PM Project ─────────────
+     *
+     * Un solo filtro, due chiavi fisiche: le viste dei rapportini espongono il
+     * codice commessa (`commessa` = cm_projects.project_code), le sezioni DGB
+     * l'id del contratto (`a.id_contract`). Il ponte e' cm_projects.dgb_contract_id,
+     * in entrambe le direzioni: scegliere un PM Project filtra anche le attivita'
+     * DGB del suo contratto, scegliere un contratto DGB filtra anche i rapportini
+     * delle commesse collegate. Stessa condizione per ogni dataset della pagina.
+     */
+    public static function normContratti(array $v): array { return PmContractFilter::norm($v); }
+
+    /** v1.9.78 — risoluzione unica per richiesta (codici, id DGB) in PmContractFilter. */
+    private ?PmContractFilter $cf = null;
+    private function cf(array $f): PmContractFilter
+    {
+        $v = $f['contratti'] ?? [];
+        if ($this->cf === null || $this->cf->values() !== PmContractFilter::norm($v)) $this->cf = new PmContractFilter($this->pdo, $v);
+        return $this->cf;
+    }
+
+    /** Condizione su una colonna "codice commessa". NULL se il filtro e' vuoto. */
+    private function ctrCond(string $col, array $f, array &$a): ?string
+    {
+        $cf = $this->cf($f);
+        return $cf->active() ? $cf->sql('code', $col, $a) : null;
+    }
+
+    /** Condizione su una colonna "id contratto DGB". NULL se il filtro e' vuoto. */
+    private function ctrCondDgb(string $col, array $f, array &$a): ?string
+    {
+        $cf = $this->cf($f);
+        return $cf->active() ? $cf->sql('id', $col, $a) : null;
+    }
+
+    /** Opzioni del filtro: commesse presenti nella Relazione IT + contratti DGB senza PM Project. */
+    public function valoriContratti(): array
+    {
+        return PmContractFilter::options($this->pdo,
+            "SELECT DISTINCT `commessa` AS code FROM `{$this->v['v_cm_it_servizio']}`");
+    }
+
+    /** Descrizione leggibile dei filtri attivi (stampa, DOCX, XLSX). */
+    public function descrizioneFiltri(array $f, array $ctrLabels = []): array
+    {
+        $out = [];
+        if (!empty($f['contratti'])) $out[] = PmContractFilter::describe($f['contratti'], $ctrLabels);
+        foreach ([['linee','Linee'],['codici','Codici linea'],['settori','Settori'],['aziende','Aziende'],
+                  ['incaricati','Incaricati'],['sedi','Sedi'],['modalita','Modalità'],['fasce','Fasce'],
+                  ['durate','Durate']] as [$k, $l]) {
+            if (!empty($f[$k])) $out[] = $l . ': ' . implode(', ', array_map([self::class, 'etichetta'], $f[$k]));
+        }
+        if (($f['ricavo'] ?? '') !== '') $out[] = 'Natura: ' . ($f['ricavo'] === '1' ? 'a ricavo' : 'interne');
+        if (($f['q'] ?? '') !== '')       $out[] = 'Ricerca: ' . $f['q'];
+        if (($f['cliente'] ?? '') !== '') $out[] = 'Cliente: ' . $f['cliente'];
+        return $out;
+    }
+
     /** Totali del periodo. */
     public function totali(array $f): array
     {
         [$w, $a] = $this->where($f);
+        $cQ = $this->oreClassi();   // v1.9.75 — ripartizione per ore
         $st = $this->pdo->prepare(
             "SELECT COUNT(*)                            AS interventi,
                     COUNT(DISTINCT s.`giorno`)          AS giorni_distinti,
@@ -150,12 +225,13 @@ final class ItServiceModel
                     SUM(s.`km_percorsi` IS NULL AND s.`modalita`='presso cliente') AS trasferte_senza_km,
                     SUM(s.`durata` = 'giornata')        AS giornate,
                     SUM(s.`durata` = 'mezza giornata')  AS mezze_giornate,
-                    SUM(s.`fascia_oraria` = 'fuori orario') AS fuori_orario,
+                    SUM({$cQ['fuori']} > 0)              AS fuori_orario,
+                    ROUND(SUM({$cQ['fuori']}), 2)       AS ore_fuori_orario,
                     ROUND(SUM(CASE WHEN s.`ha_ricavo`=1 THEN s.`ore` ELSE 0 END), 2) AS ore_ricavo,
                     COUNT(DISTINCT s.`linea_servizio`)  AS linee,
                     COUNT(DISTINCT s.`commessa`)        AS commesse,
                     COUNT(DISTINCT s.`cliente`)         AS clienti
-               FROM `v_cm_it_servizio` s WHERE $w");
+               FROM `{$this->v['v_cm_it_servizio']}` s {$this->irJoin()} WHERE $w");
         $st->execute($a);
         $r = $st->fetch(PDO::FETCH_ASSOC) ?: [];
         $st->closeCursor();
@@ -170,6 +246,7 @@ final class ItServiceModel
     public function aggrega(array $f, int $limite = 500): array
     {
         [$w, $a] = $this->where($f);
+        $cQ = $this->oreClassi();   // v1.9.75 — ripartizione per ore
         $cols = [];
         foreach ($f['gb'] as $g) $cols[] = "s.`$g`";
         $sel = implode(', ', $cols);
@@ -195,10 +272,12 @@ final class ItServiceModel
                     SUM(s.`modalita` = 'presso cliente') AS presso_cliente,
                     SUM(s.`modalita` = 'da remoto')     AS da_remoto,
                     SUM(s.`modalita` = 'smart working') AS smart_working,
-                    SUM(s.`modalita` = 'reperibilita')  AS reperibilita,
-                    SUM(s.`fascia_oraria` = 'fuori orario') AS fuori_orario,
+                    SUM({$cQ['repC']})                  AS reperibilita,
+                    ROUND(SUM({$cQ['rep']}), 2)         AS ore_reperibilita,
+                    SUM({$cQ['fuori']} > 0)              AS fuori_orario,
+                    ROUND(SUM({$cQ['fuori']}), 2)       AS ore_fuori_orario,
                     ROUND(SUM(CASE WHEN s.`ha_ricavo`=1 THEN s.`ore` ELSE 0 END), 2) AS ore_ricavo
-               FROM `v_cm_it_servizio` s
+               FROM `{$this->v['v_cm_it_servizio']}` s {$this->irJoin()}
               WHERE $w GROUP BY $sel $ord LIMIT " . (int)$limite);
         $st->execute($a);
         $out = $st->fetchAll(PDO::FETCH_ASSOC);
@@ -215,7 +294,7 @@ final class ItServiceModel
             "SELECT s.`$dim` AS voce, COUNT(*) AS interventi,
                     ROUND(SUM(s.`ore`), 2) AS ore,
                     COUNT(DISTINCT CONCAT(s.`incaricato`,'|',s.`giorno`)) AS giornate_uomo
-               FROM `v_cm_it_servizio` s WHERE $w
+               FROM `{$this->v['v_cm_it_servizio']}` s WHERE $w
               GROUP BY s.`$dim` ORDER BY ore DESC LIMIT " . (int)$limite);
         $st->execute($a);
         $out = $st->fetchAll(PDO::FETCH_ASSOC);
@@ -227,20 +306,164 @@ final class ItServiceModel
     public function andamento(array $f): array
     {
         [$w, $a] = $this->where($f);
+        $c = $this->oreClassi();   // v1.9.74 — stesse regole del grafico giornaliero
         $st = $this->pdo->prepare(
             "SELECT s.`anno_mese` AS ym, COUNT(*) AS interventi,
                     ROUND(SUM(s.`ore`), 2) AS ore,
                     ROUND(SUM(s.`ore_viaggio`), 2) AS ore_viaggio,
-                    ROUND(SUM(CASE WHEN s.`fascia_oraria`='fuori orario' THEN s.`ore` ELSE 0 END), 2) AS ore_fuori,
-                    ROUND(SUM(CASE WHEN s.`modalita`='reperibilita' THEN s.`ore` ELSE 0 END), 2) AS ore_reperibilita,
-                    ROUND(SUM(CASE WHEN s.`fascia_oraria`='in orario' AND s.`modalita`<>'reperibilita' THEN s.`ore` ELSE 0 END), 2) AS ore_ordinarie,
+                    ROUND(SUM({$c['fuori']}), 2) AS ore_fuori,
+                    ROUND(SUM({$c['rep']}), 2)   AS ore_reperibilita,
+                    ROUND(SUM({$c['ord']}), 2)   AS ore_ordinarie,
                     COUNT(DISTINCT CONCAT(s.`incaricato`,'|',s.`giorno`)) AS giornate_uomo
-               FROM `v_cm_it_servizio` s WHERE $w
+               FROM `{$this->v['v_cm_it_servizio']}` s {$this->irJoin()} WHERE $w
               GROUP BY s.`anno_mese` ORDER BY s.`anno_mese`");
         $st->execute($a);
         $out = $st->fetchAll(PDO::FETCH_ASSOC);
         $st->closeCursor();
         return $out;
+    }
+
+    /**
+     * v1.9.75 — Ripartizione delle ore di ogni riga fra ordinarie, fuori orario,
+     * reperibilità e non classificate (quantità, non condizioni).
+     *
+     * Se la vista espone `modulo` (codice del rapportino), il rapportino viene agganciato
+     * e le ore sono ripartite con la regola unica di app/PmOrario.php: sovrapposizione
+     * reale con le fasce ordinarie (un turno 12:00–00:00 è 5 h ordinarie + 6 h fuori
+     * orario, non tutto ordinario perché iniziato alle 12). Senza aggancio vale la fascia
+     * del modulo intero (v1.9.74). Somma delle quattro quantità = ore della riga.
+     */
+    private function oreClassi(): array
+    {
+        require_once __DIR__ . '/PmOrario.php';
+        $mod = "LOWER(TRIM(COALESCE(s.`modalita`,'')))";
+        $fas = "LOWER(TRIM(COALESCE(s.`fascia_oraria`,'')))";
+        $rep = "($mod LIKE 'reperibilit%')";
+        $ore = "COALESCE(s.`ore`,0)";
+        if ($this->haModulo()) {
+            // v1.9.76 — la reperibilità è un flag del rapportino (on_call), indipendente dalla
+            // modalità: un intervento può essere da remoto E in reperibilità (79 su 91 nei dati).
+            // Con la sola `modalita` della vista questi interventi sparivano dai grafici.
+            $rep = "($mod LIKE 'reperibilit%' OR COALESCE(ir.`on_call`,0) = 1)";
+            $spl = PmOrario::ordinarieSql('ir.`start_at`', 'ir.`end_at`', $ore, $this->pdo);
+            $ord = "(CASE WHEN $rep THEN 0 WHEN ir.`id` IS NOT NULL THEN $spl WHEN $fas = 'in orario' THEN $ore ELSE 0 END)";
+            $fuo = "(CASE WHEN $rep THEN 0 WHEN ir.`id` IS NOT NULL THEN $ore - $spl WHEN $fas = 'fuori orario' THEN $ore ELSE 0 END)";
+            $ncC = "(NOT $rep AND ir.`id` IS NULL AND $fas NOT IN ('in orario','fuori orario'))";
+        } else {
+            $ord = "(CASE WHEN NOT $rep AND $fas = 'in orario' THEN $ore ELSE 0 END)";
+            $fuo = "(CASE WHEN NOT $rep AND $fas = 'fuori orario' THEN $ore ELSE 0 END)";
+            $ncC = "(NOT $rep AND $fas NOT IN ('in orario','fuori orario'))";
+        }
+        return [
+            'rep'    => "(CASE WHEN $rep THEN $ore ELSE 0 END)",
+            'ord'    => $ord,
+            'fuori'  => $fuo,
+            'nc'     => "(CASE WHEN $ncC THEN $ore ELSE 0 END)",
+            'nc_cond'=> $ncC,
+            'repC'   => $rep,
+        ];
+    }
+
+    /** La vista espone il codice del modulo? (per agganciare il rapportino) */
+    private ?bool $haModulo = null;
+    private function haModulo(): bool
+    {
+        if ($this->haModulo !== null) return $this->haModulo;
+        try {
+            $st = $this->pdo->prepare("SELECT COUNT(*) FROM information_schema.COLUMNS
+                                        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = 'modulo'");
+            $st->execute([$this->v['v_cm_it_servizio']]);
+            $this->haModulo = (int)$st->fetchColumn() > 0;
+        } catch (Throwable $e) { $this->haModulo = false; }
+        return $this->haModulo;
+    }
+
+    /** JOIN al rapportino del modulo (uno solo: l'id minimo per codice). */
+    private function irJoin(): string
+    {
+        return $this->haModulo()
+            ? " LEFT JOIN `cm_intervention_reports` ir ON ir.`id` = (SELECT MIN(x.`id`) FROM `cm_intervention_reports` x WHERE x.`report_code` = s.`modulo`) "
+            : '';
+    }
+
+    /**
+     * v1.9.73 — Andamento GIORNALIERO delle ore (ultimi $maxGiorni giorni del periodo),
+     * con le stesse classi del grafico mensile: ordinarie, fuori orario, reperibilità.
+     * @return array{from:string,to:string,rows:array}
+     */
+    public function andamentoGiornaliero(array $f, int $maxGiorni = 92): array
+    {
+        require_once __DIR__ . '/PmCharts.php';
+        [$da, $a] = PmCharts::window((string)$f['from'], (string)$f['to'], $maxGiorni);
+        $fw = $f; $fw['from'] = $da; $fw['to'] = $a;
+        [$w, $args] = $this->where($fw);
+        $c = $this->oreClassi();
+        $st = $this->pdo->prepare(
+            "SELECT s.`giorno` AS giorno, COUNT(*) AS interventi,
+                    ROUND(SUM(s.`ore`), 2) AS ore,
+                    ROUND(SUM({$c['ord']}), 2)   AS ore_ordinarie,
+                    ROUND(SUM({$c['fuori']}), 2) AS ore_fuori,
+                    ROUND(SUM({$c['rep']}), 2)   AS ore_reperibilita,
+                    ROUND(SUM({$c['nc']}), 2)    AS ore_non_classificate,
+                    COUNT(DISTINCT s.`incaricato`) AS persone
+               FROM `{$this->v['v_cm_it_servizio']}` s {$this->irJoin()} WHERE $w
+              GROUP BY s.`giorno` ORDER BY s.`giorno`");
+        $st->execute($args);
+        $rows = $st->fetchAll(PDO::FETCH_ASSOC);
+        $st->closeCursor();
+
+        // valori di fascia/modalità non riconosciuti: mostrati in pagina per individuare il dato anomalo
+        $anom = [];
+        if (array_sum(array_column($rows, 'ore_non_classificate')) > 0) {
+            $sa = $this->pdo->prepare(
+                "SELECT COALESCE(s.`fascia_oraria`, '(vuota)') AS fascia, COALESCE(s.`modalita`, '(vuota)') AS modalita,
+                        COUNT(*) AS interventi, ROUND(SUM(s.`ore`), 2) AS ore
+                   FROM `{$this->v['v_cm_it_servizio']}` s {$this->irJoin()} WHERE $w AND {$c['nc_cond']}
+                  GROUP BY 1, 2 ORDER BY ore DESC LIMIT 5");
+            $sa->execute($args);
+            $anom = $sa->fetchAll(PDO::FETCH_ASSOC);
+            $sa->closeCursor();
+        }
+        return ['from' => $da, 'to' => $a, 'rows' => $rows, 'non_classificate' => $anom];
+    }
+
+    // ── v1.9.76 — formattazione per tabelle, grafici ed export ──────────────
+    /** Etichetta leggibile dei valori tecnici della vista (le altre voci restano invariate). */
+    public static function etichetta($v): string
+    {
+        $v = (string)$v;
+        $map = ['reperibilita' => 'Reperibilità', 'reperibilità' => 'Reperibilità', 'da remoto' => 'Da remoto',
+                'presso cliente' => 'Presso cliente', 'smart working' => 'Smart working', 'in sede' => 'In sede',
+                'in orario' => 'In orario', 'fuori orario' => 'Fuori orario', 'giornata' => 'Giornata',
+                'mezza giornata' => 'Mezza giornata', 'non rilevata' => 'Non rilevata'];
+        return $map[mb_strtolower(trim($v))] ?? $v;
+    }
+
+    /** Flag di reperibilità in qualunque forma (1/0, S/N, sì/no, testo) → true/false/null (sconosciuto). */
+    public static function reperibilitaFlag($v): ?bool
+    {
+        if ($v === null) return null;
+        $t = mb_strtolower(trim((string)$v));
+        if ($t === '') return null;
+        if (in_array($t, ['1', 's', 'si', 'sì', 'y', 'yes', 'true', 'x', 'reperibilita', 'reperibilità', 'rep'], true)) return true;
+        if (in_array($t, ['0', 'n', 'no', 'false', '-', '—', 'ordinario'], true)) return false;
+        return null;
+    }
+
+    /** Testo per export: «Sì» / «No» / valore originale se non riconosciuto. */
+    public static function reperibilitaTesto($v): string
+    {
+        $f = self::reperibilitaFlag($v);
+        return $f === true ? 'Sì' : ($f === false ? 'No' : self::etichetta((string)$v));
+    }
+
+    /** HTML per le tabelle: badge viola «Sì», trattino per «No». */
+    public static function reperibilitaHtml($v): string
+    {
+        $f = self::reperibilitaFlag($v);
+        if ($f === true)  return '<span style="background:#ede9fe;color:#6d28d9;border-radius:6px;padding:1px 7px;font-weight:600;font-size:11px">Sì</span>';
+        if ($f === false) return '<span style="color:#94a3b8">—</span>';
+        return htmlspecialchars(self::etichetta((string)$v), ENT_QUOTES, 'UTF-8');
     }
 
     /** Valori disponibili per i menu dei filtri. */
@@ -250,10 +473,10 @@ final class ItServiceModel
         try {
             return $this->pdo->query(
                 $dim === 'incaricato'
-                    ? "SELECT DISTINCT `incaricato` FROM `v_cm_it_servizio`
+                    ? "SELECT DISTINCT `incaricato` FROM `{$this->v['v_cm_it_servizio']}`
                         WHERE `incaricato` IS NOT NULL AND `incaricato` <> ''
                         ORDER BY `incaricato_ordina`, `incaricato`"
-                    : "SELECT DISTINCT `$dim` FROM `v_cm_it_servizio`
+                    : "SELECT DISTINCT `$dim` FROM `{$this->v['v_cm_it_servizio']}`
                         WHERE `$dim` IS NOT NULL AND `$dim` <> '' ORDER BY `$dim`")
                 ->fetchAll(PDO::FETCH_COLUMN);
         } catch (Throwable $e) { return []; }
@@ -264,7 +487,7 @@ final class ItServiceModel
     {
         try {
             $st = $this->pdo->query(
-                "SELECT * FROM `v_cm_it_distanze_mancanti`
+                "SELECT * FROM `{$this->v['v_cm_it_distanze_mancanti']}`
                   ORDER BY `interventi` DESC LIMIT " . (int)$limite);
             return $st->fetchAll(PDO::FETCH_ASSOC);
         } catch (Throwable $e) { return []; }
@@ -280,7 +503,7 @@ final class ItServiceModel
                     ROUND(SUM(COALESCE(s.`km_percorsi`, 0)), 2)              AS km,
                     ROUND(SUM(CASE WHEN s.`modalita`='presso cliente'
                               THEN s.`ore_viaggio` ELSE 0 END), 2)           AS ore_viaggio
-               FROM `v_cm_it_servizio` s WHERE $w");
+               FROM `{$this->v['v_cm_it_servizio']}` s WHERE $w");
         $st->execute($a);
         $r = $st->fetch(PDO::FETCH_ASSOC) ?: [];
         $st->closeCursor();
@@ -356,7 +579,8 @@ final class ItServiceModel
                 foreach ($f['codici'] as $v) $a[] = $v;
             }
             if (($f['cliente'] ?? '') !== '') { $w .= " AND `cliente` LIKE ?"; $a[] = '%' . $f['cliente'] . '%'; }
-            $st = $this->pdo->prepare("$select FROM `v_cm_sd_costi_valorizzati` WHERE $w $coda");
+            if ($c = $this->ctrCond('`commessa`', $f, $a)) $w .= " AND $c";   // v1.9.77
+            $st = $this->pdo->prepare("$select FROM `{$this->v['v_cm_sd_costi_valorizzati']}` WHERE $w $coda");
             $st->execute($a);
             $out = $st->fetchAll(PDO::FETCH_ASSOC);
             $st->closeCursor();
@@ -471,6 +695,7 @@ final class ItServiceModel
                 $w .= " AND `operatore` IN ($ph)";
                 foreach ($f['incaricati'] as $v) $a[] = $v;
             }
+            if ($c = $this->ctrCond('`commessa`', $f, $a)) $w .= " AND $c";   // v1.9.77
             $st = $this->pdo->prepare(
                 "SELECT `operatore`, `ordina`,
                         COUNT(DISTINCT `giorno`) AS giorni_totali,
@@ -478,7 +703,7 @@ final class ItServiceModel
                         COUNT(DISTINCT CASE WHEN `commessa_attiva`=0 THEN `giorno` END) AS giorni_chiuse,
                         ROUND(SUM(`ore`), 2) AS ore_totali,
                         ROUND(SUM(CASE WHEN `commessa_attiva`=1 THEN `ore` ELSE 0 END), 2) AS ore_attive
-                   FROM `v_cm_it_giorni_base` WHERE $w
+                   FROM `{$this->v['v_cm_it_giorni_base']}` WHERE $w
                   GROUP BY `operatore`, `ordina`
                  HAVING `giorni_chiuse` > 0
                   ORDER BY `ordina`");
@@ -508,7 +733,8 @@ final class ItServiceModel
                 foreach ($f['codici'] as $v) $a[] = $v;
             }
             if (($f['cliente'] ?? '') !== '') { $w .= " AND `cliente` LIKE ?"; $a[] = '%' . $f['cliente'] . '%'; }
-            $st = $this->pdo->prepare("$select FROM `v_cm_it_giorni_base` WHERE $w $coda");
+            if ($c = $this->ctrCond('`commessa`', $f, $a)) $w .= " AND $c";   // v1.9.77
+            $st = $this->pdo->prepare("$select FROM `{$this->v['v_cm_it_giorni_base']}` WHERE $w $coda");
             $st->execute($a);
             $out = $st->fetchAll(PDO::FETCH_ASSOC);
             $st->closeCursor();
@@ -531,14 +757,54 @@ final class ItServiceModel
             foreach ($f['incaricati'] as $v) $b[]=$v;
         }
         if (!empty($f['cliente'])) { $w[] = "cli.name LIKE ?"; $b[]='%'.$f['cliente'].'%'; }
+        if ($c = $this->ctrCondDgb('a.id_contract', $f, $b)) $w[] = $c;   // v1.9.77
         return 'WHERE ' . implode(' AND ', $w);
     }
 
     /* [PM_V1_9_36_APPLIED] Dettaglio per Commessa (sorgente dgb_forms_activity diretta) */
-    public function dettaglioCommessa(array $f): array
+    /**
+     * v1.9.73 — Dettaglio per commessa. Con $contractId restituisce le sole righe di quel
+     * contratto: la pagina le carica quando l'utente apre il contratto, invece di inviare
+     * tutte le righe del periodo (su 8,5 mesi: 21.357 righe, 5,3 MB di HTML).
+     * Senza $contractId: tutte le righe, come prima (stampa, DOCX, XLSX).
+     */
+    public function dettaglioCommessa(array $f, ?int $contractId = null): array
+    {
+        $b = [];
+        $sql = $this->dettaglioSql($f, $b, $contractId)
+             . " ORDER BY contract_code, contract_id, report_iso, activity_id";
+        try { $st = $this->pdo->prepare($sql); $st->execute($b); return $st->fetchAll(PDO::FETCH_ASSOC); }
+        catch (Throwable $e) { return []; }
+    }
+
+    /**
+     * v1.9.73 — Una riga per contratto: intestazione, numero di righe e totali.
+     * È ciò che la pagina mostra all'apertura; il dettaglio arriva su richiesta.
+     */
+    public function dettaglioCommessaSintesi(array $f): array
+    {
+        $b = [];
+        $sql = "SELECT x.contract_id, MAX(x.contract_code) AS contract_code, MAX(x.code_x_installation) AS code_x_installation,
+                       MAX(x.customer_name) AS customer_name, MAX(x.contract_description) AS contract_description,
+                       MAX(x.pm_project_code) AS pm_project_code, COUNT(*) AS righe,
+                       ROUND(SUM(x.ore), 2) AS ore, ROUND(SUM(x.costo_contratto), 2) AS costo_contratto,
+                       ROUND(SUM(x.tot_costo_tab), 2) AS tot_costo_tab
+                  FROM (" . $this->dettaglioSql($f, $b, null) . ") x
+                 GROUP BY x.contract_id
+                 ORDER BY contract_code, x.contract_id";
+        try { $st = $this->pdo->prepare($sql); $st->execute($b); return $st->fetchAll(PDO::FETCH_ASSOC); }
+        catch (Throwable $e) { return []; }
+    }
+
+    /** Query del dettaglio per commessa, senza ORDER BY (riusata da dettaglio e sintesi). */
+    private function dettaglioSql(array $f, array &$b, ?int $contractId): string
     {
         $DT = "COALESCE(a.report_date, DATE(a.date_start), DATE(a.completed_at), DATE(a.closed_at))";
-        $b = []; $where = $this->rsiWhere($f, $b);
+        $where = $this->rsiWhere($f, $b);
+        if ($contractId !== null) {
+            $where .= (stripos($where, 'WHERE') === false ? ' WHERE ' : ' AND ') . 'a.id_contract = ?';
+            $b[] = $contractId;
+        }
         $ORE  = "COALESCE(ao.hours, a.human_resource_hours, 0)";
         $COST = "COALESCE(ao.cost, a.human_resource_cost, a.total_cost, 0)";
         $sql = "
@@ -548,11 +814,14 @@ final class ItServiceModel
                  cli.name AS customer_name, c.description AS contract_description,
                  p.project_code AS pm_project_code,
                  DATE_FORMAT($DT, '%d/%m/%Y') AS report_date, $DT AS report_iso,
+                 a.id AS activity_id,
                  a.ticket,
                  TRIM(CONCAT_WS(' ', op.second_name, op.first_name)) AS operator_name,
                  COALESCE(rbb.band_name, op.type, 'Default') AS fascia,
                  CASE WHEN COALESCE(ao.during_availability,0)=1 THEN 'Reperibilità'
-                      WHEN COALESCE(ao.extra_hours,0)>0          THEN 'Straordinario'
+                      WHEN COALESCE(ao.extra_hours,0) >= $ORE AND $ORE > 0 THEN 'Straordinario'
+                      WHEN COALESCE(ao.extra_hours,0) > 0
+                           THEN CONCAT('Ordinario + straordinario (', REPLACE(FORMAT(ao.extra_hours,1),'.',','), ' h)')
                       ELSE 'Ordinario' END AS regime,
                  ROUND($ORE,2) AS ore,
                  ROUND($COST,2) AS costo_contratto,
@@ -571,10 +840,8 @@ final class ItServiceModel
           LEFT JOIN cm_rate_band_rates rb_ord ON rb_ord.band_id=rbb.id AND rb_ord.cost_type='Aziendale' AND rb_ord.regime='Ordinario'
           LEFT JOIN cm_rate_band_rates rb_rep ON rb_rep.band_id=rbb.id AND rb_rep.cost_type='Aziendale' AND rb_rep.regime='Reperibilità'
           $where
-          ORDER BY contract_code, a.id_contract, $DT, a.id
         ";
-        try { $st=$this->pdo->prepare($sql); $st->execute($b); return $st->fetchAll(PDO::FETCH_ASSOC); }
-        catch (Throwable $e) { return []; }
+        return $sql;
     }
 
     /* [PM_V1_9_36_APPLIED] Riepilogo aggregato per Codice Contratto */
@@ -593,8 +860,8 @@ final class ItServiceModel
                    CONCAT('Contratto #', a.id_contract)
                  ) AS codice_contratto,
                  MAX(p.project_code) AS pm_project_code,
-                 ROUND(SUM(CASE WHEN COALESCE(ao.during_availability,0)=0 AND COALESCE(ao.extra_hours,0)=0
-                                THEN $ORE ELSE 0 END),2) AS ore_ordinarie,
+                 ROUND(SUM(CASE WHEN COALESCE(ao.during_availability,0)=0
+                                THEN GREATEST(0, $ORE - COALESCE(ao.extra_hours,0)) ELSE 0 END),2) AS ore_ordinarie,
                  ROUND(SUM(COALESCE(ao.extra_hours,0)),2) AS ore_straordinario,
                  ROUND(SUM(CASE WHEN COALESCE(ao.during_availability,0)=1 THEN $ORE ELSE 0 END),2) AS ore_reperibilita,
                  COUNT(DISTINCT CONCAT($DT,'#',a.id_operator)) AS giorni_uomo,

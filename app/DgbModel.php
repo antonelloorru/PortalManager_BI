@@ -2,6 +2,10 @@
 /**
  * app/DgbModel.php — Analytics attività DogoBit (v1.8.8)
  *
+ * v1.9.78 — filtro globale Codice Contratto / PM Project (PmContractFilter) in
+ * whereActivities() e whereDetail(): tabella, KPI, carico, anomalie, riepilogo orario,
+ * quadro del periodo, distribuzione temporale, matrice oraria (e relative assenze).
+ *
  * Query parametriche (range date, incaricato, stato) per:
  *  - tabella dati (ID, SLA innesco, ore, costi);
  *  - KPI consuntivo vs pianificato;
@@ -11,7 +15,44 @@
 final class DgbModel
 {
     private PDO $pdo;
-    public function __construct(PDO $pdo) { $this->pdo = $pdo; }
+    public function __construct(PDO $pdo)
+    {
+        $this->pdo = $pdo;
+        require_once __DIR__ . '/PmOrario.php';
+        require_once __DIR__ . '/PmContractFilter.php';
+        PmOrario::fasce($pdo);   // v1.9.75 — fasce ordinarie da app_settings
+    }
+
+    /* ── v1.9.78 — filtro globale Codice Contratto / PM Project ─────────── */
+    private ?PmContractFilter $cf = null;
+
+    /** Filtro contratto risolto una volta per richiesta: la chiave DGB e' a.id_contract. */
+    public function cf(array $f): PmContractFilter
+    {
+        $v = $f['contratti'] ?? [];
+        if ($this->cf === null || $this->cf->values() !== PmContractFilter::norm($v)) $this->cf = new PmContractFilter($this->pdo, $v);
+        return $this->cf;
+    }
+
+    /** Opzioni: contratti con attività DGB (PM Project collegato o no). */
+    public function valoriContratti(): array
+    {
+        return PmContractFilter::options($this->pdo,
+            "SELECT p.project_code AS code FROM cm_projects p
+              WHERE p.dgb_contract_id IN (SELECT DISTINCT id_contract FROM dgb_forms_activity WHERE id_contract IS NOT NULL)");
+    }
+
+    /** Condizione per le viste per operatore/giorno (anomalie): giorni con attività sui contratti. */
+    public function ctrOperatoreGiorno(array $f, string $colOp, string $colDay, array &$a): string
+    {
+        $cf = $this->cf($f);
+        if (!$cf->active()) return '';
+        $in = $cf->sql('id', 'a.id_contract', $a);
+        return " AND ($colOp, $colDay) IN (SELECT ao.id_operator, DATE(a.date_start)
+                                               FROM dgb_forms_activity_operator ao
+                                               JOIN dgb_forms_activity a ON a.id = ao.id_activity
+                                              WHERE a.deleted = 0 AND $in)";
+    }
 
     /** Normalizza i filtri in ingresso. */
     /**
@@ -43,6 +84,20 @@ final class DgbModel
               ) / NULLIF(TIMESTAMPDIFF(SECOND, a.date_start, a.date_dead_line),0)))
     END";
 
+    /**
+     * v1.9.75 — Ore ORDINARIE di una riga (sostituisce ao.hours * FRAC_ORD).
+     * La frazione precedente guardava solo l'ORA di fine (un turno 12:00→00:00 del giorno
+     * dopo risultava 0% ordinario) e veniva applicata alle ore dichiarate (11 h su 12 di
+     * intervallo). Ora: sovrapposizione reale con le fasce ordinarie, giorno per giorno,
+     * limitata alle ore dichiarate (app/PmOrario.php). Chi lavora a turni resta ordinario.
+     */
+    private static function ordSql(): string
+    {
+        require_once __DIR__ . '/PmOrario.php';
+        return "(CASE WHEN COALESCE(pr.schedule_type,'ordinario') = 'turni' THEN COALESCE(ao.hours,0) ELSE "
+             . PmOrario::ordinarieSql('a.date_start', 'a.date_dead_line', 'ao.hours') . " END)";
+    }
+
     /** Join necessario alle espressioni orarie. */
     private const JOIN_PROFILE = " LEFT JOIN dgb_operator_profile pr ON pr.dgb_operator_id = ao.id_operator ";
 
@@ -68,6 +123,9 @@ final class DgbModel
             'stdh'        => $sh,
             'schedule'    => in_array($sched, ['ordinario', 'turni'], true) ? $sched : '',
             'oncall'      => in_array($oncall, ['0', '1'], true) ? $oncall : '',
+            // v1.9.78 — filtro globale (sostituisce il filtro a scelta singola `contract`,
+            // che resta accettato nei link come selezione di un contratto DGB)
+            'contratti'   => PmContractFilter::fromRequest($in),
         ];
     }
 
@@ -91,7 +149,7 @@ final class DgbModel
         if ($f['from'])   { $w[] = "a.date_start >= ?"; $args[] = $f['from'] . ' 00:00:00'; }
         if ($f['to'])     { $w[] = "a.date_start <= ?"; $args[] = $f['to'] . ' 23:59:59'; }
         if ($f['status']) { $w[] = "a.status = ?";      $args[] = $f['status']; }
-        if ($f['contract']){ $w[] = "a.id_contract = ?"; $args[] = $f['contract']; }
+        if ($this->cf($f)->active()) $w[] = $this->cf($f)->sql('id', 'a.id_contract', $args);   // v1.9.78
         if ($f['operator']) {
             $w[] = "EXISTS (SELECT 1 FROM dgb_forms_activity_operator x WHERE x.id_activity = a.id AND x.id_operator = ?)";
             $args[] = $f['operator'];
@@ -282,7 +340,7 @@ final class DgbModel
         if ($f['from'])    { $w[] = "$wd >= ?"; $args[] = $f['from']; }
         if ($f['to'])      { $w[] = "$wd <= ?"; $args[] = $f['to']; }
         if ($f['status'])  { $w[] = "a.status = ?"; $args[] = $f['status']; }
-        if ($f['contract']){ $w[] = "a.id_contract = ?"; $args[] = $f['contract']; }
+        if ($this->cf($f)->active()) $w[] = $this->cf($f)->sql('id', 'a.id_contract', $args);   // v1.9.78
         if ($f['operator']){ $w[] = "ao.id_operator = ?"; $args[] = $f['operator']; }
         if ($f['report_type']) { $w[] = "ao.exec_report_type = ?"; $args[] = $f['report_type']; }
         if ($f['mode'] === 'remoto') { $w[] = "ao.from_remote = 1"; }
@@ -418,7 +476,7 @@ final class DgbModel
                     ROUND(SUM(CASE WHEN ao.during_availability = 1 THEN ao.hours ELSE 0 END), 2) AS ore_reperibilita,
                     ROUND(SUM(CASE WHEN ao.from_remote = 1        THEN ao.hours ELSE 0 END), 2) AS ore_remoto,
                     ROUND(SUM(CASE WHEN ao.smart_working = 1      THEN ao.hours ELSE 0 END), 2) AS ore_smart,
-                    ROUND(SUM(ao.hours * (" . self::FRAC_ORD . ")), 2)        AS ore_in_orario,
+                    ROUND(SUM(" . self::ordSql() . "), 2)                   AS ore_in_orario,
                     COUNT(DISTINCT ao.id_operator)                            AS incaricati,
                     COUNT(DISTINCT " . $wd . ")                               AS giorni_con_attivita,
                     MIN(" . $wd . ")                                          AS dal,
@@ -571,7 +629,31 @@ final class DgbModel
             // nome sarebbe esposto alle differenze di forma fra gestionale e
             // anagrafica, gia' viste con l'inversione nome/cognome (v1.8.77).
             $opId = (int)($f['operator'] ?? 0);
-            if ($opId > 0) {
+            // v1.9.78 — con il filtro contratto: le assenze degli incaricati che nel
+            // mese hanno lavorato sui contratti selezionati
+            $ops = [];
+            if ($opId <= 0 && $this->cf($f)->active()) {
+                $ao = [$mFrom, $mTo];
+                $in = $this->cf($f)->sql('id', 'a.id_contract', $ao);
+                $sto = $this->pdo->prepare("SELECT DISTINCT ao.id_operator FROM dgb_forms_activity_operator ao
+                                              JOIN dgb_forms_activity a ON a.id = ao.id_activity
+                                             WHERE a.deleted = 0 AND $wd BETWEEN ? AND ? AND $in AND ao.id_operator IS NOT NULL");
+                $sto->execute($ao); $ops = array_map('intval', $sto->fetchAll(PDO::FETCH_COLUMN)); $sto->closeCursor();
+                if (!$ops) $ops = [0];
+            }
+            if ($ops) {
+                $stA = $this->pdo->prepare(
+                    "SELECT DAY(c.start_date) AS g, c.commitment_type AS tipo,
+                            t.label AS tipo_label, t.color AS colore,
+                            ROUND(SUM(c.hours), 2) AS ore
+                       FROM cm_operator_commitments c
+                       JOIN cm_commitment_types t
+                         ON t.code = c.commitment_type AND t.is_absence = 1
+                      WHERE DATE_FORMAT(c.start_date, '%Y-%m') = ?
+                        AND c.operator_id IN (" . implode(',', array_fill(0, count($ops), '?')) . ")
+                      GROUP BY DAY(c.start_date), c.commitment_type, t.label, t.color");
+                $stA->execute(array_merge([$month], $ops));
+            } elseif ($opId > 0) {
                 $stA = $this->pdo->prepare(
                     "SELECT DAY(c.start_date) AS g, c.commitment_type AS tipo,
                             t.label AS tipo_label, t.color AS colore,
@@ -635,10 +717,13 @@ final class DgbModel
             // dalla sorgente ma la ripartizione secondo la regola oraria. La
             // reperibilita' si ricava per differenza, cosi' la somma delle due
             // componenti resta esattamente pari alle ore consuntivate.
-            $fo = self::FRAC_ORD;
+            $fo = self::ordSql(); $rep = "COALESCE(ao.during_availability,0) = 1";
+            // v1.9.76 — tre componenti disgiunte: la reperibilità viene dai record
+            // (during_availability), non più dalle ore fuori fascia.
             $sql = "SELECT DATE($wd) k,
-                           ROUND(SUM(ao.hours * ($fo)),2) ordinary,
-                           ROUND(SUM(ao.hours),2) - ROUND(SUM(ao.hours * ($fo)),2) overtime,
+                           ROUND(SUM(CASE WHEN $rep THEN 0 ELSE ($fo) END),2) ordinary,
+                           ROUND(SUM(CASE WHEN $rep THEN 0 ELSE COALESCE(ao.hours,0) - ($fo) END),2) overtime,
+                           ROUND(SUM(CASE WHEN $rep THEN COALESCE(ao.hours,0) ELSE 0 END),2) oncall,
                            COUNT(DISTINCT ao.id_operator) actives
                       FROM dgb_forms_activity_operator ao JOIN dgb_forms_activity a ON a.id=ao.id_activity"
                       . self::JOIN_PROFILE . "
@@ -666,6 +751,7 @@ final class DgbModel
                 $key = sprintf('%s-%02d', $month, $dd);
                 $dow = (int)date('N', strtotime($key));
                 $ord = (float)($map[$key]['ordinary'] ?? 0); $ext = (float)($map[$key]['overtime'] ?? 0);
+                $onc = (float)($map[$key]['oncall'] ?? 0);
                 $actv = (int)($map[$key]['actives'] ?? 0);
                 $isWeekend = $dow >= 6;
 
@@ -677,16 +763,17 @@ final class DgbModel
                 else                    $base = 0.0;
 
                 $buckets[] = ['key' => $key, 'label' => (string)$dd,
-                    'ordinary' => $ord, 'overtime' => $ext, 'workload' => round($ord + $ext, 2),
+                    'ordinary' => $ord, 'overtime' => $ext, 'oncall' => $onc, 'workload' => round($ord + $ext + $onc, 2),
                     'baseline' => $base, 'weekend' => $isWeekend,
                     'actives' => $actv, 'estimated' => ($actv === 0 && !$isWeekend)];
             }
             $scope = ['month' => $month, 'from' => $mFrom, 'to' => $mTo, 'median_actives' => $medianAct];
         } else {
-            $fo = self::FRAC_ORD;
+            $fo = self::ordSql(); $rep = "COALESCE(ao.during_availability,0) = 1";
             $sql = "SELECT DATE_FORMAT($wd,'%Y-%m') k,
-                           ROUND(SUM(ao.hours * ($fo)),2) ordinary,
-                           ROUND(SUM(ao.hours),2) - ROUND(SUM(ao.hours * ($fo)),2) overtime
+                           ROUND(SUM(CASE WHEN $rep THEN 0 ELSE ($fo) END),2) ordinary,
+                           ROUND(SUM(CASE WHEN $rep THEN 0 ELSE COALESCE(ao.hours,0) - ($fo) END),2) overtime,
+                           ROUND(SUM(CASE WHEN $rep THEN COALESCE(ao.hours,0) ELSE 0 END),2) oncall
                       FROM dgb_forms_activity_operator ao JOIN dgb_forms_activity a ON a.id=ao.id_activity"
                       . self::JOIN_PROFILE . "
                      WHERE $w GROUP BY k";
@@ -707,15 +794,16 @@ final class DgbModel
                 $hi = ($f['to'] && $f['to'] < $mT) ? $f['to'] : $mT;
                 $wdays = self::workingDaysBetween($lo, $hi);
                 $ord = (float)($map[$key]['ordinary'] ?? 0); $ext = (float)($map[$key]['overtime'] ?? 0);
+                $onc = (float)($map[$key]['oncall'] ?? 0);
                 $buckets[] = ['key' => $key, 'label' => $months_it[(int)$cur->format('n')] . ' ' . $cur->format('y'),
-                    'ordinary' => $ord, 'overtime' => $ext, 'workload' => round($ord + $ext, 2),
+                    'ordinary' => $ord, 'overtime' => $ext, 'oncall' => $onc, 'workload' => round($ord + $ext + $onc, 2),
                     'baseline' => round($wdays * $stdh * $N, 2), 'weekend' => false];
                 $cur->modify('+1 month');
             }
             $scope = ['from' => $effFrom, 'to' => $effTo];
         }
 
-        $tot = ['ordinary' => 0.0, 'overtime' => 0.0, 'workload' => 0.0, 'baseline' => 0.0];
+        $tot = ['ordinary' => 0.0, 'overtime' => 0.0, 'oncall' => 0.0, 'workload' => 0.0, 'baseline' => 0.0];
         foreach ($buckets as $b) foreach ($tot as $k => $v) $tot[$k] = round($v + $b[$k], 2);
         return ['granularity' => $granularity, 'operators' => $N, 'stdh' => $stdh,
                 'scope' => $scope, 'buckets' => $buckets, 'totals' => $tot];
@@ -798,7 +886,7 @@ final class DgbModel
         return $this->pdo->query(
             "SELECT o.id, TRIM(CONCAT(COALESCE(o.second_name,''),' ',COALESCE(o.first_name,''))) AS name,
                     o.username, m.employee_id,
-                    TRIM(CONCAT(COALESCE(e.first_name,''),' ',COALESCE(e.last_name,''))) AS employee_name,
+                    TRIM(CONCAT(COALESCE(e.last_name,''),' ',COALESCE(e.first_name,''))) AS employee_name,
                     COALESCE(pf.schedule_type,'ordinario') AS schedule_type,
                     COALESCE(pf.on_call,0) AS on_call, COALESCE(pf.auto_classified,0) AS auto_classified,
                     d.total_hours, d.activities

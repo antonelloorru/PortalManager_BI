@@ -36,7 +36,7 @@ if ($f_to !== '')      { $where[] = 'ecl.changed_at <= ?'; $params[] = $f_to . '
 if ($f_jobid > 0)      { $where[] = "ecl.change_source = 'import' AND ecl.source_ref_id = ?"; $params[] = $f_jobid; }
 
 $sql = "SELECT ecl.*,
-               CONCAT(COALESCE(e.first_name,''),' ',COALESCE(e.last_name,'')) AS user_name
+               CONCAT(COALESCE(e.last_name,''),' ',COALESCE(e.first_name,'')) AS user_name
           FROM entity_change_log ecl
           LEFT JOIN users u ON u.id = ecl.changed_by
           LEFT JOIN employees e ON e.id = u.employee_id
@@ -50,7 +50,7 @@ $logs = $stmt->fetchAll(PDO::FETCH_ASSOC);
 // Distinct per dropdown
 $tables_distinct = $pdo->query("SELECT DISTINCT entity_table FROM entity_change_log ORDER BY entity_table")->fetchAll(PDO::FETCH_COLUMN);
 $users_distinct  = $pdo->query(
-    "SELECT u.id, CONCAT(COALESCE(e.first_name,''),' ',COALESCE(e.last_name,'')) AS name
+    "SELECT u.id, CONCAT(COALESCE(e.last_name,''),' ',COALESCE(e.first_name,'')) AS name
        FROM users u LEFT JOIN employees e ON e.id = u.employee_id
       INNER JOIN entity_change_log ecl ON ecl.changed_by = u.id
       GROUP BY u.id ORDER BY name"
