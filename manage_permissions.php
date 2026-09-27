@@ -149,6 +149,7 @@ $page_map = [
         'project_dashboard.php'      => ['↳ Scheda commessa', 'Sub-route: dashboard a tab (anagrafica, presales, team, redditività, consuntivo)'],
         'manage_rate_bands.php'      => ['Fasce costo orario', 'Tariffe per fascia × tipologia (Aziendale/Cliente/Commerciale) × regime, storicizzate'],
         'import_commesse.php'        => ['Import commesse XLSX', 'Import massivo commesse (UPSERT su codice commessa)'],
+        'pratix_import.php'          => ['Import Pratix', 'Ingestione report Pratix (.xls/.xlsx) -> cm_pratix_ext'],
         'import_commesse_db.php'      => ['Import Commesse DB', 'Import commesse dall export nativo del gestionale (CSV separatore pipe)'],
         'professionals.php'          => ['Anagrafica Professionisti', 'Operatori importati non presenti tra i dipendenti; merge verso anagrafica dipendenti'],
         'import_professionals.php'   => ['Import Professionisti', 'Import operatori dal gestionale (CSV separatore pipe); credenziali escluse'],
@@ -211,6 +212,8 @@ $page_map = [
         'smtp_settings.php'          => ['Configurazione SMTP', 'Server email + test'],
         'settings.php'               => ['Impostazioni', 'Nome app, colore, email sistema'],
         'system_console.php'       => ['Console di sistema', 'Aggiornamenti ZIP, migrazioni, SQL Runner e log in una sola pagina'],
+        'sso_settings.php'         => ['SSO Microsoft 365 / MFA', 'Configurazione Single Sign-On Microsoft 365 e MFA'],
+        'perf_center.php'          => ['Prestazioni', 'Copie delle viste lente e profiler delle query'],
         'recycle_bin.php'          => ['Cestino', 'Ripristino dei record cancellati per errore in tutto il portale (soft-delete + restore)'],
         'db_upgrade.php'             => ['Aggiornamento DB', 'Migrazioni versione'],
         'system_update.php'          => ['Aggiorna sistema', 'Upload ZIP, backup, update file e DB'],
@@ -340,7 +343,7 @@ $actions_labels = ['view'=>['👁','Visualizza','#3b82f6'],'create'=>['+','Crea'
     <select onchange="if(this.value) window.location='<?= qs_self_safe(['tab'=>'users']) ?>&uid='+this.value">
       <option value="">— Scegli —</option>
       <?php foreach($users_all as $uu): ?>
-      <option value="<?=$uu['id']?>" <?=$target_uid==(int)$uu['id']?'selected':''?>><?=h($uu['email'])?> (<?=h($uu['role_name']??'?')?>)<?=$uu['first_name']?' — '.h($uu['first_name'].' '.$uu['last_name']):''?></option>
+      <option value="<?=$uu['id']?>" <?=$target_uid==(int)$uu['id']?'selected':''?>><?=h($uu['email'])?> (<?=h($uu['role_name']??'?')?>)<?=$uu['first_name']?' — '.h($uu['last_name'].' '.$uu['first_name']):''?></option>
       <?php endforeach; ?>
     </select>
   </div>

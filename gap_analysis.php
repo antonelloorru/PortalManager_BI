@@ -303,7 +303,7 @@ $g_revoked  = (int)($global_status['revoked']  ?? 0);
       <tr>
         <td><span class="badge badge-neutral"><?=h($s['brand_name'])?></span></td>
         <td><?=h($s['cert_name'])?></td>
-        <td><?=h($s['first_name'].' '.$s['last_name'])?></td>
+        <td><?=h($s['last_name'].' '.$s['first_name'])?></td>
         <td><?=date('d/m/Y', strtotime($s['expiry_date']))?></td>
         <td style="font-weight:700;color:<?=$dcol?>"><?=$dd?> gg</td>
       </tr>

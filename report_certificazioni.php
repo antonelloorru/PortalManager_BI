@@ -2,6 +2,8 @@
 /**
  * certV 2.0 v2.2 — report_certificazioni.php
  * v2.2: uc.employee_id → employees, lista persone da employees
+ * v1.9.80: pannello filtri come Relazione di Servizio IT (multi-select con ricerca, gruppi,
+ *          badge filtri attivi) e 20 parametri filtrabili; stato calcolato dalla scadenza.
  */
 require_once('access_control.php');
 require_once(__DIR__ . '/app/RecycleBin.php');
@@ -85,7 +87,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $can_edit && isset($_POST['delete_c
                     $pdo->commit();
 
                     $cert_label = $cert_data['cert_name'] . ($cert_data['cert_code'] ? ' (' . $cert_data['cert_code'] . ')' : '');
-                    $emp_label  = $cert_data['first_name'] . ' ' . $cert_data['last_name'];
+                    $emp_label  = $cert_data['last_name'] . ' ' . $cert_data['first_name'];
                     write_log('Certifications','success',"Cert #$id eliminata: $cert_label di $emp_label",$u_id);
                     $msg = "<div class='alert alert-success'><i class='fa-solid fa-trash'></i> Certificazione <strong>" . h($cert_label) . "</strong> di <strong>" . h($emp_label) . "</strong> eliminata con successo.</div>";
                 } catch (Throwable $e) {
@@ -110,18 +112,86 @@ if (empty($msg) && !empty($_SESSION['flash_msg'])) {
     unset($_SESSION['flash_msg']);
 }
 
-// ── Filtri ────────────────────────────────────────────────────────────────────
-$f_brands = $_GET['f_br'] ?? [];
-$f_emps   = $_GET['f_us'] ?? [];   // contiene employee.id
-$f_status = $_GET['f_st'] ?? [];
+// ── Filtri (v1.9.80 — pannello come Relazione di Servizio IT) ─────────────────
+// Multi-valore via GET (array o CSV), parametri preparati. Nomi storici f_br / f_us / f_st invariati.
+require_once __DIR__ . '/app/PmFilter.php';
+$F = [
+    'q'        => trim((string)($_GET['q'] ?? '')),
+    'f_br'     => PmFilter::values('f_br'),     // brand
+    'f_tec'    => PmFilter::values('f_tec'),    // tecnologia
+    'f_cat'    => PmFilter::values('f_cat'),    // categoria certificazione
+    'f_lvl'    => PmFilter::values('f_lvl'),    // livello
+    'f_cert'   => PmFilter::values('f_cert'),   // certificazione
+    'f_plv'    => PmFilter::values('f_plv'),    // livello di partnership del brand
+    'f_us'     => PmFilter::values('f_us'),     // collaboratore (employees.id)
+    'f_az'     => PmFilter::values('f_az'),     // azienda
+    'f_sede'   => PmFilter::values('f_sede'),   // sede
+    'f_rep'    => PmFilter::values('f_rep'),    // reparto
+    'f_job'    => PmFilter::values('f_job'),    // mansione
+    'f_unit'   => PmFilter::values('f_unit'),   // unita organizzativa tecnica
+    'f_empst'  => PmFilter::values('f_empst'),  // stato collaboratore
+    'f_st'     => PmFilter::values('f_st'),     // stato certificazione (calcolato dalla scadenza)
+    'iss_from' => PmFilter::date('iss_from'), 'iss_to' => PmFilter::date('iss_to'),
+    'exp_from' => PmFilter::date('exp_from'), 'exp_to' => PmFilter::date('exp_to'),
+    'exp_in'   => in_array((string)($_GET['exp_in'] ?? ''), ['30','60','90','180','365'], true) ? (int)$_GET['exp_in'] : 0,
+    'f_perp'   => in_array((string)($_GET['f_perp'] ?? ''), ['1','0'], true) ? (string)$_GET['f_perp'] : '',
+    'f_pdf'    => in_array((string)($_GET['f_pdf'] ?? ''), ['1','0'], true) ? (string)$_GET['f_pdf'] : '',
+    'f_credly' => in_array((string)($_GET['f_credly'] ?? ''), ['1','0'], true) ? (string)$_GET['f_credly'] : '',
+    'f_code'   => in_array((string)($_GET['f_code'] ?? ''), ['1','0'], true) ? (string)$_GET['f_code'] : '',
+];
+// compatibilita: i link storici arrivano senza stato collaboratore → tutti
+$f_brands = $F['f_br']; $f_emps = $F['f_us']; $f_status = $F['f_st'];
+
+// Stato calcolato dalla scadenza (stessa soglia di cert_status_from_date): lo stato
+// memorizzato si aggiorna solo al salvataggio e invecchia.
+$thr = (int)(load_settings()['notify_days_1'] ?? 90); if ($thr <= 0) $thr = 90;
+$ST_SQL = "CASE WHEN uc.expiry_date IS NULL THEN 'active'
+                WHEN uc.expiry_date < CURDATE() THEN 'expired'
+                WHEN uc.expiry_date <= DATE_ADD(CURDATE(), INTERVAL $thr DAY) THEN 'expiring'
+                ELSE 'active' END";
+$UUID_RE = '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$';
 
 $where  = ["1=1"]; $params = [];
-if ($restrict_emp)    { $where[] = "uc.employee_id=?"; $params[] = $restrict_emp; }
-if (!empty($f_brands)){ $where[] = "cert.brand_id IN(".implode(',',array_fill(0,count($f_brands),'?')).")"; $params=array_merge($params,$f_brands); }
-if (!empty($f_emps) && !$restrict_emp) { $where[] = "uc.employee_id IN(".implode(',',array_fill(0,count($f_emps),'?')).")"; $params=array_merge($params,$f_emps); }
-if (!empty($f_status)){ $where[] = "uc.status IN(".implode(',',array_fill(0,count($f_status),'?')).")"; $params=array_merge($params,$f_status); }
+if ($restrict_emp) { $where[] = "uc.employee_id=?"; $params[] = $restrict_emp; }
+if ($F['q'] !== '') {
+    $where[] = "(cert.name LIKE ? OR cert.code LIKE ? OR uc.certificate_code LIKE ? OR uc.notes LIKE ?
+                 OR CONCAT_WS(' ', e.last_name, e.first_name) LIKE ? OR CONCAT_WS(' ', e.first_name, e.last_name) LIKE ?)";
+    $lk = '%' . $F['q'] . '%'; array_push($params, $lk, $lk, $lk, $lk, $lk, $lk);
+}
+$where[] = PmFilter::in('cert.brand_id',        $F['f_br'],   $params);
+$where[] = PmFilter::in('cert.technology_id',   $F['f_tec'],  $params);
+$where[] = PmFilter::in("COALESCE(NULLIF(cert.category,''),'(n.d.)')", $F['f_cat'], $params);
+$where[] = PmFilter::in("COALESCE(NULLIF(cert.level,''),'(n.d.)')",    $F['f_lvl'], $params);
+$where[] = PmFilter::in('cert.id',              $F['f_cert'], $params);
+$where[] = PmFilter::in("COALESCE(NULLIF(b.partnership_level,''),'(n.d.)')", $F['f_plv'], $params);
+if (!$restrict_emp) {
+    $where[] = PmFilter::in('uc.employee_id',   $F['f_us'],   $params);
+    $where[] = PmFilter::in('e.company_id',     $F['f_az'],   $params);
+    $where[] = PmFilter::in('e.location_id',    $F['f_sede'], $params);
+    $where[] = PmFilter::in("COALESCE(dp.name, NULLIF(e.department,''), '(n.d.)')", $F['f_rep'], $params);
+    $where[] = PmFilter::in("COALESCE(NULLIF(e.job_title,''),'(n.d.)')", $F['f_job'], $params);
+    $where[] = PmFilter::in('e.status',         $F['f_empst'], $params);
+    if ($F['f_unit']) {
+        $where[] = "EXISTS (SELECT 1 FROM cm_tech_profiles tp WHERE tp.employee_id = e.id AND tp.is_active = 1 AND "
+                 . PmFilter::in('tp.unit_id', $F['f_unit'], $params) . ")";
+    }
+}
+$where[] = PmFilter::in("($ST_SQL)", $F['f_st'], $params);
+$where[] = PmFilter::range('uc.issue_date',  $F['iss_from'], $F['iss_to'], $params);
+$where[] = PmFilter::range('uc.expiry_date', $F['exp_from'], $F['exp_to'], $params);
+if ($F['exp_in'])        { $where[] = "uc.expiry_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL ? DAY)"; $params[] = $F['exp_in']; }
+if ($F['f_perp'] !== '') $where[] = $F['f_perp'] === '1' ? "uc.expiry_date IS NULL" : "uc.expiry_date IS NOT NULL";
+if ($F['f_pdf'] !== '')  $where[] = $F['f_pdf'] === '1' ? "COALESCE(uc.document_path,'') <> ''" : "COALESCE(uc.document_path,'') = ''";
+if ($F['f_code'] !== '') $where[] = $F['f_code'] === '1' ? "COALESCE(uc.certificate_code,'') <> ''" : "COALESCE(uc.certificate_code,'') = ''";
+if ($F['f_credly'] !== '') {
+    // stesso criterio del link in tabella: badge (codice UUID) oppure profilo Credly del collaboratore
+    $cr = "(uc.certificate_code REGEXP '$UUID_RE' OR COALESCE(e.credly_url,'') <> '')";
+    $where[] = $F['f_credly'] === '1' ? $cr : "NOT $cr";
+}
+$where = array_values(array_filter($where, fn($w) => $w !== '1=1'));
+if (!$where) $where = ['1=1'];
 
-$sql = "SELECT uc.*, cert.name cert_name, cert.code cert_code, b.name brand_name,
+$sql = "SELECT uc.*, ($ST_SQL) AS status_eff, cert.name cert_name, cert.code cert_code, b.name brand_name,
                e.credly_url emp_credly_url, e.linkedin_url emp_linkedin_url,
                e.first_name, e.last_name, t.name tech_name
         FROM user_certifications uc
@@ -129,15 +199,56 @@ $sql = "SELECT uc.*, cert.name cert_name, cert.code cert_code, b.name brand_name
         JOIN brands b            ON cert.brand_id = b.id
         JOIN employees e         ON uc.employee_id = e.id
         JOIN technologies t      ON cert.technology_id = t.id
+        LEFT JOIN departments dp ON dp.id = e.department_id
         WHERE ".implode(' AND ',$where)."
         ORDER BY uc.expiry_date ASC";
 $s = $pdo->prepare($sql);
 $s->execute($params);
 $results = $s->fetchAll();
 
-$all_brands = $pdo->query("SELECT id,name FROM brands ORDER BY name")->fetchAll();
-// v2.2: lista dipendenti da employees (non da users)
-$all_emps = $pdo->query("SELECT id,first_name,last_name FROM employees WHERE status='active' ORDER BY last_name")->fetchAll();
+// ── Opzioni dei filtri (solo valori presenti nelle certificazioni) ─────────────
+$opt = static function (PDO $pdo, string $sql): array {
+    try { return $pdo->query($sql)->fetchAll(PDO::FETCH_KEY_PAIR); } catch (Throwable $e) { return []; }
+};
+$BASE = "FROM user_certifications uc JOIN certifications cert ON cert.id = uc.certification_id
+         JOIN brands b ON b.id = cert.brand_id JOIN employees e ON e.id = uc.employee_id
+         LEFT JOIN departments dp ON dp.id = e.department_id";
+$O = [
+    'f_br'   => $opt($pdo, "SELECT DISTINCT b.id, b.name $BASE ORDER BY b.name"),
+    'f_tec'  => $opt($pdo, "SELECT DISTINCT t.id, t.name $BASE JOIN technologies t ON t.id = cert.technology_id ORDER BY t.name"),
+    'f_cat'  => $opt($pdo, "SELECT DISTINCT COALESCE(NULLIF(cert.category,''),'(n.d.)') k, COALESCE(NULLIF(cert.category,''),'(n.d.)') $BASE ORDER BY 1"),
+    'f_lvl'  => $opt($pdo, "SELECT DISTINCT COALESCE(NULLIF(cert.level,''),'(n.d.)') k, COALESCE(NULLIF(cert.level,''),'(n.d.)') $BASE ORDER BY 1"),
+    'f_cert' => $opt($pdo, "SELECT DISTINCT cert.id, CONCAT(cert.name, IF(COALESCE(cert.code,'')<>'', CONCAT(' (', cert.code, ')'), ''), ' · ', b.name) $BASE ORDER BY 2"),
+    'f_plv'  => $opt($pdo, "SELECT DISTINCT COALESCE(NULLIF(b.partnership_level,''),'(n.d.)') k, COALESCE(NULLIF(b.partnership_level,''),'(n.d.)') $BASE ORDER BY 1"),
+    'f_us'   => $opt($pdo, "SELECT DISTINCT e.id, CONCAT(e.last_name, ' ', e.first_name, IF(e.status <> 'active', CONCAT(' (', e.status, ')'), '')) $BASE ORDER BY 2"),
+    'f_az'   => $opt($pdo, "SELECT DISTINCT c.id, c.name $BASE JOIN companies c ON c.id = e.company_id ORDER BY c.name"),
+    'f_sede' => $opt($pdo, "SELECT DISTINCT l.id, l.location_name $BASE JOIN company_locations l ON l.id = e.location_id ORDER BY l.location_name"),
+    'f_rep'  => $opt($pdo, "SELECT DISTINCT COALESCE(dp.name, NULLIF(e.department,''), '(n.d.)') k, COALESCE(dp.name, NULLIF(e.department,''), '(n.d.)') $BASE ORDER BY 1"),
+    'f_job'  => $opt($pdo, "SELECT DISTINCT COALESCE(NULLIF(e.job_title,''),'(n.d.)') k, COALESCE(NULLIF(e.job_title,''),'(n.d.)') $BASE ORDER BY 1"),
+    'f_unit' => $opt($pdo, "SELECT DISTINCT u.id, u.name $BASE JOIN cm_tech_profiles tp ON tp.employee_id = e.id AND tp.is_active = 1
+                             JOIN cm_tech_units u ON u.id = tp.unit_id ORDER BY u.name"),
+    'f_empst'=> $opt($pdo, "SELECT DISTINCT e.status, e.status $BASE ORDER BY 1"),
+    'f_st'   => ['active' => 'Attiva', 'expiring' => 'In scadenza', 'expired' => 'Scaduta'],
+];
+$all_brands = []; foreach ($O['f_br'] as $k => $v) $all_brands[] = ['id' => $k, 'name' => $v];   // compatibilita
+
+// riepilogo del perimetro filtrato
+$kpi = ['tot' => count($results), 'active' => 0, 'expiring' => 0, 'expired' => 0, 'persone' => [], 'pdf' => 0];
+foreach ($results as $r) {
+    $kpi[$r['status_eff']] = ($kpi[$r['status_eff']] ?? 0) + 1;
+    $kpi['persone'][$r['employee_id']] = true;
+    if (!empty($r['document_path'])) $kpi['pdf']++;
+}
+
+/** Link che conserva i filtri correnti. */
+$qsCert = function (array $over = []) use ($F): string {
+    $p = [];
+    foreach ($F as $k => $v) {
+        if (is_array($v)) { if ($v) $p[$k] = implode(',', $v); }
+        elseif ($v !== '' && $v !== null && $v !== 0) $p[$k] = $v;
+    }
+    return url_safe('report_certificazioni', array_merge($p, $over));
+};
 
 $edit_cert = null;
 if (isset($_GET['edit'])) {
@@ -165,53 +276,111 @@ require_once('header.php');
 
 <?=$msg?>
 
-<?php if(!$restrict_emp): ?>
-<form method="GET" class="filter-bar" style="align-items:flex-start">
-<?php if (!empty($_GET["r"])): ?><input type="hidden" name="r" value="<?= htmlspecialchars($_GET["r"], ENT_QUOTES, "UTF-8") ?>"><?php endif; ?>
-  <div class="fg">
-    <label>Brand/Vendor</label>
-    <div style="background:#fff;border:1px solid var(--border);border-radius:8px;height:100px;overflow-y:auto;padding:8px;min-width:200px">
-      <?php foreach($all_brands as $b): ?>
-      <label style="display:flex;gap:7px;font-size:12px;margin-bottom:3px;cursor:pointer;align-items:center">
-        <input type="checkbox" name="f_br[]" value="<?=$b['id']?>" <?=in_array($b['id'],$f_brands)?'checked':''?>>
-        <?=h($b['name'])?>
-      </label>
-      <?php endforeach; ?>
-    </div>
-  </div>
-  <div class="fg">
-    <label>Collaboratori</label>
-    <div style="background:#fff;border:1px solid var(--border);border-radius:8px;height:100px;overflow-y:auto;padding:8px;min-width:200px">
-      <?php foreach($all_emps as $e): ?>
-      <label style="display:flex;gap:7px;font-size:12px;margin-bottom:3px;cursor:pointer;align-items:center">
-        <input type="checkbox" name="f_us[]" value="<?=$e['id']?>" <?=in_array($e['id'],$f_emps)?'checked':''?>>
-        <?=h($e['first_name'].' '.$e['last_name'])?>
-      </label>
-      <?php endforeach; ?>
-    </div>
-  </div>
-  <div class="fg">
-    <label>Stato</label>
-    <div style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:10px;min-width:140px">
-      <label style="display:flex;gap:7px;font-size:12px;margin-bottom:6px;cursor:pointer"><input type="checkbox" name="f_st[]" value="active" <?=in_array('active',$f_status)?'checked':''?>> Attiva</label>
-      <label style="display:flex;gap:7px;font-size:12px;margin-bottom:6px;cursor:pointer"><input type="checkbox" name="f_st[]" value="expiring" <?=in_array('expiring',$f_status)?'checked':''?>> In scadenza</label>
-      <label style="display:flex;gap:7px;font-size:12px;cursor:pointer"><input type="checkbox" name="f_st[]" value="expired" <?=in_array('expired',$f_status)?'checked':''?>> Scaduta</label>
-    </div>
-  </div>
-  <div style="display:flex;flex-direction:column;gap:6px;padding-top:22px">
-    <button type="submit" class="btn btn-primary">Filtra</button>
-    <a href="report_certificazioni.php" class="btn btn-sm" style="text-align:center">Reset</a>
-  </div>
+<?php
+  // v1.9.80 — pannello filtri uniformato alla Relazione di Servizio IT
+  $attivi = 0;
+  foreach ($F as $k => $v) $attivi += is_array($v) ? (count($v) > 0 ? 1 : 0) : (($v !== '' && $v !== null && $v !== 0) ? 1 : 0);
+  $ms = function (string $k, string $lbl) use ($O, $F): string {
+      $h = '<div class="form-group"><label>' . h($lbl) . ' <span class="pm-multi">(multipla)</span></label>'
+         . '<select name="' . $k . '[]" multiple size="3" class="pm-ms" data-placeholder="Tutti">';
+      foreach ($O[$k] as $v => $l) {
+          $h .= '<option value="' . h((string)$v) . '"' . (in_array((string)$v, $F[$k], true) ? ' selected' : '') . '>' . h((string)$l) . '</option>';
+      }
+      return $h . '</select></div>';
+  };
+  $sn = function (string $k, string $lbl, string $si, string $no) use ($F): string {
+      return '<div class="form-group"><label>' . h($lbl) . '</label><select name="' . $k . '" class="pm-ms">'
+           . '<option value="">— tutte —</option>'
+           . '<option value="1"' . ($F[$k] === '1' ? ' selected' : '') . '>' . h($si) . '</option>'
+           . '<option value="0"' . ($F[$k] === '0' ? ' selected' : '') . '>' . h($no) . '</option></select></div>';
+  };
+?>
+<details class="pm-panel no-print" <?= $attivi > 0 ? 'open' : '' ?>>
+  <summary>
+    <i class="fa-solid fa-chevron-right pm-chev"></i> Filtri
+    <?php if ($attivi > 0): ?><span class="pm-badge"><?=$attivi?></span><?php endif; ?>
+    <span class="pm-hint"><?=count($results)?> certificazioni · <?=count($kpi['persone'])?> collaboratori</span>
+  </summary>
+  <div class="pm-panel-body">
+    <form method="get">
+      <?= function_exists('route_slug_field') ? route_slug_field() : (!empty($_GET['r']) ? '<input type="hidden" name="r" value="' . h((string)$_GET['r']) . '">' : '') ?>
 
-  <div class="fg" style="margin-left:auto">
-    <label style="visibility:hidden">.</label>
-    <button type="button" onclick="window.print()" class="btn btn-sm" title="Stampa pagina"
-            style="background:#fef3c7;color:#92400e;border-color:#fde68a">
-      <i class="fa-solid fa-print"></i> Stampa
-    </button>
+      <div class="pm-group">
+        <h4>Ricerca e date</h4>
+        <div class="pm-grid-auto">
+          <div class="form-group"><label>Cerca ovunque</label>
+            <input type="text" name="q" value="<?=h($F['q'])?>" placeholder="certificazione, codice, collaboratore, note"></div>
+          <div class="form-group"><label>Conseguita dal</label><input type="date" name="iss_from" value="<?=h((string)$F['iss_from'])?>"></div>
+          <div class="form-group"><label>Conseguita al</label><input type="date" name="iss_to" value="<?=h((string)$F['iss_to'])?>"></div>
+          <div class="form-group"><label>Scadenza dal</label><input type="date" name="exp_from" value="<?=h((string)$F['exp_from'])?>"></div>
+          <div class="form-group"><label>Scadenza al</label><input type="date" name="exp_to" value="<?=h((string)$F['exp_to'])?>"></div>
+          <div class="form-group"><label>Scade entro</label>
+            <select name="exp_in" class="pm-ms"><option value="">— qualsiasi —</option>
+              <?php foreach ([30, 60, 90, 180, 365] as $g): ?>
+                <option value="<?=$g?>" <?=$F['exp_in'] === $g ? 'selected' : ''?>><?=$g?> giorni</option>
+              <?php endforeach; ?></select></div>
+        </div>
+      </div>
+
+      <div class="pm-group">
+        <h4>Certificazione</h4>
+        <div class="pm-grid-auto">
+          <?= $ms('f_br', 'Brand / Vendor') ?>
+          <?= $ms('f_plv', 'Partnership brand') ?>
+          <?= $ms('f_tec', 'Tecnologia') ?>
+          <?= $ms('f_cat', 'Categoria') ?>
+          <?= $ms('f_lvl', 'Livello') ?>
+          <?= $ms('f_cert', 'Certificazione') ?>
+        </div>
+      </div>
+
+      <?php if (!$restrict_emp): ?>
+      <div class="pm-group">
+        <h4>Collaboratore</h4>
+        <div class="pm-grid-auto">
+          <?= $ms('f_us', 'Collaboratore') ?>
+          <?= $ms('f_empst', 'Stato collaboratore') ?>
+          <?= $ms('f_az', 'Azienda') ?>
+          <?= $ms('f_sede', 'Sede') ?>
+          <?= $ms('f_rep', 'Reparto') ?>
+          <?= $ms('f_job', 'Mansione') ?>
+          <?= $ms('f_unit', 'Unità tecnica') ?>
+        </div>
+      </div>
+      <?php endif; ?>
+
+      <div class="pm-group">
+        <h4>Stato ed evidenze</h4>
+        <div class="pm-grid-auto">
+          <?= $ms('f_st', 'Stato certificazione') ?>
+          <?= $sn('f_perp', 'Validità', 'Perpetua (senza scadenza)', 'Con scadenza') ?>
+          <?= $sn('f_pdf', 'Attestato PDF', 'Presente', 'Mancante') ?>
+          <?= $sn('f_credly', 'Credly', 'Badge o profilo presente', 'Assente') ?>
+          <?= $sn('f_code', 'Codice certificato', 'Presente', 'Mancante') ?>
+        </div>
+      </div>
+
+      <div class="pm-actions">
+        <button class="btn btn-primary btn-sm"><i class="fa-solid fa-filter"></i> Applica</button>
+        <a class="btn btn-sm" href="<?=url_safe('report_certificazioni')?>">Azzera</a>
+        <button type="button" onclick="window.print()" class="btn btn-sm"><i class="fa-solid fa-print"></i> Stampa</button>
+      </div>
+    </form>
   </div>
-</form>
-<?php endif; ?>
+</details>
+
+<div class="no-print" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin:0 0 14px">
+  <?php foreach ([['Certificazioni', $kpi['tot'], '#334155', 'f_st', null], ['Attive', $kpi['active'], '#16a34a', 'f_st', 'active'],
+                  ['In scadenza', $kpi['expiring'], '#d97706', 'f_st', 'expiring'], ['Scadute', $kpi['expired'], '#dc2626', 'f_st', 'expired'],
+                  ['Collaboratori', count($kpi['persone']), '#2563eb', null, null], ['Con PDF', $kpi['pdf'], '#e11d48', null, null]] as [$l, $v, $c, $k, $val]): ?>
+    <?php $inner = '<div style="font-size:20px;font-weight:800;color:' . $c . '">' . (int)$v . '</div><div style="font-size:11px;color:var(--muted);text-transform:uppercase;font-weight:700">' . h($l) . '</div>'; ?>
+    <?php if ($val !== null): ?>
+      <a class="card" style="padding:10px 12px;border-top:3px solid <?=$c?>;text-decoration:none" href="<?=h($qsCert(['f_st' => $val]))?>" title="Filtra: <?=h($l)?>"><?=$inner?></a>
+    <?php else: ?>
+      <div class="card" style="padding:10px 12px;border-top:3px solid <?=$c?>"><?=$inner?></div>
+    <?php endif; ?>
+  <?php endforeach; ?>
+</div>
 
 <?php if($edit_cert && $can_edit): ?>
 <div class="card" style="margin-bottom:20px;border-color:var(--p)">
@@ -276,7 +445,7 @@ require_once('header.php');
     }
   ?>
   <tr>
-    <td><strong><?=h($r['first_name'].' '.$r['last_name'])?></strong></td>
+    <td><strong><?=h($r['last_name'].' '.$r['first_name'])?></strong></td>
     <td><?=h($r['cert_name'])?><?php if($r['cert_code']): ?><br><code style="font-size:10px;color:var(--muted)"><?=h($r['cert_code'])?></code><?php endif; ?></td>
     <td><span class="badge badge-neutral"><?=h($r['brand_name'])?></span></td>
     <td style="font-size:12px;color:var(--muted)"><?=h($r['tech_name'])?></td>
@@ -293,14 +462,14 @@ require_once('header.php');
       <a href="download.php?file=<?=urlencode($r['document_path'])?>" target="_blank" style="color:#e11d48"><i class="fa-solid fa-file-pdf" style="font-size:16px"></i></a>
       <?php else: ?><i class="fa-solid fa-file-circle-xmark" style="color:#cbd5e1"></i><?php endif; ?>
     </td>
-    <td style="text-align:center"><?=status_badge($r['status'])?></td>
+    <td style="text-align:center"><?=status_badge($r['status_eff'] ?? $r['status'])?></td>
     <?php if($can_edit): ?>
     <td style="text-align:center;white-space:nowrap">
       <a href="<?= qs_self_safe(['edit'=>''.($r['id']).'']) ?>"
          class="btn btn-blue btn-sm"
          title="Modifica"><i class="fa-solid fa-pen"></i></a>
       <form method="POST" style="display:inline-block;margin-left:4px"
-            onsubmit="return confirm('Eliminare definitivamente la certificazione di <?= h(addslashes($r['first_name'].' '.$r['last_name'])) ?>?\n\n<?= h(addslashes($r['cert_name'])) ?>\n\nQuesta azione è irreversibile.');">
+            onsubmit="return confirm('Eliminare definitivamente la certificazione di <?= h(addslashes($r['last_name'].' '.$r['first_name'])) ?>?\n\n<?= h(addslashes($r['cert_name'])) ?>\n\nQuesta azione è irreversibile.');">
         <?= csrf_field() ?>
         <input type="hidden" name="delete_cert" value="1">
         <input type="hidden" name="cert_id" value="<?= (int)$r['id'] ?>">

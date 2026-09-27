@@ -233,7 +233,7 @@ if (!isset($msg) || !$msg) {
         <?php foreach($contacts as $ct): ?>
         <div style="background:#f8fafc;border-radius:10px;padding:14px;border:1px solid var(--border);position:relative">
           <?php if($ct['is_primary']): ?><span class="badge badge-info" style="position:absolute;top:10px;right:10px;font-size:8px">Principale</span><?php endif; ?>
-          <div style="font-weight:700;font-size:13px;margin-bottom:2px"><?=h($ct['first_name'].' '.$ct['last_name'])?></div>
+          <div style="font-weight:700;font-size:13px;margin-bottom:2px"><?=h($ct['last_name'].' '.$ct['first_name'])?></div>
           <?php if($ct['role']): ?><div style="font-size:11px;color:var(--muted);margin-bottom:8px"><?=h($ct['role'])?></div><?php endif; ?>
           <?php if($ct['email']): ?><div style="font-size:12px"><i class="fa-solid fa-envelope" style="width:14px;color:var(--muted)"></i> <a href="mailto:<?=h($ct['email'])?>" style="color:var(--p)"><?=h($ct['email'])?></a></div><?php endif; ?>
           <?php if($ct['phone']): ?><div style="font-size:12px;margin-top:2px"><i class="fa-solid fa-phone" style="width:14px;color:var(--muted)"></i> <?=h($ct['phone'])?></div><?php endif; ?>

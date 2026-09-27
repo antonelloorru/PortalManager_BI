@@ -205,6 +205,7 @@ function handle_export(): void
     switch ($format) {
         case 'xlsx': export_xlsx($filename, $title, $headers, $rows); break;
         case 'docx': export_docx($filename, $title, $headers, $rows); break;
+        case 'odt':  export_odt($filename, $title, $headers, $rows);  break;   // v1.9.71
         default:
             http_response_code(400);
             echo 'Formato non supportato: ' . htmlspecialchars($format);
@@ -487,6 +488,118 @@ function export_docx(string $filename, string $title, array $headers, array $row
     unlink($tmpfile);
     exit;
 }
+
+
+// ════════════════════════════════════════════════════════════════════════
+// v1.9.71 — ODT (OpenDocument Text, LibreOffice/OpenOffice) senza librerie.
+// Pacchetto ODF: "mimetype" come PRIMA voce e NON compressa (requisito della
+// specifica), META-INF/manifest.xml, content.xml, styles.xml, meta.xml.
+// Oltre 6 colonne la pagina è orizzontale.
+// ════════════════════════════════════════════════════════════════════════
+function export_odt(string $filename, string $title, array $headers, array $rows): void
+{
+    if (!class_exists('ZipArchive')) { http_response_code(500); echo 'ZipArchive non disponibile'; return; }
+
+    $san = static function ($v): string {
+        $v = (string)$v;
+        if (function_exists('mb_convert_encoding')) { $v = @mb_convert_encoding($v, 'UTF-8', 'UTF-8'); }
+        $v = (string)preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F]/', '', $v);
+        return htmlspecialchars($v, ENT_XML1 | ENT_QUOTES, 'UTF-8');
+    };
+    $cols      = max(1, count($headers));
+    $landscape = $cols > 6;
+    $pageW     = $landscape ? '29.7cm' : '21cm';
+    $pageH     = $landscape ? '21cm'   : '29.7cm';
+    $bodyW     = $landscape ? 27.7 : 19.0;
+    $colW      = number_format($bodyW / $cols, 3, '.', '') . 'cm';
+    $titleTxt  = $san(ucfirst(str_replace('_', ' ', $title)));
+    $sub       = $san('Esportato il ' . date('d/m/Y H:i') . ' · ' . count($rows) . ' righe · PortalManager');
+
+    $ns = 'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" '
+        . 'xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" '
+        . 'xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" '
+        . 'xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" '
+        . 'xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" '
+        . 'xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0" '
+        . 'xmlns:dc="http://purl.org/dc/elements/1.1/" office:version="1.2"';
+
+    $cell = static function (string $txt, string $cs, string $ps): string {
+        return '<table:table-cell table:style-name="' . $cs . '" office:value-type="string">'
+             . '<text:p text:style-name="' . $ps . '">' . $txt . '</text:p></table:table-cell>';
+    };
+    $tbl = '<table:table table:name="Dati" table:style-name="Tab">'
+         . '<table:table-column table:style-name="Col" table:number-columns-repeated="' . $cols . '"/>'
+         . '<table:table-header-rows><table:table-row>';
+    for ($c = 0; $c < $cols; $c++) $tbl .= $cell($san($headers[$c] ?? ''), 'CellH', 'PH');
+    $tbl .= '</table:table-row></table:table-header-rows>';
+    foreach ($rows as $i => $r) {
+        $cs = ($i % 2 === 1) ? 'CellZ' : 'CellD';
+        $tbl .= '<table:table-row>';
+        for ($c = 0; $c < $cols; $c++) $tbl .= $cell($san($r[$c] ?? ''), $cs, 'PD');
+        $tbl .= '</table:table-row>';
+    }
+    $tbl .= '</table:table>';
+
+    $b = '0.5pt solid #cccccc';
+    $content = '<?xml version="1.0" encoding="UTF-8"?>'
+        . '<office:document-content ' . $ns . '><office:automatic-styles>'
+        . '<style:style style:name="Tab" style:family="table"><style:table-properties style:width="' . $bodyW . 'cm" table:align="left"/></style:style>'
+        . '<style:style style:name="Col" style:family="table-column"><style:table-column-properties style:column-width="' . $colW . '"/></style:style>'
+        . '<style:style style:name="CellH" style:family="table-cell"><style:table-cell-properties fo:background-color="#003399" fo:padding="0.06cm" fo:border="' . $b . '"/></style:style>'
+        . '<style:style style:name="CellD" style:family="table-cell"><style:table-cell-properties fo:padding="0.06cm" fo:border="' . $b . '"/></style:style>'
+        . '<style:style style:name="CellZ" style:family="table-cell"><style:table-cell-properties fo:background-color="#f8fafc" fo:padding="0.06cm" fo:border="' . $b . '"/></style:style>'
+        . '<style:style style:name="PH" style:family="paragraph"><style:text-properties fo:font-size="9pt" fo:font-weight="bold" fo:color="#ffffff"/></style:style>'
+        . '<style:style style:name="PD" style:family="paragraph"><style:text-properties fo:font-size="9pt"/></style:style>'
+        . '<style:style style:name="PT" style:family="paragraph"><style:paragraph-properties fo:margin-bottom="0.15cm"/><style:text-properties fo:font-size="16pt" fo:font-weight="bold" fo:color="#003399"/></style:style>'
+        . '<style:style style:name="PS" style:family="paragraph"><style:paragraph-properties fo:margin-bottom="0.35cm"/><style:text-properties fo:font-size="9pt" fo:color="#64748b"/></style:style>'
+        . '</office:automatic-styles><office:body><office:text>'
+        . '<text:p text:style-name="PT">' . $titleTxt . '</text:p>'
+        . '<text:p text:style-name="PS">' . $sub . '</text:p>'
+        . $tbl . '</office:text></office:body></office:document-content>';
+
+    $styles = '<?xml version="1.0" encoding="UTF-8"?>'
+        . '<office:document-styles ' . $ns . '>'
+        . '<office:styles><style:default-style style:family="paragraph"><style:text-properties fo:font-size="10pt"/></style:default-style></office:styles>'
+        . '<office:automatic-styles><style:page-layout style:name="PL"><style:page-layout-properties fo:page-width="' . $pageW . '" fo:page-height="' . $pageH . '" style:print-orientation="' . ($landscape ? 'landscape' : 'portrait') . '" fo:margin-top="1cm" fo:margin-bottom="1cm" fo:margin-left="1cm" fo:margin-right="1cm"/></style:page-layout></office:automatic-styles>'
+        . '<office:master-styles><style:master-page style:name="Standard" style:page-layout-name="PL"/></office:master-styles>'
+        . '</office:document-styles>';
+
+    $meta = '<?xml version="1.0" encoding="UTF-8"?>'
+        . '<office:document-meta ' . $ns . '><office:meta><meta:generator>PortalManager</meta:generator>'
+        . '<dc:title>' . $titleTxt . '</dc:title><meta:creation-date>' . date('Y-m-d\TH:i:s') . '</meta:creation-date>'
+        . '</office:meta></office:document-meta>';
+
+    $manifest = '<?xml version="1.0" encoding="UTF-8"?>'
+        . '<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.2">'
+        . '<manifest:file-entry manifest:full-path="/" manifest:version="1.2" manifest:media-type="application/vnd.oasis.opendocument.text"/>'
+        . '<manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/>'
+        . '<manifest:file-entry manifest:full-path="styles.xml" manifest:media-type="text/xml"/>'
+        . '<manifest:file-entry manifest:full-path="meta.xml" manifest:media-type="text/xml"/>'
+        . '</manifest:manifest>';
+
+    $tmp = tempnam(sys_get_temp_dir(), 'odt_');
+    $zip = new ZipArchive();
+    if ($zip->open($tmp, ZipArchive::OVERWRITE) !== true) { http_response_code(500); echo 'Errore creazione ODT'; return; }
+    $zip->addFromString('mimetype', 'application/vnd.oasis.opendocument.text');
+    $zip->setCompressionName('mimetype', ZipArchive::CM_STORE);
+    $zip->addFromString('META-INF/manifest.xml', $manifest);
+    $zip->addFromString('content.xml', $content);
+    $zip->addFromString('styles.xml', $styles);
+    $zip->addFromString('meta.xml', $meta);
+    $zip->close();
+
+    if (PHP_SAPI === 'cli' && getenv('PM_ODT_TEST_OUT')) { rename($tmp, (string)getenv('PM_ODT_TEST_OUT')); return; }  // test automatici
+    while (function_exists('ob_get_level') && ob_get_level() > 0) { @ob_end_clean(); }
+    @ini_set('zlib.output_compression', '0');
+    header('Content-Type: application/vnd.oasis.opendocument.text');
+    header('Content-Disposition: attachment; filename="' . $filename . '.odt"');
+    header('Cache-Control: no-store');
+    header('Content-Length: ' . filesize($tmp));
+    readfile($tmp);
+    unlink($tmp);
+    exit;
+}
+
 
 
 // ════════════════════════════════════════════════════════════════════════

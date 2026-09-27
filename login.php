@@ -13,6 +13,7 @@ require_once __DIR__ . '/app/Totp.php';
 require_once __DIR__ . '/app/EmailOtp.php';
 require_once __DIR__ . '/app/RecoveryCodes.php';
 require_once __DIR__ . '/app/TwoFactor.php';
+require_once __DIR__ . '/app/Microsoft365Sso.php';
 
 // Se già loggato, vai a index
 if (!empty($_SESSION['user_id'])) {
@@ -60,7 +61,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             } else {
                 $s = $pdo->prepare(
                     "SELECT id, NULL AS employee_id, email,
-                            CONCAT(first_name,' ',last_name) AS display_name,
+                            CONCAT(last_name,' ',first_name) AS display_name,
                             password_hash, role_id, status
                      FROM users WHERE email = ? LIMIT 1"
                 );
@@ -86,7 +87,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
                 $userName = $emp
-                    ? trim($emp['first_name'] . ' ' . $emp['last_name'])
+                    ? trim($emp['last_name'] . ' ' . $emp['first_name'])
                     : ($user['display_name'] ?? 'Utente');
                 $employeeId = $emp ? (int)$emp['id'] : null;
 
@@ -134,6 +135,15 @@ $settings = load_settings();
 $primary  = $settings['primary_color'] ?? '#0ea5e9';
 $app_name = $settings['app_name']      ?? 'certV';
 
+$sso_ms_enabled = Microsoft365Sso::enabled();
+$sso_msg = match($_GET['sso'] ?? '') {
+    'error'    => 'Accesso con Microsoft 365 non riuscito. Riprova.',
+    'nouser'   => 'Nessun account del portale è associato a questa utenza Microsoft. Contatta l\'amministratore.',
+    'inactive' => 'Account disattivato. Contatta l\'amministratore.',
+    'domain'   => 'Dominio email non autorizzato per l\'accesso SSO.',
+    'disabled' => 'L\'accesso Single Sign-On non è abilitato.',
+    default    => ''
+};
 $reason = $_GET['r'] ?? '';
 $info_message = match($reason) {
     'idle'            => 'Sessione scaduta per inattività. Accedi nuovamente.',
@@ -189,6 +199,10 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:linear-gradient(135d
       <div class="err"><?= h($error) ?></div>
     <?php endif; ?>
 
+    <?php if ($sso_msg): ?>
+      <div class="err"><?= h($sso_msg) ?></div>
+    <?php endif; ?>
+
     <form method="POST" novalidate autocomplete="off">
       <?= csrf_field() ?>
       <div class="fg">
@@ -205,6 +219,17 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:linear-gradient(135d
         Entra nel sistema
       </button>
     </form>
+
+    <?php if ($sso_ms_enabled): ?>
+      <div style="display:flex;align-items:center;gap:10px;margin:18px 0 14px;color:#94a3b8;font-size:12px">
+        <span style="flex:1;height:1px;background:#e2e8f0"></span>oppure<span style="flex:1;height:1px;background:#e2e8f0"></span>
+      </div>
+      <a href="<?= h(url_safe('auth_microsoft', ['action' => 'start'])) ?>"
+         style="display:flex;align-items:center;justify-content:center;gap:10px;width:100%;padding:12px;border:1.5px solid #cbd5e1;border-radius:9px;background:#fff;color:#1e293b;font-weight:600;font-size:14px;text-decoration:none">
+        <svg width="18" height="18" viewBox="0 0 21 21" aria-hidden="true"><rect x="1" y="1" width="9" height="9" fill="#f25022"/><rect x="11" y="1" width="9" height="9" fill="#7fba00"/><rect x="1" y="11" width="9" height="9" fill="#00a4ef"/><rect x="11" y="11" width="9" height="9" fill="#ffb900"/></svg>
+        Accedi con Microsoft 365
+      </a>
+    <?php endif; ?>
   </div>
 </div>
 </body>

@@ -423,7 +423,7 @@ if (!isset($msg) || !$msg) {
     ?>
     <tr>
       <td>
-        <div style="font-weight:700"><?=h($a['first_name'].' '.$a['last_name'])?></div>
+        <div style="font-weight:700"><?=h($a['last_name'].' '.$a['first_name'])?></div>
         <div style="font-size:11px;color:var(--muted)"><?=h($a['email']??'')?></div>
       </td>
       <td style="font-size:13px"><?=$a['pos_title'] ? h($a['pos_title']) : '<span style="color:var(--muted);font-style:italic">— Senza candidatura —</span>'?></td>
@@ -466,7 +466,7 @@ if (!isset($msg) || !$msg) {
         <?php endif; ?>
         <?php endif; ?>
         <?php if(can("delete")): ?>
-        <form method="POST" style="display:inline" onsubmit="return confirm('Eliminare il candidato <?=h(addslashes($a['first_name'].' '.$a['last_name']))?>?\n\nVerrà nascosto dalla lista (soft delete). Le sue candidature e documenti restano nel database.')">
+        <form method="POST" style="display:inline" onsubmit="return confirm('Eliminare il candidato <?=h(addslashes($a['last_name'].' '.$a['first_name']))?>?\n\nVerrà nascosto dalla lista (soft delete). Le sue candidature e documenti restano nel database.')">
           <?= csrf_field() ?>
           <input type="hidden" name="action" value="delete_candidate">
           <input type="hidden" name="candidate_id" value="<?=$a['candidate_id']?>">
@@ -496,7 +496,7 @@ if (!isset($msg) || !$msg) {
 <div class="card" style="border-color:var(--p)">
   <div class="card-header">
     <span class="card-title"><i class="fa-solid fa-clipboard-list" style="color:var(--p)"></i>
-      Scorecard — <?=h($ad['first_name'].' '.$ad['last_name'])?> · <?=h($ad['pos_title'])?>
+      Scorecard — <?=h($ad['last_name'].' '.$ad['first_name'])?> · <?=h($ad['pos_title'])?>
     </span>
     <a href="recruiting_candidati.php" class="btn btn-sm">← Lista</a>
   </div>

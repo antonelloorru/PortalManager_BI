@@ -235,7 +235,7 @@ $skills_soft = array_filter(array_map('trim', explode(',', $user['soft_skills']?
 // Ruoli abilitati a eliminare certificazioni di un dipendente
 $can_delete_cert = in_array((int)($_SESSION['role_id'] ?? 99), [1, 2, 4], true);
 
-$display_name = h($user['first_name'].' '.$user['last_name']);
+$display_name = h($user['last_name'].' '.$user['first_name']);
 $primary_hex  = ltrim($settings['primary_color']??'0ea5e9','#');
 ?>
 
@@ -363,7 +363,7 @@ document.addEventListener('keydown', e => {
 <!-- ── COLONNA SX — identità ── -->
 <div>
   <div class="card" style="text-align:center;padding:28px">
-    <img src="https://ui-avatars.com/api/?name=<?=urlencode($user['first_name'].' '.$user['last_name'])?>&background=<?=$primary_hex?>&color=fff&size=96&bold=true"
+    <img src="https://ui-avatars.com/api/?name=<?=urlencode($user['last_name'].' '.$user['first_name'])?>&background=<?=$primary_hex?>&color=fff&size=96&bold=true"
          style="width:80px;height:80px;border-radius:50%;margin-bottom:14px;border:3px solid var(--border)">
     <h2 style="margin:0 0 6px;font-size:20px"><?=$display_name?></h2>
     <?php if($user['job_title']): ?>

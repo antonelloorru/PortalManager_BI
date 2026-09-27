@@ -228,3 +228,31 @@ function save_setting(string $key, string $value): void {
          ON DUPLICATE KEY UPDATE setting_value=VALUES(setting_value)"
     )->execute([$key, $value]);
 }
+
+// ── v1.9.71: formato standard dei nominativi ─────────────────────────────
+if (!function_exists('pm_fullname')) {
+    /**
+     * Nominativo nel formato standard del portale: "Cognome Nome".
+     * Accetta (cognome, nome) oppure una riga con first_name/last_name.
+     *   pm_fullname('Rossi', 'Mario')        → "Rossi Mario"
+     *   pm_fullname($row)                    → usa $row['last_name'] e $row['first_name']
+     */
+    function pm_fullname($lastOrRow, ?string $first = null): string
+    {
+        if (is_array($lastOrRow)) {
+            $last  = (string)($lastOrRow['last_name']  ?? '');
+            $first = (string)($lastOrRow['first_name'] ?? '');
+        } else {
+            $last = (string)$lastOrRow;
+        }
+        return trim(preg_replace('/\s+/', ' ', $last . ' ' . (string)$first));
+    }
+}
+if (!function_exists('pm_fullname_sql')) {
+    /** Espressione SQL "Cognome Nome" (alias tabella opzionale), NULL-safe. */
+    function pm_fullname_sql(string $alias = ''): string
+    {
+        $a = $alias !== '' ? preg_replace('/[^A-Za-z0-9_]/', '', $alias) . '.' : '';
+        return "TRIM(CONCAT(COALESCE({$a}last_name,''),' ',COALESCE({$a}first_name,'')))";
+    }
+}

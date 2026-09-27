@@ -33,6 +33,8 @@ try {
     $h    = $sd->headline($f);
     $brk  = $sd->breakdown($f);
     $trend = $sd->trend($f, 12);
+    // v1.9.73 — se il grafico adattivo è mensile, la vista giornaliera va fornita a parte
+    $trendG = (($trend[0]['grana'] ?? 'mese') === 'mese') ? $sd->trendGiornaliero($f) : ['from' => '', 'to' => '', 'rows' => []];
     $scop = $sd->scoperti($f, 50);
     $ops  = $sd->operatori($f);
     $code = $sd->code($f);
@@ -45,6 +47,7 @@ try {
     $elencoCode = $sd->elencoCode();
     // v1.9.6 — elenco dei componenti per il filtro, ordinato per cognome
     $elencoTeam = $sd->elencoTeam();
+    $vCtr       = $sd->valoriContratti();   // v1.9.78 — filtro globale contratto
     // v1.9.7 — assenze del team: ferie, permessi, recuperi, malattia
     $assQ = $sd->assenzeQuadro($f);
     $assT = $sd->assenzeTeam($f);
@@ -57,11 +60,11 @@ try {
     $codLin    = $sd->codiciLinea($f);   // v1.8.92 — moduli per codice linea
     $aziende   = $sd->aziendeEsecutrici($f);  // v1.8.93 — per azienda esecutrice
     // v1.9.10 — OBJ_2 (quadro economico e operativo) e OBJ_2.3 (ripartizione)
-    $o2Q    = $sd->obj2Quadro();
-    $o2Lin  = $sd->obj2Linee();
-    $o2Add  = $sd->obj2Addetti(24);
-    $o23Rip = $sd->obj23Ripartizione();
-    $o23Cod = $sd->obj23Code(20);
+    $o2Q    = $sd->obj2Quadro($f);          // v1.9.78 — filtro contratto anche su OBJ_2
+    $o2Lin  = $sd->obj2Linee($f);
+    $o2Add  = $sd->obj2Addetti(24, $f);
+    $o23Rip = $sd->obj23Ripartizione($f);
+    $o23Cod = $sd->obj23Code(20, $f);
     // v1.9.11 — OBJ_2.1/2.2: attività dai moduli, non dai ticket
     $o21Q   = $sd->obj21Quadro($f);
     $o21Fat = $sd->obj21Fatturabili($f);
@@ -75,7 +78,8 @@ try {
     $cTar = $sd->costiTariffe();
 } catch (Throwable $e) {
     $pronto = false; $errore = $e->getMessage();
-    $h = $brk = $trend = $scop = $ops = $code = $team = $elencoCode = $elencoTeam = [];
+    $trendG = ['from' => '', 'to' => '', 'rows' => []];
+    $h = $brk = $trend = $scop = $ops = $code = $team = $elencoCode = $elencoTeam = []; $vCtr = [];
     $assQ = []; $assT = $assM = [];
     $tec = ''; $sch = []; $confronto = []; $codLin = []; $aziende = [];
     $tQuadro = []; $tDett = $tFascia = $tContr = [];
@@ -214,7 +218,7 @@ if ($pronto && ($_GET['export'] ?? '') === 'xlsx') {
 
     $rcm = [['Commessa','Denominazione','Cliente','Codice','Contratto','Agente','Azienda',
              'Stato','Valore','Maturato','Costi','Margine','Margine %','Aperta']];
-    foreach ($sd->obj2Commesse(2000) as $x) $rcm[] = [$x['commessa'], $x['denominazione'],
+    foreach ($sd->obj2Commesse(2000, $f) as $x) $rcm[] = [$x['commessa'], $x['denominazione'],
         $x['cliente'], $x['codice_linea'], $x['contratto'], $x['agente'], $x['azienda'],
         $x['stato'], $x['valore'], $x['maturato'], $x['costi'], $x['margine'],
         $x['margine_pct'], $x['aperta'] ? 'si' : 'no'];
@@ -329,6 +333,16 @@ if ($pronto && ($_GET['export'] ?? '') === 'xlsx') {
     $suff = $tec !== '' ? '_' . preg_replace('/[^a-zA-Z0-9]+/', '_', $tec) : '';
     write_log('Projects', 'info',
         'Export Service Desk ' . ($tec !== '' ? "($tec) " : '') . "{$f['from']}..{$f['to']}", $u_id);
+    // v1.9.78 — perimetro dell'estrazione
+    $rf = [['Parametro', 'Valore'], ['Periodo', date('d/m/Y', strtotime($f['from'])) . ' – ' . date('d/m/Y', strtotime($f['to']))]];
+    if ($f['contratti']) $rf[] = ['Contratto / PM Project', implode(', ', array_map(fn($v) => PmContractFilter::label($v, $vCtr), $f['contratti']))];
+    if ($tec !== '')         $rf[] = ['Componente', $tec];
+    if ($f['queue'] !== '')  $rf[] = ['Coda', $f['queue']];
+    if ($f['level'] !== '')  $rf[] = ['Livello', $f['level']];
+    if ($f['gest'] !== '')   $rf[] = ['Classe di gestione', $f['gest']];
+    if ($f['contratti'])     $rf[] = ['Nota', 'Ticket filtrati tramite il ticket delle attività DGB e dei rapportini del contratto; assenze delle persone che vi hanno lavorato'];
+    $rf[] = ['Generato il', date('d/m/Y H:i')];
+    $w->addSheet('Filtri', $rf);
     $w->download("service_desk{$suff}_{$f['from']}_{$f['to']}.xlsx");
     exit;
 }
@@ -532,6 +546,7 @@ if ($pronto && ($_GET['print'] ?? '') === '1') {
 <div class="meta">
   Periodo <?=date('d/m/Y', strtotime($f['from']))?> – <?=date('d/m/Y', strtotime($f['to']))?>
   <?php if ($f['queue'] !== ''): ?> · coda <?=h($f['queue'])?><?php endif; ?>
+  <?php if ($f['contratti']): ?> · <?=h(PmContractFilter::describe($f['contratti'], $vCtr))?><?php endif; ?>
   · generato il <?=date('d/m/Y H:i')?>
   <?php if ($isPers && $sch['sotto_unita']): ?> · <?=h($sch['sotto_unita'])?><?php endif; ?>
 </div>
@@ -1212,7 +1227,7 @@ if (!isset($GLOBALS['__pm_boost_v1934'])) {
 $qs = function (array $over = []) use ($f, $tec) {
     $p = array_filter(['from' => $f['from'], 'to' => $f['to'], 'queue' => $f['queue'],
                        'level' => $f['level'], 'gest' => $f['gest'],
-                       'tec' => $tec], fn($v) => $v !== '');
+                       'tec' => $tec, 'contratti' => implode(',', $f['contratti'])], fn($v) => $v !== '');
     return url_safe('service_desk', array_merge($p, $over));
 };
 $n  = fn($v) => number_format((float)$v, 0, ',', '.');
@@ -1232,6 +1247,7 @@ $colClasse = [
 
 <div style="margin-bottom:16px">
   <h1 style="font-size:20px;font-weight:800"><i class="fa-solid fa-headset"></i> Service Desk</h1>
+  <?php if (class_exists('PmSnapshot')) echo PmSnapshot::badge(); ?>
   <p style="color:var(--muted);font-size:12px;margin-top:2px">
     Rendicontazione dell'operatività. Il primo livello è l'unità <strong>Service Desk</strong>
     definita in Unità Organizzative Tecniche<?php if ($team): ?> —
@@ -1249,6 +1265,9 @@ $colClasse = [
   <?php require_once('footer.php'); exit; ?>
 <?php endif; ?>
 
+<?= PmContractFilter::banner($f['contratti'], $vCtr, $qs(['contratti' => null, 'contratti_set' => 1]),
+        'ticket collegati tramite attività DGB e rapportini; assenze delle persone coinvolte') ?>
+
 <?php if (!$team): ?>
   <div class="alert alert-danger" style="font-size:12px">
     <strong>Nessun tecnico assegnato all'unità Service Desk.</strong>
@@ -1260,7 +1279,8 @@ $colClasse = [
 <!-- ── filtri ───────────────────────────────────────────────────────────── -->
 <?php // v1.9.8 — pannello uniformato al template di Commesse/Progetti ?>
 <?php
-  $attivi = ($tec !== '') + ($f['queue'] !== '') + ($f['level'] !== '') + ($f['gest'] !== '');
+  $attivi = ($tec !== '') + ($f['queue'] !== '') + ($f['level'] !== '') + ($f['gest'] !== '')
+          + (count($f['contratti']) > 0);
 ?>
 <details class="pm-panel" <?= $attivi > 0 ? 'open' : '' ?>>
   <summary>
@@ -1271,6 +1291,13 @@ $colClasse = [
   <div class="pm-panel-body">
     <form method="get">
       <?= route_slug_field() ?>
+
+      <div class="pm-group">
+        <h4>Contratto</h4>
+        <div class="pm-grid-auto">
+          <?= PmContractFilter::field($vCtr, $f['contratti'], 'ticket collegati via attività DGB e rapportini') ?>
+        </div>
+      </div>
 
       <div class="pm-group">
         <h4>Periodo</h4>
@@ -1324,7 +1351,7 @@ $colClasse = [
 
       <div class="pm-actions">
         <button class="btn btn-primary btn-sm"><i class="fa-solid fa-filter"></i> Applica</button>
-        <a class="btn btn-sm" href="<?=url_safe('service_desk')?>">Azzera</a>
+        <a class="btn btn-sm" href="<?=url_safe('service_desk', ['contratti_set' => 1])?>">Azzera</a>
         <a class="btn btn-sm" href="<?=$qs(['export'=>'xlsx'])?>">
           <i class="fa-solid fa-file-excel"></i> XLSX</a>
         <a class="btn btn-sm" href="<?=$qs(['print'=>'1'])?>" target="_blank">
@@ -1779,6 +1806,32 @@ $colClasse = [
   <div style="display:flex;gap:16px;font-size:11px;color:var(--muted);margin-top:4px">
     <span><span style="display:inline-block;width:14px;height:3px;background:#2563eb"></span> ticket aperti (scala sinistra)</span>
     <span><span style="display:inline-block;width:14px;border-top:3px dotted #f59e0b"></span> tasso di escalation (scala destra)</span>
+  </div>
+</div>
+<?php endif; ?>
+
+
+<?php // ── v1.9.73: andamento giornaliero dei ticket (il grafico sopra è mensile) ──
+if (!empty($trendG['rows'])):
+    require_once __DIR__ . '/app/PmCharts.php';
+    $pmGD = PmCharts::fillDays($trendG['rows'], $trendG['from'], $trendG['to'], 'giorno',
+                             ['risolti_l1', 'escalation', 'diretti', 'mai_presi', 'altro']);
+    $pmFer = array_filter($pmGD, fn($d) => (int)date('N', strtotime($d['d'])) < 6);
+    $pmSumG = static fn($d) => $d['risolti_l1'] + $d['escalation'] + $d['diretti'] + $d['mai_presi'] + $d['altro'];
+    $pmMedia = $pmFer ? array_sum(array_map($pmSumG, $pmFer)) / count($pmFer) : 0;
+?>
+<div class="card" style="margin-bottom:14px">
+  <div class="card-header"><span class="card-title"><i class="fa-solid fa-calendar-day"></i> Andamento giornaliero — ticket aperti</span>
+    <span style="font-size:11px;color:var(--muted);margin-left:8px">
+      <?= count($pmGD) < 92 ? 'intero periodo' : 'ultimi 92 giorni del periodo' ?> · per classe di gestione</span></div>
+  <div style="overflow-x:auto">
+  <?= PmCharts::dailyStacked($pmGD, [
+        ['key' => 'risolti_l1', 'label' => 'Risolti dal Service Desk',  'color' => '#16a34a'],
+        ['key' => 'escalation', 'label' => 'Escalation agli specialisti', 'color' => '#f59e0b'],
+        ['key' => 'diretti',    'label' => 'Diretti agli specialisti',  'color' => '#7c3aed'],
+        ['key' => 'mai_presi',  'label' => 'Mai presi in carico',       'color' => '#dc2626'],
+        ['key' => 'altro',      'label' => 'Altro',                     'color' => '#94a3b8'],
+      ], ['unit' => 'ticket', 'decimals' => 0, 'target' => round($pmMedia, 1), 'targetLabel' => 'media giorni feriali']) ?>
   </div>
 </div>
 <?php endif; ?>

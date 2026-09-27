@@ -144,7 +144,7 @@ $badge = ['nuovo' => '#0369a1', 'confermato' => '#16a34a', 'unito' => '#7c3aed',
             <form method="post" style="display:flex;gap:6px;align-items:center">
               <?= csrf_field() ?><input type="hidden" name="action" value="link"><input type="hidden" name="prof_id" value="<?=$r['id']?>"><input type="hidden" name="employee_id" value="<?=$sg['id']?>">
               <input type="hidden" name="q" value="<?=h($f['q'])?>"><input type="hidden" name="fstatus" value="<?=h($f['status'])?>"><input type="hidden" name="fcompany" value="<?=h($f['company'])?>"><input type="hidden" name="pg" value="<?=$pg?>">
-              <span style="font-size:11px;color:var(--muted)">forse: <strong><?=h(trim($sg['first_name'].' '.$sg['last_name']))?></strong>
+              <span style="font-size:11px;color:var(--muted)">forse: <strong><?=h(trim($sg['last_name'].' '.$sg['first_name']))?></strong>
                 <span style="background:#ede9fe;color:#6d28d9;border-radius:8px;padding:0 6px;font-size:10px"><?=$sg['match']==='email'?'email':($sg['match']==='name_swapped'?'nome inv.':'nome')?></span></span>
               <button class="btn btn-sm" style="background:#7c3aed;color:#fff;border:0"><i class="fa-solid fa-code-merge"></i> Unisci</button>
             </form>

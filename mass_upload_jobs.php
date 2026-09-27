@@ -39,7 +39,7 @@ if ($f_date_to) { $where[] = 'j.started_at <= ?'; $params[] = $f_date_to . ' 23:
 
 $jobs = $pdo->prepare(
     "SELECT j.*,
-            CONCAT(COALESCE(e.first_name,''), ' ', COALESCE(e.last_name,'')) AS user_name
+            CONCAT(COALESCE(e.last_name,''), ' ', COALESCE(e.first_name,'')) AS user_name
        FROM import_jobs j
        LEFT JOIN users u ON u.id = j.created_by
        LEFT JOIN employees e ON e.id = u.employee_id
@@ -53,7 +53,7 @@ $jobs_list = $jobs->fetchAll();
 // Tipi e utenti distinti per filtri
 $types_distinct = $pdo->query("SELECT DISTINCT import_type FROM import_jobs ORDER BY import_type")->fetchAll(PDO::FETCH_COLUMN);
 $users_distinct = $pdo->query(
-    "SELECT u.id, CONCAT(COALESCE(e.first_name,''), ' ', COALESCE(e.last_name,'')) AS name
+    "SELECT u.id, CONCAT(COALESCE(e.last_name,''), ' ', COALESCE(e.first_name,'')) AS name
        FROM users u
        LEFT JOIN employees e ON e.id = u.employee_id
        INNER JOIN import_jobs j ON j.created_by = u.id

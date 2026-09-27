@@ -239,7 +239,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
 // ─── ULTIMI JOB IN CORSO (per ripresa rapida) ──────────────────────────
 $recent_jobs = $pdo->prepare(
     "SELECT j.*, COUNT(s.id) AS staging_count,
-            CONCAT(COALESCE(e.first_name,''), ' ', COALESCE(e.last_name,'')) AS user_name
+            CONCAT(COALESCE(e.last_name,''), ' ', COALESCE(e.first_name,'')) AS user_name
        FROM import_jobs j
        LEFT JOIN import_staging_rows s ON s.job_id = j.id
        LEFT JOIN users u ON u.id = j.created_by

@@ -99,6 +99,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'backu
             // Lista tabelle
             $tables = $pdo->query("SHOW FULL TABLES WHERE Table_type = 'BASE TABLE'")
                           ->fetchAll(PDO::FETCH_COLUMN, 0);
+            // v1.9.73 — le copie delle viste (snap_*) sono dati ricalcolabili: non si salvano
+            $tables = array_values(array_filter($tables, fn($t) => strncmp((string)$t, 'snap_', 5) !== 0));
             foreach ($tables as $t) {
                 $tEsc = '`' . str_replace('`', '``', $t) . '`';
                 fwrite($h, "-- ─────────────────────────────\n");
@@ -131,6 +133,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'backu
                 }
                 fwrite($h, "\n");
             }
+            // v1.9.73 — VISTE: prima non venivano salvate e un ripristino lasciava il portale
+            // senza le viste di Gestione Commesse (pagine in errore).
+            pm_backup_views($pdo, $h);
             fwrite($h, "SET FOREIGN_KEY_CHECKS = 1;\n");
             fclose($h);
 
@@ -490,4 +495,46 @@ async function submitBackup(ev) {
 }
 </script>
 
-<?php require_once('footer.php'); ?>
+<?php require_once('footer.php');
+
+/**
+ * v1.9.73 — Scrive nel dump tutte le viste del database, in ordine di dipendenza
+ * (una vista che ne usa un'altra viene dopo), senza DEFINER e senza il nome del
+ * database: il ripristino funziona anche con un altro utente o un altro schema.
+ */
+function pm_backup_views(PDO $pdo, $h): int
+{
+    $db = (string)$pdo->query("SELECT DATABASE()")->fetchColumn();
+    $views = $pdo->query("SELECT TABLE_NAME FROM information_schema.VIEWS WHERE TABLE_SCHEMA = DATABASE() ORDER BY TABLE_NAME")
+                 ->fetchAll(PDO::FETCH_COLUMN);
+    if (!$views) return 0;
+    $def = [];
+    foreach ($views as $v) {
+        $cr  = $pdo->query('SHOW CREATE VIEW `' . str_replace('`', '``', $v) . '`')->fetch(PDO::FETCH_ASSOC);
+        $sql = (string)($cr['Create View'] ?? '');
+        // DEFINER in tutte le forme: `utente`@`host`, `utente`, utente@host, CURRENT_USER
+        $sql = preg_replace('/\sDEFINER=(?:`[^`]*`(?:@`[^`]*`)?|[^\s]+)/', '', $sql);
+        $sql = str_replace('`' . str_replace('`', '``', $db) . '`.', '', $sql);
+        $sql = preg_replace('/^CREATE\s+/i', 'CREATE OR REPLACE ', $sql);
+        $def[$v] = $sql;
+    }
+    // ordinamento topologico sulle dipendenze fra viste
+    $deps = [];
+    foreach ($def as $v => $sql) {
+        $body = substr($sql, (int)stripos($sql, ' AS '));
+        $deps[$v] = array_values(array_filter($views, fn($o) => $o !== $v && strpos($body, '`' . $o . '`') !== false));
+    }
+    $done = []; $order = [];
+    $visit = function (string $v, array $stack) use (&$visit, &$done, &$order, $deps): void {
+        if (isset($done[$v]) || isset($stack[$v])) return;
+        $stack[$v] = true;
+        foreach ($deps[$v] as $d) $visit($d, $stack);
+        $done[$v] = true; $order[] = $v;
+    };
+    foreach ($views as $v) $visit($v, []);
+    fwrite($h, "-- ─────────────────────────────\n-- Viste (" . count($order) . ")\n-- ─────────────────────────────\n");
+    foreach ($order as $v) fwrite($h, "DROP VIEW IF EXISTS `$v`;\n" . $def[$v] . ";\n\n");
+    return count($order);
+}
+
+?>

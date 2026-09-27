@@ -43,14 +43,8 @@ try {
 $drivers = SourceDb::availableDrivers();
 
 /** Configurazione di connessione a partire dalla riga salvata. */
-$buildCfg = function (array $c): array {
-    return [
-        'driver'   => $c['driver'], 'host' => $c['host'], 'port' => (int)$c['port'],
-        'dbname'   => $c['dbname'], 'username' => $c['username'],
-        'password' => SourceDb::decrypt((string)$c['password_enc']),
-        'timeout'  => (int)$c['timeout'],
-    ];
-};
+// v1.9.72: stessa funzione usata dalla sincronizzazione pianificata
+$buildCfg = fn(array $c): array => SourceDb::configFromRow($c);
 
 // ── Download del tracciato CSV ──────────────────────────────────────────────
 // Le intestazioni provengono dal registro, le stesse che il parser riconosce.
@@ -173,15 +167,32 @@ if ($action === 'analyze') {
 
             $pdo->prepare(
                 "UPDATE `cm_sync_schedule`
-                    SET `is_enabled` = ?, `run_at` = ?, `days_mask` = ?, `window_minutes` = ?, `reconcile` = ?
+                    SET `is_enabled` = ?, `run_at` = ?, `days_mask` = ?, `window_minutes` = ?, `reconcile` = ?,
+                        `exec_mode` = ?, `catchup` = ?
                   WHERE `id` = 1")
                 ->execute([empty($_POST['is_enabled']) ? 0 : 1, $ore, implode(',', $gg), $fin,
-                           empty($_POST['reconcile']) ? 0 : 1]);
+                           empty($_POST['reconcile']) ? 0 : 1,
+                           (($_POST['exec_mode'] ?? 'cronless') === 'os_task') ? 'os_task' : 'cronless',
+                           empty($_POST['catchup']) ? 0 : 1]);
 
             write_log('Projects', 'info', sprintf('Pianificazione sincronizzazione %s alle %s (%s)',
                 empty($_POST['is_enabled']) ? 'disattivata' : 'attivata', substr($ore, 0, 5),
                 implode(',', $gg)), $u_id);
             $_SESSION['flash_msg'] = "<div class='alert alert-success'>Pianificazione salvata.</div>";
+            redirect_self();
+        }
+
+        // v1.9.70 — avvio immediato della sincronizzazione pianificata in background
+        //            (stesso worker dello scheduler senza cron, la pagina non attende)
+        if ($action === 'run_now_async') {
+            if (!$srcCfg) throw new Exception('Configurare prima la connessione.');
+            require_once __DIR__ . '/app/CronlessScheduler.php';
+            $d = CronlessScheduler::dispatch($pdo, true, false);
+            write_log('Projects', $d['ok'] ? 'info' : 'warning', 'Avvio sincronizzazione in background: ' . $d['note'], $u_id);
+            $_SESSION['flash_msg'] = $d['ok']
+                ? "<div class='alert alert-success'>Sincronizzazione avviata in background. L'esito comparirà tra le ultime esecuzioni al termine.</div>"
+                : "<div class='alert alert-danger'>Avvio non riuscito: " . h($d['note'])
+                  . ". Il server non riesce a contattare se stesso (127.0.0.1): verificare porta/firewall.</div>";
             redirect_self();
         }
 
@@ -576,6 +587,20 @@ require_once('header.php');
         Riconcilia (rimuove le orfane)
       </label>
     </div>
+    <div class="form-group" style="margin:0">
+      <label>Modalità di esecuzione</label>
+      <select name="exec_mode">
+        <option value="cronless" <?=($sched['exec_mode'] ?? 'cronless') === 'cronless' ? 'selected' : ''?>>Automatica dal portale (senza cron)</option>
+        <option value="os_task"  <?=($sched['exec_mode'] ?? '') === 'os_task' ? 'selected' : ''?>>Attività esterna (cron_sync.php)</option>
+      </select>
+    </div>
+    <div class="form-group" style="margin:0;grid-column:span 3">
+      <label style="display:flex;align-items:center;gap:6px">
+        <input type="checkbox" name="catchup" value="1" <?=(int)($sched['catchup'] ?? 1) === 1 ? 'checked' : ''?>>
+        Recupera in giornata: se all'orario previsto il portale non è in uso, esegue alla prima richiesta successiva
+        (altrimenti solo entro la finestra di recupero)
+      </label>
+    </div>
     <div style="grid-column:1/-1;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
       <span style="font-size:12px;font-weight:600">Giorni:</span>
       <?php foreach ($gNomi as $n => $et): ?>
@@ -590,14 +615,58 @@ require_once('header.php');
   </form>
   <?php endif; ?>
 
-  <div class="alert alert-warning" style="font-size:11px;margin-top:12px">
-    <strong>Serve un passo su Windows.</strong> Il portale decide <em>se</em> è il momento di
-    sincronizzare, ma non può avviarsi da solo: qualcuno deve invocarlo. Creare un'attività
-    nell'<strong>Utilità di pianificazione</strong> che esegua
-    <code>P:\xampp\php\php.exe P:\xampp\htdocs\portalmanager\cron_sync.php</code>
-    <strong>ogni ora</strong>. Fuori dalla finestra prevista lo script termina subito, quindi
-    l'attività oraria non comporta alcun carico — e l'orario si cambia da qui, senza toccare Windows.
+  <?php
+    require_once __DIR__ . '/app/SyncRunner.php';
+    $modo  = $sched['exec_mode'] ?? 'cronless';
+    $next  = SyncRunner::nextRunAt($sched);
+    $whyNo = ''; SyncRunner::isDue($sched, null, $whyNo);
+  ?>
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:12px">
+    <?php foreach ([
+      ['Modalità', $modo === 'cronless' ? 'Automatica (senza cron)' : 'Attività esterna'],
+      ['Prossima esecuzione', $next === null ? '—' : ($next <= time() ? 'appena possibile' : date('d/m/Y H:i', $next))],
+      ['Ultimo controllo automatico', !empty($sched['last_tick_at']) ? date('d/m/Y H:i', strtotime((string)$sched['last_tick_at'])) : '—'],
+      ['Ultimo avvio worker', !empty($sched['last_dispatch_at']) ? date('d/m/Y H:i', strtotime((string)$sched['last_dispatch_at'])) : '—'],
+    ] as [$k, $v]): ?>
+      <div style="text-align:center;padding:10px;background:#f8fafc;border-radius:8px">
+        <div style="font-size:13px;font-weight:800;color:#334155"><?=h((string)$v)?></div>
+        <div style="font-size:10px;color:var(--muted);font-weight:700"><?=$k?></div>
+      </div>
+    <?php endforeach; ?>
   </div>
+  <?php if (!empty($sched['last_dispatch_note'])): ?>
+    <p style="font-size:11px;color:var(--muted);margin:6px 0 0">Ultimo avvio: <?=h((string)$sched['last_dispatch_note'])?></p>
+    <?php if (str_starts_with((string)$sched['last_dispatch_note'], 'in-process')): ?>
+      <div class="alert alert-warning" style="font-size:11px;margin-top:6px">
+        Il server non riesce a contattare se stesso su 127.0.0.1: la sincronizzazione è stata eseguita
+        nella richiesta di un utente, che ha dovuto attendere la fine. Verificare che Apache sia in ascolto
+        anche su 127.0.0.1 (porta del portale) e che il firewall locale non blocchi la connessione.
+      </div>
+    <?php endif; ?>
+  <?php endif; ?>
+
+  <?php if ($modo === 'cronless'): ?>
+    <div class="alert alert-info" style="font-size:11px;margin-top:12px">
+      <strong>Nessun cron necessario.</strong> Il portale controlla la pianificazione al termine delle
+      richieste (al massimo una volta al minuto) e, quando è il momento, avvia la sincronizzazione in
+      background senza rallentare la pagina. Serve almeno un accesso al portale dopo l'orario previsto:
+      con "Recupera in giornata" la sincronizzazione parte al primo accesso utile della giornata.
+      Stato attuale: <em><?=h($whyNo)?></em>.
+    </div>
+  <?php else: ?>
+    <div class="alert alert-warning" style="font-size:11px;margin-top:12px">
+      <strong>Modalità attività esterna.</strong> Il portale non avvia la sincronizzazione da solo:
+      pianificare <code>php cron_sync.php</code> ogni ora. Fuori dalla finestra lo script termina subito.
+    </div>
+  <?php endif; ?>
+
+  <?php if ($can_run && $srcCfg): ?>
+    <form method="post" style="margin-top:8px">
+      <?= csrf_field() ?><input type="hidden" name="action" value="run_now_async">
+      <button class="btn btn-sm"><i class="fa-solid fa-play"></i> Esegui ora in background</button>
+      <span style="font-size:11px;color:var(--muted)">Avvia subito la sincronizzazione completa, ignorando orario e giorni.</span>
+    </form>
+  <?php endif; ?>
 
   <?php if ($schedLog): ?>
     <details style="margin-top:10px">

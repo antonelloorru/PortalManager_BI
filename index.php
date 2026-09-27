@@ -307,7 +307,7 @@ if ($u_role <= 5) {
       </div>
       <div style="flex:1;min-width:0">
         <div style="font-weight:600;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><?=h($sc['cert_name'])?></div>
-        <div style="font-size:11px;color:var(--muted)"><?=h($sc['first_name'].' '.$sc['last_name'])?> · <?=h($sc['brand_name'])?></div>
+        <div style="font-size:11px;color:var(--muted)"><?=h($sc['last_name'].' '.$sc['first_name'])?> · <?=h($sc['brand_name'])?></div>
       </div>
       <div style="font-size:11px;color:<?=$col?>;font-weight:700;white-space:nowrap"><?=format_date($sc['expiry_date'],'d/m')?></div>
     </div>
@@ -362,7 +362,7 @@ if ($u_role <= 5) {
       <?php foreach($top_cand as $tc): ?>
       <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f8fafc">
         <div>
-          <div style="font-weight:600;font-size:12px"><?=h($tc['first_name'].' '.$tc['last_name'])?></div>
+          <div style="font-weight:600;font-size:12px"><?=h($tc['last_name'].' '.$tc['first_name'])?></div>
           <div style="font-size:11px;color:var(--muted)"><?=h($tc['pos_title'])?></div>
         </div>
         <div style="display:flex;align-items:center;gap:8px">

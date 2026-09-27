@@ -185,7 +185,7 @@ $emps = can('edit')
   foreach($last5->fetchAll() as $l): ?>
   <div style="padding:8px 0;border-bottom:1px solid #f8fafc;font-size:12px">
     <div style="font-weight:600"><?=h($l['cn'])?></div>
-    <div style="color:var(--muted)"><?=h($l['first_name'].' '.$l['last_name'])?> · <?=format_date($l['issue_date'])?></div>
+    <div style="color:var(--muted)"><?=h($l['last_name'].' '.$l['first_name'])?> · <?=format_date($l['issue_date'])?></div>
   </div>
   <?php endforeach; ?>
 </div>

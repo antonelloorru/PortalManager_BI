@@ -104,7 +104,7 @@ require __DIR__ . '/partials/header.php';
   <section class="card">
     <h2>Candidatura #<?= (int)$app['id'] ?> — <?= h($app['position_title']) ?></h2>
     <p>
-      <b><?= h($app['first_name'] . ' ' . $app['last_name']) ?></b><br>
+      <b><?= h($app['last_name'] . ' ' . $app['first_name']) ?></b><br>
       <?= h($app['email']) ?> · <?= h($app['phone']) ?><br>
       <?= h($app['city']) ?> <?= h($app['country']) ?><br>
       <?php if ($app['linkedin_url']): ?><a href="<?= h($app['linkedin_url']) ?>" target="_blank" rel="noopener">LinkedIn</a><br><?php endif; ?>
@@ -149,7 +149,7 @@ require __DIR__ . '/partials/header.php';
   <?php foreach ($list as $a): ?>
     <tr>
       <td><?= (int)$a['id'] ?></td>
-      <td><?= h($a['first_name'] . ' ' . $a['last_name']) ?></td>
+      <td><?= h($a['last_name'] . ' ' . $a['first_name']) ?></td>
       <td><?= h($a['email']) ?></td>
       <td><a href="?position_id=<?= (int)$a['position_id'] ?>"><?= h($a['position_title']) ?></a></td>
       <td><span class="badge b-<?= h($a['status']) ?>"><?= h($a['status']) ?></span></td>

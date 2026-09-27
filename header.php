@@ -403,6 +403,9 @@ body {
 <link rel="stylesheet" href="assets/pm-filters.css?v=<?= @filemtime(__DIR__.'/assets/pm-filters.css') ?: '198' ?>">
 <link rel="stylesheet" href="assets/pm-tables.css?v=<?= @filemtime(__DIR__.'/assets/pm-tables.css') ?: '193' ?>">
 <script src="assets/pm-tables.js?v=<?= @filemtime(__DIR__.'/assets/pm-tables.js') ?: '193' ?>" defer></script>
+<!-- v1.9.71: select con ricerca e multi-selezione su tutte le pagine -->
+<link rel="stylesheet" href="assets/css/pm-multiselect.css?v=<?= @filemtime(__DIR__.'/assets/css/pm-multiselect.css') ?: '1971' ?>">
+<script src="assets/js/pm-multiselect.js?v=<?= @filemtime(__DIR__.'/assets/js/pm-multiselect.js') ?: '1971' ?>" defer></script>
 </head>
 <body class="layout-<?= h($brand_layout) ?> layout-topbar">
 <?php if (!$is_modal): ?>

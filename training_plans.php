@@ -429,7 +429,7 @@ function plan_type_label(string $plan_type, array $PLAN_TYPES): string {
       [$ec,$ebg] = plan_type_style($ev['plan_type'] ?? 'esame_certificazione', $PLAN_TYPES);
     ?>
     <div style="font-size:9px;font-weight:700;padding:2px 5px;border-radius:3px;margin-bottom:2px;background:<?=$ebg?>;color:<?=$ec?>;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border-left:2px solid <?=$ec?>"
-         title="<?=h(plan_type_label($ev['plan_type']??'esame_certificazione',$PLAN_TYPES).': '.$ev['cert_name'].' — '.$ev['first_name'].' '.$ev['last_name'])?>">
+         title="<?=h(plan_type_label($ev['plan_type']??'esame_certificazione',$PLAN_TYPES).': '.$ev['cert_name'].' — '.$ev['last_name'].' '.$ev['first_name'])?>">
       <?=$PLAN_TYPES[$ev['plan_type']??''][1] ?? 'fa-circle' ?  '<i class="fa-solid '.($PLAN_TYPES[$ev['plan_type']??''][1]??'fa-circle').'" style="font-size:7px"></i>' : '📌'?> <?=h(mb_substr($ev['last_name'],0,8))?>
     </div>
     <?php endforeach; endif; ?>
@@ -456,7 +456,7 @@ function plan_type_label(string $plan_type, array $PLAN_TYPES): string {
       <span style="font-size:11px;font-weight:800;color:<?=$col?>;min-width:70px"><?=$ico?> <?=h($pt_label)?></span>
       <div style="flex:1">
         <strong style="font-size:13px"><?=h($ev['cert_name'] ?? $ev['info'] ?? '—')?></strong><br>
-        <span style="font-size:11px;color:var(--muted)"><?=h($ev['first_name'].' '.$ev['last_name'])?> · <?=h($ev['brand_name'])?></span>
+        <span style="font-size:11px;color:var(--muted)"><?=h($ev['last_name'].' '.$ev['first_name'])?> · <?=h($ev['brand_name'])?></span>
       </div>
       <?php if($ev['info']): ?><span style="font-size:10px;padding:2px 8px;border-radius:10px;background:<?=$col?>22;color:<?=$col?>;font-weight:700"><?=h($ev['info'])?></span><?php endif; ?>
     </div>
@@ -468,7 +468,7 @@ function plan_type_label(string $plan_type, array $PLAN_TYPES): string {
 function exportCSV(){
   let rows = "Data,Tipo,Collaboratore,Dipartimento,Certificazione,Brand,Priorita\n";
   <?php foreach($all_events as $ev): ?>
-  rows += "<?=addslashes($ev['ev_date'])?>,<?=addslashes($ev['tipo'])?>,<?=addslashes($ev['first_name'].' '.$ev['last_name'])?>,<?=addslashes($ev['department']??'')?>,<?=addslashes($ev['cert_name'])?>,<?=addslashes($ev['brand_name'])?>,<?=addslashes($ev['info']??'')?>\n";
+  rows += "<?=addslashes($ev['ev_date'])?>,<?=addslashes($ev['tipo'])?>,<?=addslashes($ev['last_name'].' '.$ev['first_name'])?>,<?=addslashes($ev['department']??'')?>,<?=addslashes($ev['cert_name'])?>,<?=addslashes($ev['brand_name'])?>,<?=addslashes($ev['info']??'')?>\n";
   <?php endforeach; ?>
   const a = document.createElement('a');
   a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(rows);

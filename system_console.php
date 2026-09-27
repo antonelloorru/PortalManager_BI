@@ -275,7 +275,7 @@ try {
     // (CONCAT(u.first_name,...)) falliva con "Unknown column" e, intercettata dal
     // catch, lasciava la tabella log vuota.
     $stL = $pdo->prepare(
-        "SELECT l.*, TRIM(CONCAT(COALESCE(e.first_name,''),' ',COALESCE(e.last_name,''))) AS uname, u.email AS uemail
+        "SELECT l.*, TRIM(CONCAT(COALESCE(e.last_name,''),' ',COALESCE(e.first_name,''))) AS uname, u.email AS uemail
            FROM app_logs l
            LEFT JOIN users u     ON u.id = l.user_id
            LEFT JOIN employees e ON e.id = u.employee_id

@@ -27,7 +27,7 @@ if ($job_id <= 0) {
 
 // ─── CARICA JOB ────────────────────────────────────────────────────────
 $j = $pdo->prepare(
-    "SELECT j.*, CONCAT(COALESCE(e.first_name,''), ' ', COALESCE(e.last_name,'')) AS user_name
+    "SELECT j.*, CONCAT(COALESCE(e.last_name,''), ' ', COALESCE(e.first_name,'')) AS user_name
        FROM import_jobs j
        LEFT JOIN users u ON u.id = j.created_by
        LEFT JOIN employees e ON e.id = u.employee_id

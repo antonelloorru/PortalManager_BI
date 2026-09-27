@@ -71,7 +71,7 @@ function send_exam_notification(PDO $pdo, int $examId, string $action_type, arra
 
         $pt = $PLAN_TYPES[$exam['plan_type'] ?? 'esame_certificazione'] ?? $PLAN_TYPES['esame_certificazione'];
         $eventTitle = $pt[0] . ': ' . ($exam['cert_name'] ?? $exam['notes'] ?? 'Evento formativo');
-        $empName = $exam['first_name'] . ' ' . $exam['last_name'];
+        $empName = $exam['last_name'] . ' ' . $exam['first_name'];
         $location = $exam['exam_location'] ?? $exam['exam_center'] ?? '';
 
         $settings = load_settings();

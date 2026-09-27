@@ -77,7 +77,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 
 $rows = $pdo->query("SELECT * FROM hr_reference_values ORDER BY id")->fetchAll(PDO::FETCH_ASSOC);
 $hist = $pdo->query(
-    "SELECT h.*, CONCAT(COALESCE(e.first_name,''),' ',COALESCE(e.last_name,'')) AS autore
+    "SELECT h.*, CONCAT(COALESCE(e.last_name,''),' ',COALESCE(e.first_name,'')) AS autore
        FROM hr_reference_history h
        LEFT JOIN users u    ON u.id = h.changed_by
        LEFT JOIN employees e ON e.id = u.employee_id
@@ -91,7 +91,7 @@ try { $formulas = $pdo->query("SELECT * FROM hr_formulas ORDER BY sort_order, id
 $fhist = [];
 try {
     $fhist = $pdo->query(
-        "SELECT h.*, CONCAT(COALESCE(e.first_name,''),' ',COALESCE(e.last_name,'')) AS autore
+        "SELECT h.*, CONCAT(COALESCE(e.last_name,''),' ',COALESCE(e.first_name,'')) AS autore
            FROM hr_formula_history h
            LEFT JOIN users u     ON u.id = h.changed_by
            LEFT JOIN employees e ON e.id = u.employee_id

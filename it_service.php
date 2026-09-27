@@ -27,11 +27,29 @@ $inc = isset($_GET['inc']) ? array_values(array_intersect($INC_ALL, (array)$_GET
 if (!$inc) $inc = $INC_ALL;
 $incOn = fn(string $k): bool => in_array($k, $inc, true);
 
+// v1.9.73 — righe di un singolo contratto, richieste quando l'utente lo apre nel
+// "Dettaglio per commessa". Stessi filtri e stessi permessi della pagina.
+if (($_GET['ajax'] ?? '') === 'dett_commessa') {
+    $cid = (int)($_GET['cid'] ?? 0);
+    header('Content-Type: text/html; charset=utf-8');
+    header('Cache-Control: no-store');
+    if ($cid <= 0) { http_response_code(400); exit; }
+    $nf = fn($v) => number_format((float)$v, 2, ',', '.');
+    foreach ($it->dettaglioCommessa($f, $cid) as $r) {
+        echo '<tr><td>' . h((string)$r['report_date']) . '</td><td>' . h((string)$r['operator_name']) . '</td>'
+           . '<td><code>' . (h((string)$r['ticket']) ?: '—') . '</code></td><td>' . h((string)$r['fascia']) . '</td>'
+           . '<td>' . h((string)$r['regime']) . '</td><td>' . $nf($r['ore']) . '</td>'
+           . '<td>' . $nf($r['costo_contratto']) . '</td><td>' . $nf($r['tot_costo_tab']) . "</td></tr>\n";
+    }
+    exit;
+}
+
 $pronto = true; $errore = '';
 try {
     $tot   = $it->totali($f);
     $righe = $it->aggrega($f, 500);
     $trend = $it->andamento($f);
+    $trendG = $it->andamentoGiornaliero($f);   // v1.9.73 — andamento giornaliero
     $km    = $it->statoKm($f);
     $gMod  = $it->perDimensione($f, 'modalita');
     $gLin  = $it->perDimensione($f, 'linea_label', 10);
@@ -46,6 +64,7 @@ try {
     $vSet  = $it->valori('settore');
     $vInc  = $it->valori('incaricato');
     $vSed  = $it->valori('sede_riferimento');
+    $vCtr  = $it->valoriContratti();          // v1.9.77 — Codice Contratto / PM Project
 
     // v1.9.15 — costi per fascia e contratto, stesse viste del Service Desk
     $cQ2   = $it->costiQuadro($f);
@@ -57,11 +76,17 @@ try {
     $gAr   = $it->giorniArea($f);
     $gRic  = $it->giorniRiconcilia($f);
     // [PM_V1_9_34_APPLIED]
-    $dettCommessa = $it->dettaglioCommessa($f);
+    // v1.9.73 — a schermo solo la sintesi per contratto; il dettaglio completo serve
+    // all'export DOCX (la stampa lo calcola da sé in app/it_service_print.php)
+    $dettFull     = (($_GET['export'] ?? '') === 'docx');
+    $dettCommessa = $dettFull ? $it->dettaglioCommessa($f) : [];
+    $dettSintesi  = ($dettFull || ($_GET['print'] ?? '') === '1') ? [] : $it->dettaglioCommessaSintesi($f);
     // [PM_V1_9_35_APPLIED]
     $riepContratto = $it->riepilogoContratto($f);
 } catch (Throwable $e) {
     $pronto = false; $errore = $e->getMessage();
+    $trendG = ['from' => '', 'to' => '', 'rows' => []];
+    $dettCommessa = $dettSintesi = [];
     $tot = $km = []; $righe = $trend = $gMod = $gLin = $gSet = $gDur = $gFas = [];
     // v1.9.19 — nel ramo di errore le variabili vanno AZZERATE, non ricalcolate.
     //
@@ -71,13 +96,13 @@ try {
     // PHP produce un avviso su ogni riferimento.
     $cQ2 = $gQ = []; $cRie2 = $gOp = $gAr = $gRic = [];
     $dettCommessa = []; $riepContratto = [];
-    $vLin = $vSet = $vInc = $vSed = $vCod = $vAz = []; $gCod = $gAz = [];
+    $vLin = $vSet = $vInc = $vSed = $vCod = $vAz = []; $gCod = $gAz = []; $vCtr = [];
 }
 
 $COL = ['#2563eb','#16a34a','#f59e0b','#dc2626','#7c3aed','#0891b2','#db2777','#65a30d',
         '#ea580c','#0d9488','#9333ea','#4f46e5'];
 $colMod = ['in sede'=>'#2563eb','da remoto'=>'#0d9488','presso cliente'=>'#f59e0b',
-           'smart working'=>'#0891b2','reperibilita'=>'#dc2626'];
+           'smart working'=>'#0891b2','reperibilita'=>'#7c3aed','reperibilità'=>'#7c3aed'];
 
 // ── export XLSX, con foglio pivot ───────────────────────────────────────────
 if ($pronto && ($_GET['export'] ?? '') === 'xlsx') {
@@ -163,11 +188,16 @@ if ($pronto && ($_GET['export'] ?? '') === 'xlsx') {
     foreach ([['Modalità', $gMod], ['Linee di servizio', $gLin], ['Settori', $gSet],
               ['Codici linea', $gCod], ['Aziende esecutrici', $gAz]] as [$et, $dati]) {
         $rr = [[$et, 'Interventi', 'Ore', 'Giornate-uomo']];
-        foreach ($dati as $d) $rr[] = [$d['voce'], (int)$d['interventi'], $d['ore'], (int)$d['giornate_uomo']];
+        foreach ($dati as $d) $rr[] = [ItServiceModel::etichetta($d['voce']), (int)$d['interventi'], $d['ore'], (int)$d['giornate_uomo']];
         $w->addSheet(mb_substr($et, 0, 28), $rr);
     }
 
     write_log('Projects', 'info', "Export Relazione IT {$f['from']}..{$f['to']}", $u_id);
+    // v1.9.77 — perimetro dell'estrazione: periodo e filtri applicati
+    $rf = [['Parametro', 'Valore'], ['Periodo', date('d/m/Y', strtotime($f['from'])) . ' – ' . date('d/m/Y', strtotime($f['to']))]];
+    foreach ($it->descrizioneFiltri($f, $vCtr) as $x) { [$k, $v] = explode(': ', $x, 2) + [1 => '']; $rf[] = [$k, $v]; }
+    $rf[] = ['Generato il', date('d/m/Y H:i')];
+    $w->addSheet('Filtri', $rf);
     $w->download("relazione_servizio_it_{$f['from']}_{$f['to']}.xlsx");
     exit;
 }
@@ -189,11 +219,12 @@ $barre = function (array $dati, string $campo, array $colori, int $w = 460) use 
     foreach ($dati as $i => $d) {
         $y = $i * $rh + 3;
         $l = (float)$d[$campo] / $max * $bw;
-        $c = $colori[$d['voce']] ?? $colori[$i % count($colori)] ?? '#2563eb';
+        $c = $colori[$d['voce']] ?? $colori[mb_strtolower(trim((string)$d['voce']))] ?? $colori[$i % count($colori)] ?? '#2563eb';
+        $lab = ItServiceModel::etichetta($d['voce']);   // v1.9.76 — «reperibilita» → «Reperibilità»
         $o .= '<text x="' . ($lw - 6) . '" y="' . ($y + 11) . '" text-anchor="end" font-size="10" fill="#334155">'
-            . htmlspecialchars(mb_strimwidth((string)$d['voce'], 0, 24, '…')) . '</text>';
+            . htmlspecialchars(mb_strimwidth($lab, 0, 24, '…')) . '</text>';
         $o .= '<rect x="' . $lw . '" y="' . ($y + 2) . '" width="' . round(max(1, $l), 1)
-            . '" height="12" fill="' . $c . '" rx="2"><title>' . htmlspecialchars((string)$d['voce'])
+            . '" height="12" fill="' . $c . '" rx="2"><title>' . htmlspecialchars($lab)
             . ': ' . $hh1($d[$campo]) . '</title></rect>';
         $o .= '<text x="' . ($lw + $l + 5) . '" y="' . ($y + 12) . '" font-size="9" fill="#64748b">'
             . $hh1($d[$campo]) . '</text>';
@@ -216,12 +247,7 @@ if ($pronto && ($_GET['export'] ?? '') === 'docx') {
     // stessa logica del report di stampa: scheda personale + filtri applicati
     $isPers  = (count($f['incaricati'] ?? []) === 1);
     $persona = $isPers ? $f['incaricati'][0] : '';
-    $filtri = [];
-    foreach ([['linee','Linee'],['settori','Settori'],['incaricati','Incaricati'],
-              ['sedi','Sedi'],['modalita','Modalità'],['fasce','Fasce'],['durate','Durate']] as [$fk,$fl]) {
-        if (!empty($f[$fk])) $filtri[] = $fl . ': ' . implode(', ', $f[$fk]);
-    }
-    if ($f['ricavo'] !== '') $filtri[] = 'Natura: ' . ($f['ricavo'] === '1' ? 'a ricavo' : 'interne');
+    $filtri = $it->descrizioneFiltri($f, $vCtr);   // v1.9.77
 
     $eur   = fn($v) => '€ ' . number_format((float)$v, 2, ',', '.');
     $gbLbl = implode(' × ', array_map(fn($g) => ItServiceModel::DIM[$g], $f['gb']));
@@ -337,7 +363,7 @@ if ($pronto && ($_GET['export'] ?? '') === 'docx') {
             ['label'=>'Extra-orario','value'=>$hh1($cQ2['valore_extra'] ?? 0),'color'=>'F59E0B','sub'=>$hh1($cQ2['ore_extra'] ?? 0).' h'],
             ['label'=>'Commesse','value'=>$hh($cQ2['commesse'] ?? 0),'color'=>'7C3AED'],
         ]);
-        $rr=[]; foreach ($cRie2 as $x) $rr[]=[$x['codice_linea'],$x['descrizione_tariffa'],$x['reperibilita'],$hh($x['interventi']),$hh1($x['ore']),($x['tariffa_ora']!==null?$eur($x['tariffa_ora']):'—'),$eur($x['valore'])];
+        $rr=[]; foreach ($cRie2 as $x) $rr[]=[$x['codice_linea'],$x['descrizione_tariffa'],ItServiceModel::reperibilitaTesto($x['reperibilita']),$hh($x['interventi']),$hh1($x['ore']),($x['tariffa_ora']!==null?$eur($x['tariffa_ora']):'—'),$eur($x['valore'])];
         $doc->table(['Linea','Tariffa','Reper.','Interv.','Ore','Tariffa/ora','Valore'], $rr, ['right'=>[3,4,5,6]]);
     }
 
@@ -380,7 +406,7 @@ if (!isset($GLOBALS['__pm_boost_v1934'])) {
 $qs = function (array $over = []) use ($f, $inc, $INC_ALL) {
     $p = ['from' => $f['from'], 'to' => $f['to'], 'ricavo' => $f['ricavo'],
           'q' => $f['q'], 'cliente' => $f['cliente']];
-    foreach (['linee','codici','settori','aziende','incaricati','modalita','fasce','durate','sedi','gb'] as $k)
+    foreach (['contratti','linee','codici','settori','aziende','incaricati','modalita','fasce','durate','sedi','gb'] as $k)
         if (!empty($f[$k])) $p[$k] = implode(',', $f[$k]);
     if (count($inc) < count($INC_ALL)) $p['inc'] = $inc; // subset -> inc[] nei link stampa/export
     return url_safe('it_service', array_merge(array_filter($p, fn($v) => $v !== '' && $v !== []), $over));
@@ -389,11 +415,24 @@ $qs = function (array $over = []) use ($f, $inc, $INC_ALL) {
 
 <div style="margin-bottom:14px">
   <h1 style="font-size:20px;font-weight:800"><i class="fa-solid fa-server"></i> Relazione di Servizio IT</h1>
+  <?php if (class_exists('PmSnapshot')) echo PmSnapshot::badge(); ?>
   <p style="color:var(--muted);font-size:12px;margin-top:2px">
     Operatività per incaricato, linea di servizio, settore tecnologico, modalità e fascia oraria.
   </p>
 </div>
 
+<?= PmContractFilter::banner($f['contratti'], $vCtr, $qs(['contratti' => null, 'contratti_set' => 1])) ?>
+<?php
+  // v1.9.79 — rapportini senza attivita DGB: modalita e fascia oraria non ricavabili
+  if ($pronto) {
+      require_once(__DIR__ . '/app/PmReportLink.php');
+      $nScoll = PmReportLink::unlinked($pdo, $f['from'], $f['to']);
+      if ($nScoll > 0): ?>
+  <div class="alert alert-warning" style="font-size:12px"><i class="fa-solid fa-link-slash"></i>
+    <strong><?=$hh($nScoll)?> moduli di intervento</strong> del periodo non sono collegati a un'attività DGB:
+    per questi modalità (smart working, reperibilità, da remoto) e fascia oraria non sono rilevabili.
+    Il collegamento si ripristina alla prossima sincronizzazione o dopo l'import DGB.</div>
+<?php endif; } ?>
 <?php if (!$pronto): ?>
   <div class="alert alert-warning"><strong>Dati non disponibili.</strong>
     Eseguire la migration v1.8.89.
@@ -404,7 +443,7 @@ $qs = function (array $over = []) use ($f, $inc, $INC_ALL) {
 <?php // v1.9.8 — pannello uniformato al template di Commesse/Progetti ?>
 <?php
   $attivi = ($f['q'] !== '') + ($f['cliente'] !== '') + ($f['ricavo'] !== '');
-  foreach (['linee','codici','settori','aziende','incaricati','modalita','fasce','durate','sedi'] as $k)
+  foreach (['contratti','linee','codici','settori','aziende','incaricati','modalita','fasce','durate','sedi'] as $k)
       $attivi += (count($f[$k]) > 0) ? 1 : 0;
 ?>
 <details class="pm-panel" <?= $attivi > 0 ? 'open' : '' ?>>
@@ -416,6 +455,13 @@ $qs = function (array $over = []) use ($f, $inc, $INC_ALL) {
   <div class="pm-panel-body">
     <form method="get">
       <?= route_slug_field() ?>
+
+      <div class="pm-group">
+        <h4>Contratto <span class="pm-multi">(filtro globale: KPI, grafici, tabelle, costi, giorni, DGB, stampa ed export)</span></h4>
+        <div class="pm-grid-auto">
+          <?= PmContractFilter::field($vCtr, $f['contratti'], 'vale anche per Service Desk, Report direzionale, DGB') ?>
+        </div>
+      </div>
 
       <div class="pm-group">
         <h4>Periodo e ricerca</h4>
@@ -443,7 +489,7 @@ $qs = function (array $over = []) use ($f, $inc, $INC_ALL) {
             <div class="form-group"><label><?=h($lbl)?> <span class="pm-multi">(multipla)</span></label>
               <select name="<?=$k?>[]" multiple size="3" class="pm-ms">
                 <?php foreach ($vals as $v): ?>
-                  <option value="<?=h($v)?>" <?=in_array($v,$f[$k],true)?'selected':''?>><?=h($v)?></option>
+                  <option value="<?=h($v)?>" <?=in_array($v,$f[$k],true)?'selected':''?>><?=h(ItServiceModel::etichetta($v))?></option>
                 <?php endforeach; ?></select></div>
           <?php endforeach; ?>
           <div class="form-group"><label>Natura</label>
@@ -466,7 +512,7 @@ $qs = function (array $over = []) use ($f, $inc, $INC_ALL) {
             <div class="form-group"><label><?=h($lbl)?> <span class="pm-multi">(multipla)</span></label>
               <select name="<?=$k?>[]" multiple size="3" class="pm-ms">
                 <?php foreach ($vals as $v): ?>
-                  <option value="<?=h($v)?>" <?=in_array($v,$f[$k],true)?'selected':''?>><?=h($v)?></option>
+                  <option value="<?=h($v)?>" <?=in_array($v,$f[$k],true)?'selected':''?>><?=h(ItServiceModel::etichetta($v))?></option>
                 <?php endforeach; ?></select></div>
           <?php endforeach; ?>
           <div class="form-group"><label>Raggruppa per <span class="pm-multi">(multipla)</span></label>
@@ -491,7 +537,7 @@ $qs = function (array $over = []) use ($f, $inc, $INC_ALL) {
 
       <div class="pm-actions">
         <button class="btn btn-primary btn-sm"><i class="fa-solid fa-filter"></i> Applica</button>
-        <a class="btn btn-sm" href="<?=url_safe('it_service')?>">Azzera</a>
+        <a class="btn btn-sm" href="<?=url_safe('it_service', ['contratti_set' => 1])?>">Azzera</a>
         <a class="btn btn-sm" href="<?=$qs(['export'=>'xlsx'])?>">
           <i class="fa-solid fa-file-excel"></i> XLSX + pivot</a>
         <a class="btn btn-sm" href="<?=$qs(['export'=>'docx'])?>">
@@ -621,6 +667,38 @@ $qs = function (array $over = []) use ($f, $inc, $INC_ALL) {
   </div>
 </div>
 <?php endif; ?>
+
+<?php // ── v1.9.73: andamento giornaliero delle ore ───────────────────────────
+if (!empty($trendG['rows'])):
+    require_once __DIR__ . '/app/PmCharts.php';
+    $pmGD = PmCharts::fillDays($trendG['rows'], $trendG['from'], $trendG['to'], 'giorno', ['ore_ordinarie', 'ore_fuori', 'ore_reperibilita', 'ore_non_classificate']);
+    $pmFer = array_filter($pmGD, fn($d) => (int)date('N', strtotime($d['d'])) < 6);
+    $pmMedia = $pmFer ? array_sum(array_column($pmFer, 'ore_ordinarie')) / count($pmFer) : 0;
+?>
+<div class="card" style="margin-bottom:14px">
+  <div class="card-header"><span class="card-title"><i class="fa-solid fa-calendar-day"></i> Andamento giornaliero — ore</span>
+    <span style="font-size:11px;color:var(--muted);margin-left:8px">
+      <?= count($pmGD) < 92 ? 'intero periodo' : 'ultimi 92 giorni del periodo' ?> · passa sulle barre per il dettaglio</span></div>
+  <div style="overflow-x:auto">
+  <?= PmCharts::dailyStacked($pmGD, [
+        ['key' => 'ore_ordinarie',        'label' => 'Ore ordinarie',        'color' => '#2563eb'],
+        ['key' => 'ore_fuori',            'label' => 'Fuori orario',         'color' => '#f59e0b'],
+        ['key' => 'ore_reperibilita',     'label' => 'Reperibilità',         'color' => '#7c3aed'],
+        ['key' => 'ore_non_classificate', 'label' => 'Fascia non rilevata',  'color' => '#94a3b8'],
+      ], ['unit' => 'h', 'target' => round($pmMedia, 1), 'targetLabel' => 'media ore ordinarie (giorni feriali)']) ?>
+  </div>
+  <?php if (!empty($trendG['non_classificate'])): ?>
+    <div class="alert alert-warning" style="font-size:11px;margin-top:8px">
+      <b>Ore senza fascia oraria riconosciuta</b> (in grigio): non vengono conteggiate né come ordinarie né come fuori orario.
+      Valori trovati:
+      <?php foreach ($trendG['non_classificate'] as $pmNc): ?>
+        fascia «<?= h($pmNc['fascia']) ?>» / modalità «<?= h($pmNc['modalita']) ?>»: <?= number_format((float)$pmNc['ore'], 1, ',', '.') ?> h (<?= (int)$pmNc['interventi'] ?> interventi);
+      <?php endforeach; ?>
+    </div>
+  <?php endif; ?>
+</div>
+<?php endif; ?>
+
 
 <div class="card">
   <div class="card-header">
@@ -866,7 +944,7 @@ $qs = function (array $over = []) use ($f, $inc, $INC_ALL) {
                     background:<?=$colF3[$x['fascia']] ?? '#94a3b8'?>;margin-right:5px"></span>
                 <?=h($x['descrizione_tariffa'])?></td>
               <td style="text-align:right"><?=$hh($x['interventi'])?></td>
-              <td style="text-align:center;color:var(--muted)"><?=h($x['reperibilita'])?></td>
+              <td style="text-align:center"><?=ItServiceModel::reperibilitaHtml($x['reperibilita'])?></td>
               <td style="text-align:right"><?=$hh1($x['ore'])?></td>
               <td style="text-align:right;color:var(--muted)">
                 <?=$x['tariffa_ora']!==null?$hh1($x['tariffa_ora']):'—'?></td>
@@ -938,56 +1016,68 @@ $qs = function (array $over = []) use ($f, $inc, $INC_ALL) {
   </table>
 <?php endif; ?>
 
-<?php // [PM_V1_9_34_APPLIED] Sezione Dettaglio per Commessa ?>
-<?php if (!empty($dettCommessa)):
-    $__byC = [];
-    foreach ($dettCommessa as $r) $__byC[$r['contract_id']][] = $r;
+<?php // [PM_V1_9_34_APPLIED] Sezione Dettaglio per Commessa — v1.9.73: righe caricate su richiesta ?>
+<?php if (!empty($dettSintesi)):
+    $pmNr = array_sum(array_column($dettSintesi, 'righe'));
+    $pmNf = fn($v) => number_format((float)$v, 2, ',', '.');
 ?>
 <style>
   .rsi34-h2 { margin:22px 0 8px; font-size:16px; }
   .rsi34-badge { background:#e0e7ff; color:#3730a3; padding:2px 8px; border-radius:999px; font-size:11px; }
-  .rsi34-h3 { margin:14px 0 4px; font-size:13.5px; background:#1e293b; color:#fff; padding:8px 12px; border-radius:5px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
-  .rsi34-tbl { width:100%; border-collapse:collapse; margin:4px 0 20px; }
+  .rsi34-h3 { margin:6px 0 0; font-size:13px; background:#1e293b; color:#fff; padding:8px 12px; border-radius:5px;
+              font-family:ui-monospace,SFMono-Regular,Menlo,monospace; cursor:pointer; list-style:none; }
+  .rsi34-h3::-webkit-details-marker { display:none; }
+  .rsi34-h3::before { content:'▸'; display:inline-block; width:14px; transition:transform .15s; }
+  details[open] > .rsi34-h3::before { transform:rotate(90deg); }
+  .rsi34-tbl { width:100%; border-collapse:collapse; margin:4px 0 14px; }
   .rsi34-tbl th, .rsi34-tbl td { padding:5px 8px; border-bottom:1px solid #e4e7ee; font-size:12.5px; text-align:right; }
   .rsi34-tbl th:nth-child(-n+3), .rsi34-tbl td:nth-child(-n+3) { text-align:left; }
   .rsi34-tbl thead th { background:#f0f2f7; }
   .rsi34-tbl tfoot td { font-weight:600; background:#eef4ff; }
 </style>
-<h2 class="rsi34-h2">Dettaglio per Commessa <span class="rsi34-badge">v1.9.34</span></h2>
-<?php foreach ($__byC as $cid => $rows):
-    $first = $rows[0];
-    $intest = implode(' | ', array_filter([$first['contract_code'], $first['code_x_installation'], $first['customer_name'], $first['contract_description']], fn($v)=>$v!==null && $v!==''));
-    $tOre = array_sum(array_map(fn($r)=>(float)$r['ore'], $rows));
-    $tCC  = array_sum(array_map(fn($r)=>(float)$r['costo_contratto'], $rows));
-    $tTab = array_sum(array_map(fn($r)=>(float)$r['tot_costo_tab'], $rows));
-?>
-  <h3 class="rsi34-h3"><?= h($intest) ?>
-    <?php if ($first['pm_project_code']): ?> · PM: <?= h($first['pm_project_code']) ?><?php endif; ?>
-    <span style="float:right;font-weight:normal"><?= count($rows) ?> righe · <?= number_format($tOre,2,',','.') ?>h · € <?= number_format($tTab,2,',','.') ?></span>
-  </h3>
-  <table class="rsi34-tbl">
-    <thead><tr><th>Data</th><th>Operatore</th><th>Ticket</th><th>Fascia</th><th>Regime</th><th>Ore</th><th>Costo contratto (€)</th><th>TotCostoTab (€)</th></tr></thead>
-    <tbody>
-    <?php foreach ($rows as $r): ?>
-      <tr>
-        <td><?= h((string)$r['report_date']) ?></td>
-        <td><?= h($r['operator_name']) ?></td>
-        <td><code><?= h((string)$r['ticket']) ?: '—' ?></code></td>
-        <td><?= h($r['fascia']) ?></td>
-        <td><?= h($r['regime']) ?></td>
-        <td><?= number_format((float)$r['ore'],2,',','.') ?></td>
-        <td><?= number_format((float)$r['costo_contratto'],2,',','.') ?></td>
-        <td><?= number_format((float)$r['tot_costo_tab'],2,',','.') ?></td>
-      </tr>
-    <?php endforeach; ?>
-    </tbody>
-    <tfoot><tr><td colspan="5">Totali commessa</td>
-      <td><?= number_format($tOre,2,',','.') ?></td>
-      <td><?= number_format($tCC,2,',','.') ?></td>
-      <td><?= number_format($tTab,2,',','.') ?></td>
-    </tr></tfoot>
-  </table>
+<h2 class="rsi34-h2">Dettaglio per Commessa
+  <span class="rsi34-badge"><?= count($dettSintesi) ?> contratti · <?= number_format($pmNr, 0, ',', '.') ?> righe</span></h2>
+<p style="color:var(--muted);font-size:12px;margin:0 0 8px">
+  Apri un contratto per vederne le righe: vengono caricate solo quando servono.
+  Stampa ed export Word includono il dettaglio completo.</p>
+<?php foreach ($dettSintesi as $c):
+    $intest = implode(' | ', array_filter([$c['contract_code'], $c['code_x_installation'], $c['customer_name'], $c['contract_description']],
+                                           fn($v) => $v !== null && $v !== '')); ?>
+  <details class="rsi-dett" data-cid="<?= (int)$c['contract_id'] ?>">
+    <summary class="rsi34-h3"><?= h($intest) ?><?php if ($c['pm_project_code']): ?> · PM: <?= h($c['pm_project_code']) ?><?php endif; ?>
+      <span style="float:right;font-weight:normal"><?= (int)$c['righe'] ?> righe · <?= $pmNf($c['ore']) ?>h · € <?= $pmNf($c['tot_costo_tab']) ?></span></summary>
+    <table class="rsi34-tbl" data-pm-nofilter>
+      <thead><tr><th>Data</th><th>Operatore</th><th>Ticket</th><th>Fascia</th><th>Regime</th><th>Ore</th><th>Costo contratto (€)</th><th>TotCostoTab (€)</th></tr></thead>
+      <tbody><tr><td colspan="8" style="text-align:left;color:#94a3b8">Caricamento…</td></tr></tbody>
+      <tfoot><tr><td colspan="5">Totali commessa</td>
+        <td><?= $pmNf($c['ore']) ?></td><td><?= $pmNf($c['costo_contratto']) ?></td><td><?= $pmNf($c['tot_costo_tab']) ?></td></tr></tfoot>
+    </table>
+  </details>
 <?php endforeach; ?>
+<script>
+(function () {
+  document.querySelectorAll('details.rsi-dett').forEach(function (d) {
+    d.addEventListener('toggle', function () {
+      if (!d.open || d.dataset.stato === 'ok' || d.dataset.stato === 'caricamento') return;
+      var body = d.querySelector('tbody');
+      d.dataset.stato = 'caricamento';
+      var u = new URL(window.location.href);
+      u.searchParams.set('ajax', 'dett_commessa');
+      u.searchParams.set('cid', d.dataset.cid);
+      fetch(u.toString(), { credentials: 'same-origin', headers: { 'X-Requested-With': 'fetch' } })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+        .then(function (html) {
+          body.innerHTML = html || '<tr><td colspan="8" style="text-align:left;color:#94a3b8">Nessuna riga.</td></tr>';
+          d.dataset.stato = 'ok';
+        })
+        .catch(function (e) {
+          body.innerHTML = '<tr><td colspan="8" style="text-align:left;color:#dc2626">Caricamento non riuscito (' + e.message + '): chiudi e riapri per riprovare.</td></tr>';
+          d.dataset.stato = '';
+        });
+    });
+  });
+})();
+</script>
 <?php endif; ?>
 
 <?php require_once('footer.php'); ?>

@@ -290,7 +290,7 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f172a; min-
     <div class="users-grid">
       <?php foreach($admin_users as $u): ?>
       <div class="user-card" onclick="selectUser(<?=$u['id']?>, '<?=htmlspecialchars($u['email'],ENT_QUOTES)?>')" id="uc_<?=$u['id']?>">
-        <div class="name"><?=htmlspecialchars($u['first_name'].' '.$u['last_name'])?></div>
+        <div class="name"><?=htmlspecialchars($u['last_name'].' '.$u['first_name'])?></div>
         <div class="email"><?=htmlspecialchars($u['email'])?></div>
         <div class="badges">
           <span class="badge <?=$u['role_id']==1?'badge-admin':'badge-hr'?>"><?=$u['role_id']==1?'Super Admin':'HR Director'?></span>
@@ -397,7 +397,7 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f172a; min-
       <?php foreach($all_users as $u): ?>
       <tr style="border-top:1px solid #334155">
         <td style="padding:8px 12px;color:#475569"><?=$u['id']?></td>
-        <td style="padding:8px 12px;color:#e2e8f0;font-weight:600"><?=htmlspecialchars($u['first_name'].' '.$u['last_name'])?></td>
+        <td style="padding:8px 12px;color:#e2e8f0;font-weight:600"><?=htmlspecialchars($u['last_name'].' '.$u['first_name'])?></td>
         <td style="padding:8px 12px;color:#94a3b8;font-family:monospace;font-size:11px"><?=htmlspecialchars($u['email'])?></td>
         <td style="padding:8px 12px">
           <?php $rl=['1'=>'Super Admin','2'=>'HR Director','3'=>'Brand Mgr','4'=>'Team Leader','5'=>'Recruiter','6'=>'Dipendente']; ?>

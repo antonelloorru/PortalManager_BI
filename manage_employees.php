@@ -976,7 +976,7 @@ if (isset($_GET['scheda'])) {
           <div style="font-size:10px;color:var(--muted)"><?=h($e['user_email']??'')?></div>
         </div>
         <?php else: ?>
-        <button class="btn btn-sm js-link-emp" data-emp-id="<?=$e['id']?>" data-emp-name="<?=h($e['first_name'].' '.$e['last_name'])?>"
+        <button class="btn btn-sm js-link-emp" data-emp-id="<?=$e['id']?>" data-emp-name="<?=h($e['last_name'].' '.$e['first_name'])?>"
                 style="font-size:10px" title="Collega account">
           <i class="fa-solid fa-link"></i> Collega
         </button>
@@ -1526,7 +1526,7 @@ function openModal(e=null){
   }
   if(e){
     document.getElementById('e_id').value = e.id;
-    document.getElementById('mEmpTitle').textContent = 'Modifica: ' + e.first_name + ' ' + e.last_name;
+    document.getElementById('mEmpTitle').textContent = 'Modifica: ' + e.last_name + ' ' + e.first_name;
     const map = {fn:'first_name',ln:'last_name',ec:'employee_code',cf:'fiscal_code',
                  dob:'date_of_birth',
                  ph:'phone',pp:'phone_personal',pe:'personal_email',be:'business_email',
