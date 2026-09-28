@@ -34,7 +34,7 @@ if (!is_file($targetFile)) {
 }
 
 // ── Pagine pubbliche: nessun controllo ─────────────────────────
-$public = ['login', 'unauthorized', 'auth_microsoft'];
+$public = ['login', 'unauthorized', 'auth_microsoft', 'password_reset'];   // v1.9.81
 
 // ── Pagine "semi-pubbliche" (v4.1): accessibili senza user_id
 //    SOLO se c'è uno stato pending corrispondente

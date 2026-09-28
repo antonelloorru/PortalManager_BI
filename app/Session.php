@@ -103,7 +103,7 @@ final class Session
     {
         $now = time();
         $currentPage = basename($_SERVER['PHP_SELF'] ?? '');
-        $isLogin = in_array($currentPage, ['login.php', 'install.php', 'unauthorized.php'], true);
+        $isLogin = in_array($currentPage, ['login.php', 'install.php', 'unauthorized.php', 'password_reset.php'], true);
 
         // Prima volta che vediamo questa sessione: inizializza i marker
         if (!isset($_SESSION['_sec'])) {
@@ -231,8 +231,14 @@ final class Session
         if (empty($_SESSION['user_id'])) return;
 
         try {
-            $st = $pdo->prepare('SELECT role_id, status FROM users WHERE id = ?');
-            $st->execute([(int)$_SESSION['user_id']]);
+            // v1.9.81 — password_changed_at: una password reimpostata chiude le sessioni aperte prima
+            try {
+                $st = $pdo->prepare('SELECT role_id, status, password_changed_at FROM users WHERE id = ?');
+                $st->execute([(int)$_SESSION['user_id']]);
+            } catch (\Throwable $e) {   // colonna assente (migration v1.9.81 non ancora eseguita)
+                $st = $pdo->prepare('SELECT role_id, status, NULL AS password_changed_at FROM users WHERE id = ?');
+                $st->execute([(int)$_SESSION['user_id']]);
+            }
             $row = $st->fetch(\PDO::FETCH_ASSOC);
             $st->closeCursor();
         } catch (\Throwable $e) {
@@ -242,6 +248,11 @@ final class Session
         if (!$row) { self::destroy(); return; }                    // utente rimosso
         if (($row['status'] ?? 'active') !== 'active') {           // utente disattivato
             self::destroy(); return;
+        }
+        $changed = !empty($row['password_changed_at']) ? (int)strtotime((string)$row['password_changed_at']) : 0;
+        if ($changed > 0 && $changed > (int)($_SESSION['_sec']['created'] ?? 0)) {   // sessione anteriore al cambio password
+            self::destroy();
+            self::redirectLogin('pwchanged');
         }
         $_SESSION['role_id'] = (int)$row['role_id'];               // allinea al DB
     }

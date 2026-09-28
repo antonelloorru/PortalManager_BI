@@ -23,7 +23,7 @@ final class Router
      */
     public const PAGES = [
         // Core
-        'index', 'login', 'logout', 'unauthorized', 'auth_microsoft', 'user_profile', 'employee_profile', 'employee_cv', 'device_manager', 'device_export', 'device_print', 'device_import', 'notifications',
+        'index', 'login', 'logout', 'unauthorized', 'auth_microsoft', 'password_reset', 'user_profile', 'employee_profile', 'employee_cv', 'device_manager', 'device_export', 'device_print', 'device_import', 'notifications',
 
         // 2FA (v4.1)
         '2fa_verify', '2fa_settings',
