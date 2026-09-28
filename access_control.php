@@ -64,7 +64,7 @@ $current_key    = str_ends_with($current_page, '.php')
                 ? substr($current_page, 0, -4)
                 : $current_page;
 
-$public_pages   = ['login.php', 'unauthorized.php', 'install.php', 'r.php', 'auth_microsoft.php'];
+$public_pages   = ['login.php', 'unauthorized.php', 'install.php', 'r.php', 'auth_microsoft.php', 'password_reset.php'];   // v1.9.81
 $always_allowed = [
     'index.php', 'user_profile.php', 'notifications.php', 'logout.php',
     'api_filters.php', 'api_cert_search.php', 'api_cert_history.php', 'api_contract_docs.php', 'api_cert_codes.php',

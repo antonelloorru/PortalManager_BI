@@ -14,6 +14,7 @@ require_once __DIR__ . '/app/EmailOtp.php';
 require_once __DIR__ . '/app/RecoveryCodes.php';
 require_once __DIR__ . '/app/TwoFactor.php';
 require_once __DIR__ . '/app/Microsoft365Sso.php';
+require_once __DIR__ . '/app/PasswordReset.php';   // v1.9.81
 
 // Se già loggato, vai a index
 if (!empty($_SESSION['user_id'])) {
@@ -149,6 +150,8 @@ $info_message = match($reason) {
     'idle'            => 'Sessione scaduta per inattività. Accedi nuovamente.',
     'session_expired' => 'La sessione è scaduta. Accedi nuovamente.',
     'invalid'         => 'Sessione non valida. Accedi nuovamente.',
+    'pwreset'         => 'Password aggiornata. Accedi con la nuova password.',
+    'pwchanged'       => 'La password dell\'account è stata modificata: accedi nuovamente.',
     default           => ''
 };
 ?>
@@ -219,6 +222,11 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:linear-gradient(135d
         Entra nel sistema
       </button>
     </form>
+    <?php if (PasswordReset::enabled($pdo)): ?>
+      <div style="text-align:center;margin-top:14px">
+        <a href="<?= h(url_safe('password_reset')) ?>" style="font-size:13px;color:#475569;text-decoration:none">Password dimenticata?</a>
+      </div>
+    <?php endif; ?>
 
     <?php if ($sso_ms_enabled): ?>
       <div style="display:flex;align-items:center;gap:10px;margin:18px 0 14px;color:#94a3b8;font-size:12px">
