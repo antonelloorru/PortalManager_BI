@@ -27,7 +27,7 @@ class MenuManager
      */
     public const HARD_GATES = [
         'manage_roles' => 1, 'manage_permissions' => 1, 'entity_change_log' => 1, 'view_logs' => 1,
-        'system_console' => 1, 'system_errors' => 1,
+        'system_console' => 1, 'system_errors' => 1, 'rbac_sync' => 1,
         'manage_technologies' => 2, 'tech_skill_matrix' => 2, 'manage_enum_proposals' => 2,
         'mass_upload' => 2, 'mass_upload_jobs' => 2, 'mass_upload_review' => 2, 'mass_upload_partials' => 2,
         'project_import' => 3,
@@ -213,6 +213,7 @@ class MenuManager
                     ['page' => 'system_console',       'label' => 'Console di sistema',     'icon' => 'fa-sliders'],
                     ['page' => 'sso_settings',         'label' => 'SSO Microsoft 365 / MFA','icon' => 'fa-right-to-bracket'],
                     ['page' => 'perf_center',          'label' => 'Prestazioni',            'icon' => 'fa-gauge-high'],
+                    ['page' => 'rbac_sync',            'label' => 'Sincronizzazione permessi', 'icon' => 'fa-arrows-rotate'],   // v1.9.83
                     // v1.9.21 — diagnostica errori PHP, riservata al super admin:
                     // il registro contiene percorsi e frammenti di query
                     ['page' => 'system_errors',        'label' => 'Diagnostica errori',    'icon' => 'fa-bug'],

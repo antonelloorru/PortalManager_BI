@@ -66,7 +66,7 @@ final class Router
         'manage_departments', 'hr_reference_values', 'organigramma',
 
         // Competenze & Formazione aggiuntive
-        'cert_import_cisco', 'cert_import_omnissa', 'credly_manual_import', 'linkedin_sync',
+        'cert_import_cisco', 'cert_import_omnissa', 'credly_manual_import', 'linkedin_sync', 'import_candidates_linkedin',   // v1.9.83 — voce di menu non anonimizzata (rilevata da RbacSync)
     ];
 
     /**
@@ -78,7 +78,7 @@ final class Router
         'schema_check_upgrade', 'health_check', 'system_update',
         // v1.8.16: pagine Sistema/manutenzione ad accesso solo per path esatto
         // (l'anonimizzazione via slug ne rompeva l'accesso e le sotto-sezioni)
-        'system_console', 'sso_settings', 'perf_center', 'system_errors', 'recycle_bin', 'verify_integrity', 'cleanup_orphans',
+        'system_console', 'sso_settings', 'rbac_sync', 'perf_center', 'system_errors', 'recycle_bin', 'verify_integrity', 'cleanup_orphans',
         'migrate_links', 'diag', 'file_manager',
     ];
 
