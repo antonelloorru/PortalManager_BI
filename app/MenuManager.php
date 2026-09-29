@@ -7,11 +7,38 @@
  *  - Caricamento config personalizzata (per utente o per ruolo)
  *  - Salvataggio config con merge intelligente
  *  - Filtro voci in base a permessi RBAC
+ *
+ * v1.9.82 — audit RBAC del menu:
+ *  - userCanSee() deterministico: con righe duplicate ('pagina' e 'pagina.php') vince il DIVIETO
+ *    (prima LIMIT 1 senza ORDER BY restituiva una riga qualsiasi);
+ *  - HARD_GATES: pagine che nel codice ammettono solo ruoli fino a un certo id. La voce non si
+ *    mostra ai ruoli esclusi: prima compariva e il clic finiva su «non autorizzato»;
+ *  - voci di configurazioni salvate che non esistono nel menu di default vengono scartate.
  */
 
 class MenuManager
 {
     private PDO $pdo;
+
+    /**
+     * v1.9.82 — Gate di ruolo codificati nelle pagine (`if ($u_role > N) → unauthorized`).
+     * pagina => id di ruolo massimo ammesso. Tenere allineato alle pagine: vedi
+     * docs/TECHNICAL_DESIGN_v1_9_82.md. manage_permissions.php li mostra nella matrice.
+     */
+    public const HARD_GATES = [
+        'manage_roles' => 1, 'manage_permissions' => 1, 'entity_change_log' => 1, 'view_logs' => 1,
+        'system_console' => 1, 'system_errors' => 1,
+        'manage_technologies' => 2, 'tech_skill_matrix' => 2, 'manage_enum_proposals' => 2,
+        'mass_upload' => 2, 'mass_upload_jobs' => 2, 'mass_upload_review' => 2, 'mass_upload_partials' => 2,
+        'project_import' => 3,
+    ];
+
+    /** La pagina è esclusa dal codice per questo ruolo? */
+    public static function hardGated(string $page, int $role_id): bool
+    {
+        $k = str_ends_with($page, '.php') ? substr($page, 0, -4) : $page;
+        return isset(self::HARD_GATES[$k]) && $role_id !== 1 && $role_id > self::HARD_GATES[$k];
+    }
 
     public function __construct(PDO $pdo)
     {
@@ -405,9 +432,14 @@ class MenuManager
             $visible_items = [];
             foreach ($sec['items'] as $it) {
                 if (empty($it['visible'])) continue;
-                $base = $default_items[$it['page']] ?? [];
+                // v1.9.82 — solo voci del catalogo: una configurazione salvata non puo'
+                // introdurre pagine che il menu non prevede
+                if (!isset($default_items[$it['page'] ?? ''])) continue;
+                $base = $default_items[$it['page']];
                 $always = !empty($base['always_visible']);
-                if (!$always && !$this->userCanSee($it['page'], $role_id)) continue;
+                if (!$always && (self::hardGated($it['page'], $role_id) || !$this->userCanSee($it['page'], $role_id))) continue;
+                // etichetta e icona dal catalogo, non dalla configurazione salvata
+                $it['label'] = $base['label']; $it['icon'] = $base['icon'];
                 $visible_items[] = $it;
             }
             if (!empty($visible_items)) {
@@ -430,18 +462,31 @@ class MenuManager
      * Specifica priorità: se l'utente ha un override esplicito (anche solo 0
      * o solo 1) per la pagina, quello prevale sul valore del ruolo.
      */
-    private function userCanSee(string $page, int $role_id): bool
+    /**
+     * v1.9.82 — Regola unica di visibilita' di una voce (menu e Personalizza menu):
+     * gate codificato → override utente → permesso del ruolo; divieto in caso di righe duplicate.
+     * $user_id null = solo ruolo (configurazione di ruolo).
+     */
+    public function canSee(string $page, int $role_id, ?int $user_id = null): bool
+    {
+        if ($role_id === 1) return true;
+        if (self::hardGated($page, $role_id)) return false;
+        return $this->userCanSee($page, $role_id, $user_id ?? 0);
+    }
+
+    private function userCanSee(string $page, int $role_id, ?int $user_id = null): bool
     {
         if ($role_id === 1) return true; // super admin vede tutto
 
         $page_name = str_ends_with($page, '.php') ? $page : $page . '.php';
         $page_bare = str_ends_with($page, '.php') ? substr($page, 0, -4) : $page;
-        $user_id = (int)($_SESSION['user_id'] ?? 0);
+        $user_id = $user_id ?? (int)($_SESSION['user_id'] ?? 0);
 
         // ── Override utente specifico (priorità massima) ──
         if ($user_id > 0) {
             try {
-                $s = $this->pdo->prepare("SELECT can_view FROM user_permissions WHERE user_id=? AND (page_name=? OR page_name=?) LIMIT 1");
+                // v1.9.82 — MIN: con piu' righe (forma con e senza .php) prevale il divieto
+                $s = $this->pdo->prepare("SELECT MIN(can_view) FROM user_permissions WHERE user_id=? AND (page_name=? OR page_name=?) AND can_view IS NOT NULL");
                 $s->execute([$user_id, $page_name, $page_bare]);
                 $v = $s->fetchColumn();
                 $s->closeCursor();
@@ -456,9 +501,11 @@ class MenuManager
 
         // ── Permesso del ruolo (fallback) ──
         try {
-            $s = $this->pdo->prepare("SELECT can_view FROM role_permissions WHERE role_id=? AND (page_name=? OR page_name=?) LIMIT 1");
+            $s = $this->pdo->prepare("SELECT MIN(can_view) FROM role_permissions WHERE role_id=? AND (page_name=? OR page_name=?)");
             $s->execute([$role_id, $page_name, $page_bare]);
-            return (bool)$s->fetchColumn();
+            $v = $s->fetchColumn();
+            $s->closeCursor();
+            return $v !== false && $v !== null && (int)$v === 1;
         } catch (Throwable $e) {
             return false;
         }

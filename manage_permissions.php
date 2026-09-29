@@ -160,6 +160,18 @@ $page_map = [
         'workload_overview.php'      => ['Carico & Sovrapposizioni', 'Impegno persone per commessa, contemporaneità, sovraccarichi, contesa risorse'],
         'dgb_activities.php'         => ['Attività & Rendicontazione DGB', 'Gerarchia pianificazione/attività/incaricati DogoBit, KPI SLA e consuntivo, distribuzione carico, data quality, import batch con diff'],
         'dgb_api.php'                => ['↳ API attività DGB', 'Sub-route: endpoint JSON parametrizzato (tabella, KPI, grafici, anomalie)'],
+        // v1.9.82 — pagine presenti nel menu ma assenti dalla matrice: i permessi esistevano a DB
+        // (voce visibile) ma non si potevano vedere ne' revocare da qui
+        'pratix_orders.php'          => ['Ordinativi Pratix', 'Ordinativi, fatturazione e cliente effettivo da Pratix'],
+        'sync_commesse.php'          => ['Sincronizzazione gestionale', 'Import/sync dal DB del gestionale, pianificazione giornaliera'],
+        'tech_registry.php'          => ['Anagrafica tecnici', 'Registro tecnici IT e profili'],
+        'tech_units.php'             => ['Unità organizzative tecniche', 'Unità e sotto-unità tecniche, assegnazioni'],
+        'service_desk.php'           => ['Service Desk', 'Ticket, prese in carico, squadra, costi e OBJ_2 del Service Desk'],
+        'it_service.php'             => ['Relazione di Servizio IT', 'Operatività per incaricato, linea, settore, modalità; stampa ed export'],
+        'dir_report.php'             => ['Report direzionale', 'Portafoglio commesse, margini, rischio, schede commerciali per agente'],
+        'relazione_servizio_it.php'  => ['↳ Relazione servizio IT (legacy)', 'Pagina storica della relazione IT'],
+        'report_servizi_it.php'      => ['↳ Report servizi IT (legacy)', 'Pagina storica dei report servizi IT'],
+        'project_view.php'           => ['↳ Vista progetto', 'Sub-route: dettaglio progetto realizzato'],
     ],
     'Dispositivi & Asset' => [
         'device_manager.php'         => ['Gestione dispositivi', 'CRUD asset assegnati'],
@@ -184,6 +196,7 @@ $page_map = [
         'employee_profile.php'       => ['↳ Profilo dipendente', 'Sub-route: accesso via Anagrafica dipendenti'],
         'employee_cv.php'            => ['↳ Generazione CV', 'Sub-route: accesso via Profilo dipendente'],
         'user_profile.php'           => ['Profilo utente', 'Self-edit dati personali'],
+        'organigramma.php'           => ['Organigramma', 'Struttura organizzativa e riporti'],   // v1.9.82
     ],
     'Sync esterni' => [
         'linkedin_sync.php'          => ['Sync LinkedIn', 'Importa skill da profili LinkedIn'],
@@ -226,6 +239,7 @@ $page_map = [
         'cleanup_orphans.php'        => ['Pulizia orfani', 'Rimuovi record DB orfani'],
         'migrate_links.php'          => ['Migrazione link', 'Aggiorna link opachi'],
         'diag.php'                   => ['Diagnostica', 'Pagina di debug rapido'],
+        'system_errors.php'          => ['Errori di sistema', 'Registro errori applicativi'],   // v1.9.82
     ],
 ];
 $all_pages = [];
@@ -261,6 +275,30 @@ if ($tab === 'users' && $target_uid) {
         } catch (\Exception $e) {}
     }
 }
+
+// v1.9.82 — NESSUN PERMESSO INVISIBILE.
+// Ogni pagina con un permesso registrato per il ruolo/utente selezionato, ogni voce del menu e
+// ogni pagina servita dal router compare nella matrice: prima i permessi su pagine non elencate
+// in $page_map davano voci di menu che qui risultavano «non assegnate» e che non si potevano
+// revocare; il salvataggio, inoltre, le cancellava senza avviso.
+$pm_known = [];
+foreach ($page_map as $pgs) foreach ($pgs as $f => $i) $pm_known[$f] = true;
+$pm_skip = ['index.php', 'login.php', 'logout.php', 'unauthorized.php', 'auth_microsoft.php',
+            'password_reset.php', '2fa_verify.php', '2fa_settings.php'];   // pubbliche o sempre consentite
+$pm_extra = [];
+$pm_add = function (string $f, string $why) use (&$pm_extra, $pm_known, $pm_skip) {
+    if ($f === '' || isset($pm_known[$f]) || in_array($f, $pm_skip, true) || isset($pm_extra[$f])) return;
+    $pm_extra[$f] = [ucfirst(str_replace(['.php', '_'], ['', ' '], $f)), $why];
+};
+foreach (array_keys($current_role_perms) as $f) $pm_add((string)$f, 'Permesso registrato a DB, pagina non classificata');
+foreach (array_keys($user_role_perms) as $f)    $pm_add((string)$f, 'Override utente registrato, pagina non classificata');
+if (!class_exists('MenuManager')) @require_once __DIR__ . '/app/MenuManager.php';
+if (class_exists('MenuManager')) foreach (MenuManager::defaultMenu() as $ms) foreach ($ms['items'] as $mi) $pm_add($mi['page'] . '.php', 'Voce di menu non classificata');
+if (class_exists('Router')) foreach (Router::PAGES as $rp_) $pm_add($rp_ . '.php', 'Pagina servita dal router, non classificata');
+ksort($pm_extra);
+if ($pm_extra) $page_map['Altre pagine (non classificate)'] = $pm_extra;
+$all_pages = [];
+foreach ($page_map as $sec => $pgs) foreach ($pgs as $f => $info) $all_pages[$f] = $info;
 
 $actions_labels = ['view'=>['👁','Visualizza','#3b82f6'],'create'=>['+','Crea','#059669'],'edit'=>['✎','Modifica','#f59e0b'],'delete'=>['🗑','Elimina','#dc2626'],'export'=>['↗','Esporta','#8b5cf6']];
 ?>
@@ -317,9 +355,11 @@ $actions_labels = ['view'=>['👁','Visualizza','#3b82f6'],'create'=>['+','Crea'
 </tr>
 <?php foreach($pgs as $file => [$label,$desc]):
   $rp = $current_role_perms[$file] ?? null;
+  $gate = MenuManager::HARD_GATES[substr($file, 0, -4)] ?? null;   // v1.9.82
 ?>
 <tr class="perm-row" data-sec="<?=$sk?>">
-  <td><strong><?=h($label)?></strong><br><code style="font-size:9px;color:var(--muted)"><?=$file?></code></td>
+  <td><strong><?=h($label)?></strong><br><code style="font-size:9px;color:var(--muted)"><?=$file?></code>
+    <?php if ($gate !== null && $target_role > $gate): ?><br><span style="font-size:9px;color:#b45309;font-weight:700" title="La pagina ammette nel codice solo i ruoli con id fino a <?=$gate?>: il permesso non basta e la voce non compare nel menu">⚠ limitata dal codice ai ruoli ≤ <?=$gate?></span><?php endif; ?></td>
   <td style="font-size:11px;color:var(--muted)"><?=h($desc)?></td>
   <?php foreach(['view','create','edit','delete','export'] as $a): ?>
   <td style="text-align:center">
