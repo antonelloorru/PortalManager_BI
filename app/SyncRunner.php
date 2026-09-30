@@ -158,7 +158,21 @@ final class SyncRunner
 
             // v1.9.72: la password è in `password_enc` (cifrata). Prima si leggeva
             // $src['password'], colonna inesistente → connessione senza password (errore 1045).
-            $source = SourceDb::connect(SourceDb::configFromRow($src));
+            $srcCfg = SourceDb::configFromRow($src);
+            $source = SourceDb::connect($srcCfg);
+            // v1.9.84 — la connessione al gestionale resta inattiva mentre il portale scrive i dataset
+            // (minuti, su 400.000 righe): il server la chiude e la riconciliazione, che parte dopo
+            // l'ultimo dataset, falliva su tutti con «MySQL server has gone away». La sincronizzazione
+            // manuale non lo mostrava perche' esegue ogni dataset in una richiesta separata.
+            // Prima di ogni lettura dalla sorgente: verifica e, se serve, riconnessione.
+            $fresh = static function () use (&$source, $srcCfg, $say): void {
+                if ($source->alive()) return;
+                $say('  (connessione al gestionale scaduta: riconnessione)');
+                $source = SourceDb::connect($srcCfg);
+            };
+            $lost = static fn(Throwable $e): bool => (bool)preg_match('/gone away|Lost connection|\b2006\b|\b2013\b|server closed/i', $e->getMessage());
+            // anche la connessione del portale deve reggere l'intera esecuzione
+            try { $pdo->exec('SET SESSION wait_timeout = 28800, net_read_timeout = 600, net_write_timeout = 600'); } catch (Throwable $e) {}
             // stesse dipendenze della sincronizzazione manuale: senza di esse clienti e
             // azienda esecutrice delle commesse non venivano agganciati
             $sync = new DatasetSync($pdo, new ProjectModel($pdo), new PrefixResolver($pdo));
@@ -171,6 +185,7 @@ final class SyncRunner
             foreach (SyncDatasets::syncOrder() as $k) {
                 $lbl = SyncDatasets::get($k)['label'] ?? $k;
                 try {
+                    $fresh();
                     $rows  = $sync->readSource($source, $k, 0);
                     $batch = $dryRun ? 0 : $sync->openBatch($k, (string)$src['dbname'], 0);
                     $r     = $sync->writeRows($k, $rows, 0, $dryRun, $batch);
@@ -188,7 +203,17 @@ final class SyncRunner
             if ((int)$cfg['reconcile'] === 1) {
                 foreach (SyncDatasets::syncOrder() as $k) {
                     try {
-                        $r = $sync->reconcile($source, $k, 0, $dryRun);
+                        $fresh();
+                        try {
+                            $r = $sync->reconcile($source, $k, 0, $dryRun);
+                        } catch (Throwable $e1) {
+                            // connessione persa durante la lettura: una sola ripetizione su connessione nuova
+                            if (!$lost($e1)) throw $e1;
+                            if ($pdo->inTransaction()) { try { $pdo->rollBack(); } catch (Throwable $i) {} }
+                            $say("  (riconciliazione $k: connessione persa, nuovo tentativo)");
+                            $source = SourceDb::connect($srcCfg);
+                            $r = $sync->reconcile($source, $k, 0, $dryRun);
+                        }
                         $tot['removed'] += (int)($r['removed'] ?? 0);
                     } catch (Throwable $e) {
                         if ($pdo->inTransaction()) { try { $pdo->rollBack(); } catch (Throwable $i) {} }

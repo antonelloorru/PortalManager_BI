@@ -169,10 +169,32 @@ final class SourceDb
             elseif ($driver === 'pgsql')  $conn->exec('SET default_transaction_read_only = on');
         } catch (Throwable $e) { /* privilegio non concesso: si prosegue */ }
 
+        // v1.9.84 — sessione che non scade durante una sincronizzazione lunga: fra la lettura di un
+        // dataset e la successiva il portale scrive per minuti e la connessione resta inattiva; con il
+        // wait_timeout del server (spesso 60-600 s) la riconciliazione finale trovava «server has gone away».
+        if ($driver === 'mysql') {
+            try { $conn->exec('SET SESSION wait_timeout = 28800, net_read_timeout = 600, net_write_timeout = 600'); }
+            catch (Throwable $e) { /* variabile non modificabile: resta la riconnessione (alive) */ }
+        }
+
         return new self($conn, $driver);
     }
 
     public function driver(): string { return $this->driver; }
+
+    /**
+     * v1.9.84 — La connessione risponde? (falso se il server l'ha chiusa per inattività o se un
+     * risultato non bufferizzato è ancora aperto). Il chiamante riconnette con connect().
+     */
+    public function alive(): bool
+    {
+        try {
+            $st = $this->conn->query('SELECT 1');
+            $st->fetchColumn();
+            $st->closeCursor();
+            return true;
+        } catch (Throwable $e) { return false; }
+    }
 
     /** Versione del server, a scopo diagnostico. */
     public function serverVersion(): string
