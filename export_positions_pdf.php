@@ -12,6 +12,7 @@
  *   - f_st: status
  *   - f_br: brand_id
  *   - f_pr: priority
+ *   v1.9.86: tutti i filtri della pagina (multi-valore, vedi app/PositionFilter.php) + visibilità per ruolo
  *
  * PARAMETRO speciale:
  *   - id: stampa solo una specifica posizione (override dei filtri)
@@ -28,31 +29,18 @@ if (!can('view', 'recruiting_posizioni.php') && (int)($_SESSION['role_id'] ?? 99
 $single_id = (int)($_GET['id'] ?? 0);
 $autoprint = !empty($_GET['autoprint']);
 
-$where = [];
+require_once __DIR__ . '/app/PositionFilter.php';
 $params = [];
+// v1.9.86 — visibilità per ruolo anche sulla stampa (singola o elenco)
+$where  = PositionFilter::scope((int)($_SESSION['role_id'] ?? 99), (int)($_SESSION['user_id'] ?? 0), 'p');
+$F      = PositionFilter::parse();
 
 if ($single_id > 0) {
     $where[] = 'p.id = ?';
     $params[] = $single_id;
 } else {
-    $f_st = (string)($_GET['f_st'] ?? 'all');
-    $f_br = (int)($_GET['f_br'] ?? 0);
-    $f_pr = (string)($_GET['f_pr'] ?? '');
-
-    $valid_status = ['draft', 'open', 'paused', 'closed', 'cancelled'];
-    if (in_array($f_st, $valid_status, true)) {
-        $where[] = 'p.status = ?';
-        $params[] = $f_st;
-    }
-    if ($f_br > 0) {
-        $where[] = 'p.brand_id = ?';
-        $params[] = $f_br;
-    }
-    $valid_priority = ['Bassa', 'Media', 'Alta', 'Urgente'];
-    if (in_array($f_pr, $valid_priority, true)) {
-        $where[] = 'p.priority = ?';
-        $params[] = $f_pr;
-    }
+    // stessi filtri multi-valore della pagina «Posizioni aperte»
+    $where = array_merge($where, PositionFilter::where($F, $params, 'p'));
 }
 
 $where_sql = $where ? 'WHERE ' . implode(' AND ', $where) : '';

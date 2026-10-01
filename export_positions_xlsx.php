@@ -12,6 +12,7 @@
  *   - f_st: status (draft|open|paused|closed|cancelled|all)
  *   - f_br: brand_id (int)
  *   - f_pr: priority (Bassa|Media|Alta|Urgente)
+ *   v1.9.86: tutti i filtri della pagina (multi-valore, vedi app/PositionFilter.php) + visibilità per ruolo
  *
  * Sicurezza:
  *   - Richiede login (vedi access_control.php)
@@ -27,29 +28,14 @@ if (!can('view', 'recruiting_posizioni.php') && (int)($_SESSION['role_id'] ?? 99
 }
 
 // ─── Costruzione query con filtri (uguale a recruiting_posizioni.php) ───
-$where = [];
+require_once __DIR__ . '/app/PositionFilter.php';
+// v1.9.86 — stessi filtri multi-valore della pagina e stessa visibilità per ruolo
+$F      = PositionFilter::parse();
 $params = [];
-
-$f_st = (string)($_GET['f_st'] ?? 'all');
-$f_br = (int)($_GET['f_br'] ?? 0);
-$f_pr = (string)($_GET['f_pr'] ?? '');
-
-$valid_status = ['draft', 'open', 'paused', 'closed', 'cancelled'];
-if (in_array($f_st, $valid_status, true)) {
-    $where[] = 'p.status = ?';
-    $params[] = $f_st;
-}
-
-if ($f_br > 0) {
-    $where[] = 'p.brand_id = ?';
-    $params[] = $f_br;
-}
-
-$valid_priority = ['Bassa', 'Media', 'Alta', 'Urgente'];
-if (in_array($f_pr, $valid_priority, true)) {
-    $where[] = 'p.priority = ?';
-    $params[] = $f_pr;
-}
+$where  = array_merge(
+    PositionFilter::scope((int)($_SESSION['role_id'] ?? 99), (int)($_SESSION['user_id'] ?? 0), 'p'),
+    PositionFilter::where($F, $params, 'p')
+);
 
 $where_sql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
 
@@ -193,10 +179,8 @@ foreach ($positions as $p) {
 }
 
 // ─── Download ─────────────────────────────────────────────────────
-$filter_label = '';
-if ($f_st !== 'all' && in_array($f_st, $valid_status, true)) $filter_label .= '_' . $f_st;
-if ($f_br > 0) $filter_label .= '_brand' . $f_br;
-if (in_array($f_pr, $valid_priority, true)) $filter_label .= '_' . $f_pr;
+$filter_label = $F['f_st'] ? '_' . implode('-', $F['f_st']) : '';
+if (PositionFilter::activeCount($F) > count(array_filter([$F['f_st']]))) $filter_label .= '_filtrato';
 
 $filename = 'posizioni' . $filter_label . '_' . date('Ymd_Hi') . '.xlsx';
 
@@ -204,7 +188,7 @@ if (function_exists('write_log')) {
     write_log('Recruiting', 'info',
         'Export XLSX posizioni: ' . count($positions) . ' record',
         $_SESSION['user_id'] ?? null,
-        ['filters' => compact('f_st', 'f_br', 'f_pr')]);
+        ['filters' => $F]);
 }
 
 $writer->download($filename);
