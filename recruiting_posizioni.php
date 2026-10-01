@@ -7,6 +7,7 @@ require_once('access_control.php');
 require_once('functions.php');
 require_once __DIR__ . '/app/PositionHistory.php';
 require_once __DIR__ . '/app/TemplateVersioning.php';
+require_once __DIR__ . '/app/LinkedInApplicantImporter.php';
 
 $u_id        = (int)$_SESSION['user_id'];
 $u_role      = (int)($_SESSION['role_id'] ?? 99);
@@ -128,7 +129,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $can_edit) {
             $benefits,
             $positions_expected,
             $mv,
-            !empty($_POST['linkedin_code']) ? trim((string)$_POST['linkedin_code']) : null,
+            // v1.9.85 — forma canonica (solo cifre): stesso formato usato dall'import candidati LinkedIn
+            !empty($_POST['linkedin_code']) ? LinkedInApplicantImporter::normalizeJobCode((string)$_POST['linkedin_code']) : null,
         ];
         try {
             if ($pos_id > 0) {

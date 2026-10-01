@@ -158,7 +158,9 @@ final class XlsxReader
                     if ($xml->nodeType !== \XMLReader::ELEMENT) continue;
                     if ($xml->name === 'v') {
                         $raw = $xml->readString();
-                        $val = ($type === 's') ? ($shared[(int)$raw] ?? '') : $raw;
+                        if ($type === 's')                    $val = $shared[(int)$raw] ?? '';
+                        elseif ($type === '' || $type === 'n') $val = self::plainNumber($raw);
+                        else                                   $val = $raw;
                     } elseif ($xml->name === 'is') {
                         $val = self::plainText($xml->readInnerXml());
                     }
@@ -168,6 +170,25 @@ final class XlsxReader
             if ($val !== '') $cells[$col] = $val;
         }
         return $cells;
+    }
+
+    /**
+     * v1.9.85 — Numero in notazione scientifica con valore intero → cifre esatte.
+     * Alcuni generatori (es. export LinkedIn) scrivono gli ID come `<v>4.412730757E9</v>`:
+     * letti come stringa davano «4.412730757E9» invece di «4412730757» e i codici non
+     * corrispondevano più. Conversione su stringa (nessun float: nessuna perdita di cifre).
+     * Valori non interi o non scientifici restano invariati.
+     */
+    public static function plainNumber(string $raw): string
+    {
+        $t = trim($raw);
+        if (!preg_match('/^([+-]?)(\d+)(?:\.(\d*))?[eE]\+?(\d+)$/', $t, $m)) return $raw;
+        [$all, $sign, $int, $frac, $exp] = $m + [4 => '0'];
+        $exp  = (int)$exp;
+        $frac = rtrim((string)$frac, '0');
+        if (strlen($frac) > $exp || $exp > 30) return $raw;          // non intero o fuori scala
+        $digits = ltrim($int . $frac . str_repeat('0', $exp - strlen($frac)), '0');
+        return $digits === '' ? '0' : $sign . $digits;
     }
 
     /** sharedStrings.xml letto a flusso. @return array<int,string> */
