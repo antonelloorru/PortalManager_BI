@@ -2,6 +2,8 @@
 /**
  * ItServiceModel — letture per la Relazione di Servizio IT.
  *
+ * v1.9.90 — Riepilogo per Codice Contratto e Dettaglio per commessa sul perimetro unico (moduli di
+ *           intervento filtrati dal pannello principale), non piu' su una selezione DGB propria.
  * v1.9.89 — ore per classe (ordinarie / fuori orario / reperibilità / non classificate) uguali in ogni
  *           tabella: dettaglio aggregato, giorni per persona, andamento. Rapportino agganciato per id
  *           (non per codice modulo). Dettaglio delle ore non valorizzate con il motivo.
@@ -232,14 +234,6 @@ final class ItServiceModel
         foreach (['linee','codici','settori','aziende','incaricati','modalita','fasce','durate','sedi','contratti','stati'] as $k)
             if (!empty($f[$k])) return true;
         return ($f['ricavo'] ?? '') !== '' || ($f['q'] ?? '') !== '' || ($f['cliente'] ?? '') !== '';
-    }
-
-    /** Filtri su dimensioni esistenti solo nella vista dei rapportini (non nelle tabelle DGB). */
-    private static function haFiltriServizio(array $f): bool
-    {
-        foreach (['linee','codici','settori','aziende','modalita','fasce','durate','sedi'] as $k)
-            if (!empty($f[$k])) return true;
-        return ($f['ricavo'] ?? '') !== '' || ($f['q'] ?? '') !== '';
     }
 
     private array $perim = [];
@@ -897,31 +891,58 @@ final class ItServiceModel
 
 
         
-    /* [PM_V1_9_36_APPLIED] Espressione data effettiva e filtri condivisi */
-    private function rsiWhere(array $f, array &$b): string {
-        $DT = self::DGB_DATA;
-        $w = ['COALESCE(a.deleted,0) <> 1'];
-        if (!empty($f['from']) && !empty($f['to'])) { $w[] = "$DT BETWEEN ? AND ?"; $b[]=$f['from']; $b[]=$f['to']; }
-        if (!empty($f['incaricati']) && is_array($f['incaricati'])) {
-            $ph = implode(',', array_fill(0, count($f['incaricati']), '?'));
-            $w[] = "(TRIM(CONCAT_WS(' ', op.first_name, op.second_name)) IN ($ph)
-                   OR TRIM(CONCAT_WS(' ', op.second_name, op.first_name)) IN ($ph))";
-            foreach ($f['incaricati'] as $v) $b[]=$v;
-            foreach ($f['incaricati'] as $v) $b[]=$v;
-        }
-        if (!empty($f['cliente'])) { $w[] = "cli.name LIKE ?"; $b[]='%'.$f['cliente'].'%'; }
-        if ($c = $this->ctrCondDgb('a.id_contract', $f, $b)) $w[] = $c;   // v1.9.77
-        // v1.9.87 — stato commessa: PM Project collegato al contratto DGB
-        if ($c = self::statoCond('pst.`dgb_contract_id` = a.id_contract', $f)) $w[] = $c;
-        // v1.9.87 — dimensioni che esistono solo sui rapportini (linea, settore, azienda,
-        // modalità, fascia, durata, sede, natura, ricerca): attività il cui rapportino rientra
-        // nel perimetro unico. Senza questi filtri il riepilogo DGB li ignorava.
-        if (self::haFiltriServizio($f)) {
-            $w[] = "a.id IN (SELECT irp.`dgb_activity_id` FROM `cm_intervention_reports` irp
-                              WHERE irp.`dgb_activity_id` IS NOT NULL
-                                AND irp.`id` IN (" . $this->perimetro($f, false, $b) . "))";
-        }
-        return 'WHERE ' . implode(' AND ', $w);
+    /**
+     * v1.9.90 — Sorgente unica delle sezioni «Riepilogo per Codice Contratto» e «Dettaglio per commessa».
+     *
+     * Prima (rsiWhere) le due sezioni leggevano le attività DGB con una propria selezione — data
+     * dell'attività, incaricato per nome dell'operatore DGB, cliente dall'anagrafica DGB — e quindi non
+     * recepivano gli stessi parametri del pannello: a settembre 2026 9.505 h su 197 contratti contro
+     * 7.891,5 h su 189 commesse dei KPI; il filtro «Cliente» le azzerava; l'incaricato contava anche
+     * attività di altri tecnici.
+     *
+     * Ora la riga è il MODULO DI INTERVENTO del perimetro unico (perimetro(): stessi filtri di KPI,
+     * grafici, tabelle, costi e giorni), agganciato alla sua allocazione DGB (dgb_source_id =
+     * dgb_forms_activity_operator.id) e all'attività/contratto. Ore e data sono quelle del modulo.
+     * Le attività DGB senza modulo di intervento non entrano (contate a parte da attivitaSenzaModulo()).
+     */
+    private function rsiFrom(array $f, array &$b): string
+    {
+        $perim = $this->perimetro($f, true, $b);
+        return "
+          FROM `cm_intervention_reports` ir
+          JOIN dgb_forms_activity a ON a.id = ir.`dgb_activity_id`
+          LEFT JOIN dgb_forms_activity_operator ao ON ao.id = ir.`dgb_source_id`
+          LEFT JOIN dgb_operator op ON op.id = COALESCE(ao.id_operator, a.id_operator)
+          LEFT JOIN dgb_forms_contract c ON c.id = a.id_contract
+          LEFT JOIN clients cli ON cli.id = COALESCE(c.id_customer_comp, a.id_customer_comp)
+          LEFT JOIN (SELECT dgb_contract_id, MIN(project_code) AS project_code
+                       FROM cm_projects GROUP BY dgb_contract_id) p
+                 ON p.dgb_contract_id = a.id_contract
+          LEFT JOIN cm_rate_bands rbb ON rbb.band_name = COALESCE(op.type,'Default')
+          LEFT JOIN cm_rate_band_rates rb_ord ON rb_ord.band_id=rbb.id AND rb_ord.cost_type='Aziendale' AND rb_ord.regime='Ordinario'
+          LEFT JOIN cm_rate_band_rates rb_rep ON rb_rep.band_id=rbb.id AND rb_rep.cost_type='Aziendale' AND rb_rep.regime='Reperibilità'
+          WHERE ir.`id` IN ($perim) AND COALESCE(a.deleted,0) <> 1";
+    }
+
+    /** Espressioni comuni (riga = modulo di intervento). */
+    private const RSI_ORE   = "ROUND(COALESCE(ir.`quantity_hours`, 0), 2)";
+    private const RSI_REP   = "(COALESCE(ao.during_availability,0) = 1 OR COALESCE(ir.`on_call`,0) = 1)";
+    private const RSI_EXTRA = "LEAST(COALESCE(ao.extra_hours, ir.`extra_hours`, 0), COALESCE(ir.`quantity_hours`, 0))";
+    private const RSI_COST  = "COALESCE(ao.cost, a.human_resource_cost, a.total_cost, 0)";
+
+    /** v1.9.90 — attività DGB del periodo senza modulo di intervento (fuori dalle due sezioni). */
+    public function attivitaSenzaModulo(array $f): array
+    {
+        try {
+            $st = $this->pdo->prepare(
+                "SELECT COUNT(*) AS attivita, ROUND(SUM(COALESCE(ao.hours, a.human_resource_hours, 0)), 2) AS ore
+                   FROM dgb_forms_activity a
+                   LEFT JOIN dgb_forms_activity_operator ao ON ao.id_activity = a.id AND ao.id_operator = a.id_operator
+                  WHERE COALESCE(a.deleted,0) <> 1 AND " . self::DGB_DATA . " BETWEEN ? AND ?
+                    AND NOT EXISTS (SELECT 1 FROM `cm_intervention_reports` x WHERE x.`dgb_activity_id` = a.id)");
+            $st->execute([$f['from'], $f['to']]);
+            return $st->fetch(PDO::FETCH_ASSOC) ?: ['attivita' => 0, 'ore' => 0];
+        } catch (Throwable $e) { return ['attivita' => 0, 'ore' => 0]; }
     }
 
     /* [PM_V1_9_36_APPLIED] Dettaglio per Commessa (sorgente dgb_forms_activity diretta) */
@@ -959,61 +980,39 @@ final class ItServiceModel
         catch (Throwable $e) { return []; }
     }
 
-    /** Query del dettaglio per commessa, senza ORDER BY (riusata da dettaglio e sintesi). */
+    /** Query del dettaglio per commessa, senza ORDER BY (riusata da dettaglio e sintesi). v1.9.90: perimetro unico. */
     private function dettaglioSql(array $f, array &$b, ?int $contractId): string
     {
-        $DT = self::DGB_DATA;
-        $where = $this->rsiWhere($f, $b);
-        if ($contractId !== null) {
-            $where .= (stripos($where, 'WHERE') === false ? ' WHERE ' : ' AND ') . 'a.id_contract = ?';
-            $b[] = $contractId;
-        }
-        $ORE  = "COALESCE(ao.hours, a.human_resource_hours, 0)";
-        $COST = "COALESCE(ao.cost, a.human_resource_cost, a.total_cost, 0)";
-        $sql = "
+        $from = $this->rsiFrom($f, $b);
+        if ($contractId !== null) { $from .= ' AND a.id_contract = ?'; $b[] = $contractId; }
+        $ORE = self::RSI_ORE; $REP = self::RSI_REP; $EXT = self::RSI_EXTRA; $COST = self::RSI_COST;
+        return "
           SELECT a.id_contract AS contract_id,
                  COALESCE(NULLIF(c.code,''), p.project_code, CONCAT('Contratto #', a.id_contract)) AS contract_code,
                  c.code_x_installation,
                  cli.name AS customer_name, c.description AS contract_description,
                  p.project_code AS pm_project_code,
-                 DATE_FORMAT($DT, '%d/%m/%Y') AS report_date, $DT AS report_iso,
+                 DATE_FORMAT(ir.`report_date`, '%d/%m/%Y') AS report_date, ir.`report_date` AS report_iso,
                  a.id AS activity_id,
                  a.ticket,
-                 TRIM(CONCAT_WS(' ', op.second_name, op.first_name)) AS operator_name,
+                 COALESCE(NULLIF(TRIM(CONCAT_WS(' ', op.second_name, op.first_name)), ''), ir.`technician_raw`) AS operator_name,
                  COALESCE(rbb.band_name, op.type, 'Default') AS fascia,
-                 CASE WHEN COALESCE(ao.during_availability,0)=1 THEN 'Reperibilità'
-                      WHEN COALESCE(ao.extra_hours,0) >= $ORE AND $ORE > 0 THEN 'Straordinario'
-                      WHEN COALESCE(ao.extra_hours,0) > 0
-                           THEN CONCAT('Ordinario + straordinario (', REPLACE(FORMAT(ao.extra_hours,1),'.',','), ' h)')
+                 CASE WHEN $REP THEN 'Reperibilità'
+                      WHEN $EXT >= $ORE AND $ORE > 0 THEN 'Straordinario'
+                      WHEN $EXT > 0 THEN CONCAT('Ordinario + straordinario (', REPLACE(FORMAT($EXT,1),'.',','), ' h)')
                       ELSE 'Ordinario' END AS regime,
-                 ROUND($ORE,2) AS ore,
+                 $ORE AS ore,
                  ROUND($COST,2) AS costo_contratto,
-                 ROUND(CASE WHEN COALESCE(ao.during_availability,0)=1
-                            THEN COALESCE(rb_rep.rate_hour, op.hourly_cost, 0)*$ORE
+                 ROUND(CASE WHEN $REP THEN COALESCE(rb_rep.rate_hour, op.hourly_cost, 0)*$ORE
                             ELSE COALESCE(rb_ord.rate_hour, op.hourly_cost, 0)*$ORE END, 2) AS tot_costo_tab
-          FROM dgb_forms_activity a
-          LEFT JOIN dgb_operator op ON op.id = a.id_operator
-          LEFT JOIN dgb_forms_contract c ON c.id = a.id_contract
-          LEFT JOIN dgb_forms_activity_operator ao ON ao.id_activity = a.id AND ao.id_operator = a.id_operator
-          LEFT JOIN clients cli ON cli.id = COALESCE(c.id_customer_comp, a.id_customer_comp)
-          LEFT JOIN (SELECT dgb_contract_id, MIN(project_code) AS project_code
-                       FROM cm_projects GROUP BY dgb_contract_id) p
-                 ON p.dgb_contract_id = a.id_contract
-          LEFT JOIN cm_rate_bands rbb ON rbb.band_name = COALESCE(op.type,'Default')
-          LEFT JOIN cm_rate_band_rates rb_ord ON rb_ord.band_id=rbb.id AND rb_ord.cost_type='Aziendale' AND rb_ord.regime='Ordinario'
-          LEFT JOIN cm_rate_band_rates rb_rep ON rb_rep.band_id=rbb.id AND rb_rep.cost_type='Aziendale' AND rb_rep.regime='Reperibilità'
-          $where
-        ";
-        return $sql;
+          $from";
     }
 
-    /* [PM_V1_9_36_APPLIED] Riepilogo aggregato per Codice Contratto */
+    /* [PM_V1_9_36_APPLIED] Riepilogo aggregato per Codice Contratto — v1.9.90: perimetro unico */
     public function riepilogoContratto(array $f): array
     {
-        $DT = self::DGB_DATA;
-        $b = []; $where = $this->rsiWhere($f, $b);
-        $ORE  = "COALESCE(ao.hours, a.human_resource_hours, 0)";
-        $COST = "COALESCE(ao.cost, a.human_resource_cost, a.total_cost, 0)";
+        $b = []; $from = $this->rsiFrom($f, $b);
+        $ORE = self::RSI_ORE; $REP = self::RSI_REP; $EXT = self::RSI_EXTRA; $COST = self::RSI_COST;
         $sql = "
           SELECT a.id_contract AS contract_id,
                  COALESCE(
@@ -1023,30 +1022,16 @@ final class ItServiceModel
                    CONCAT('Contratto #', a.id_contract)
                  ) AS codice_contratto,
                  MAX(p.project_code) AS pm_project_code,
-                 ROUND(SUM(CASE WHEN COALESCE(ao.during_availability,0)=0
-                                THEN GREATEST(0, $ORE - COALESCE(ao.extra_hours,0)) ELSE 0 END),2) AS ore_ordinarie,
-                 -- v1.9.87: straordinario solo fuori reperibilità e non oltre le ore della riga
-                 -- (prima le ore extra in reperibilità erano contate sia qui sia in ore_reperibilita)
-                 ROUND(SUM(CASE WHEN COALESCE(ao.during_availability,0)=0
-                                THEN LEAST(COALESCE(ao.extra_hours,0), $ORE) ELSE 0 END),2) AS ore_straordinario,
-                 ROUND(SUM(CASE WHEN COALESCE(ao.during_availability,0)=1 THEN $ORE ELSE 0 END),2) AS ore_reperibilita,
-                 COUNT(DISTINCT CONCAT($DT,'#',a.id_operator)) AS giorni_uomo,
+                 ROUND(SUM(CASE WHEN $REP THEN 0 ELSE $ORE - $EXT END),2) AS ore_ordinarie,
+                 ROUND(SUM(CASE WHEN $REP THEN 0 ELSE $EXT END),2) AS ore_straordinario,
+                 ROUND(SUM(CASE WHEN $REP THEN $ORE ELSE 0 END),2) AS ore_reperibilita,
+                 ROUND(SUM($ORE),2) AS ore,
+                 COUNT(*) AS moduli,
+                 COUNT(DISTINCT CONCAT(ir.`report_date`,'#',ir.`technician_raw`)) AS giorni_uomo,
                  ROUND(SUM($COST),2) AS costo_contratto,
-                 ROUND(SUM(CASE WHEN COALESCE(ao.during_availability,0)=1
-                                THEN COALESCE(rb_rep.rate_hour, op.hourly_cost,0)*$ORE
+                 ROUND(SUM(CASE WHEN $REP THEN COALESCE(rb_rep.rate_hour, op.hourly_cost,0)*$ORE
                                 ELSE COALESCE(rb_ord.rate_hour, op.hourly_cost,0)*$ORE END),2) AS tot_costo_tab
-          FROM dgb_forms_activity a
-          LEFT JOIN dgb_operator op ON op.id = a.id_operator
-          LEFT JOIN dgb_forms_contract c ON c.id = a.id_contract
-          LEFT JOIN dgb_forms_activity_operator ao ON ao.id_activity = a.id AND ao.id_operator = a.id_operator
-          LEFT JOIN clients cli ON cli.id = COALESCE(c.id_customer_comp, a.id_customer_comp)
-          LEFT JOIN (SELECT dgb_contract_id, MIN(project_code) AS project_code
-                       FROM cm_projects GROUP BY dgb_contract_id) p
-                 ON p.dgb_contract_id = a.id_contract
-          LEFT JOIN cm_rate_bands rbb ON rbb.band_name = COALESCE(op.type,'Default')
-          LEFT JOIN cm_rate_band_rates rb_ord ON rb_ord.band_id=rbb.id AND rb_ord.cost_type='Aziendale' AND rb_ord.regime='Ordinario'
-          LEFT JOIN cm_rate_band_rates rb_rep ON rb_rep.band_id=rbb.id AND rb_rep.cost_type='Aziendale' AND rb_rep.regime='Reperibilità'
-          $where
+          $from
           GROUP BY a.id_contract
           ORDER BY SUM($ORE) DESC
         ";

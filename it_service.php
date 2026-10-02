@@ -87,6 +87,9 @@ try {
     $dettSintesi  = ($dettFull || ($_GET['print'] ?? '') === '1') ? [] : $it->dettaglioCommessaSintesi($f);
     // [PM_V1_9_35_APPLIED]
     $riepContratto = $it->riepilogoContratto($f);
+    // v1.9.90 — filtri applicati e attività DGB fuori perimetro, per le sezioni per contratto
+    $filtriTxt = $it->descrizioneFiltri($f, $vCtr);
+    $nSm       = $it->attivitaSenzaModulo($f);
 } catch (Throwable $e) {
     $pronto = false; $errore = $e->getMessage();
     $trendG = ['from' => '', 'to' => '', 'rows' => []];
@@ -99,7 +102,7 @@ try {
     // normale le variabili restano indefinite. Il template le usa comunque, e
     // PHP produce un avviso su ogni riferimento.
     $cQ2 = $gQ = []; $cRie2 = $gOp = $gAr = $gDim = $gCls = $gNv = [];
-    $dettCommessa = []; $riepContratto = [];
+    $dettCommessa = []; $riepContratto = []; $filtriTxt = []; $nSm = ['attivita' => 0, 'ore' => 0];
     $vLin = $vSet = $vInc = $vSed = $vCod = $vAz = []; $gCod = $gAz = []; $vCtr = [];
 }
 
@@ -425,14 +428,15 @@ if ($pronto && ($_GET['export'] ?? '') === 'docx') {
     $doc->download("relazione_servizio_it_{$f['from']}_{$f['to']}.docx");
 }
 
+// v1.9.90 — un solo blocco filtri: il pannello principale (server-side, $f).
+// Il filtro automatico di footer.php (ListFilter::renderAuto) agganciava una seconda barra
+// client-side (ricerca, filtri per colonna, viste, export) alla tabella con più righe — il
+// «Riepilogo per Codice Contratto» o il «Dettaglio» — che filtrava solo le righe a video, non
+// aggiornava totali, sezioni collegate, stampa ed export e non era sincronizzata col pannello.
+$GLOBALS['PM_NO_AUTOFILTER'] = true;
 require_once('header.php');
-// [PM_V1_9_34_APPLIED] pm-ui-boost
-if (!isset($GLOBALS['__pm_boost_v1934'])) {
-    $GLOBALS['__pm_boost_v1934'] = true;
-    echo '<link rel="stylesheet" href="assets/css/pm-ui-boost.css">' . "\n";
-    echo '<script src="assets/js/pm-ui-boost.js" defer></script>' . "\n";
-    echo '<meta name="pm-ui-boost" content=\'form select[multiple], form select[name="ricavo"]\'>' . "\n";
-}
+// v1.9.90 — rimosso pm-ui-boost (patch v1.9.34): secondo motore di multi-select sulle stesse
+// select già gestite da pm-multiselect (header.php), con stato non condiviso.
 
 
 $qs = function (array $over = []) use ($f, $inc, $INC_ALL) {
@@ -1128,16 +1132,24 @@ if (!empty($trendG['rows'])):
   .r35-tbl tfoot td { font-weight:600; background:#f0f2f7; }
   .r35-empty { color:#92400e; background:#fffbeb; border:1px solid #fde68a; padding:10px 12px; border-radius:6px; font-size:13px; }
 </style>
-<h2 class="r35-h2">Riepilogo per Codice Contratto <span class="r35-badge">v1.9.35</span></h2>
+<?php
+  // v1.9.90 — le due sezioni DGB leggono lo stesso payload del pannello principale ($f): lo dichiarano
+  $filtriBox = '<div style="font-size:11px;color:var(--muted);margin:0 0 8px">'
+             . '<i class="fa-solid fa-filter"></i> Periodo ' . h(date('d/m/Y', strtotime($f['from']))) . ' – ' . h(date('d/m/Y', strtotime($f['to'])))
+             . ($filtriTxt ? ' · ' . h(implode(' · ', $filtriTxt)) : ' · nessun altro filtro')
+             . ' <span style="color:#94a3b8">(filtri del pannello in alto)</span></div>';
+?>
+<h2 class="r35-h2">Riepilogo per Codice Contratto</h2>
+<?= $filtriBox ?>
 <?php if (empty($riepContratto)): ?>
   <div class="r35-empty">Nessun dato per il periodo
     <b><?= h($f['from'] ?? '—') ?></b> – <b><?= h($f['to'] ?? '—') ?></b>.
     Allarga il filtro periodo o verifica la sincronizzazione DGB.</div>
 <?php else: ?>
-  <table class="r35-tbl">
+  <table class="r35-tbl" data-pm-nofilter>
     <thead><tr>
       <th>Codice contratto</th><th>PM Project</th>
-      <th>Ore ord.</th><th>Ore str.</th><th>Ore rep.</th>
+      <th>Ore totali</th><th>Ore ord.</th><th>Ore str.</th><th>Ore rep.</th>
       <th>Giorni-uomo</th><th>Costo contratto (€)</th><th>TotCostoTab (€)</th>
     </tr></thead>
     <tbody>
@@ -1145,6 +1157,7 @@ if (!empty($trendG['rows'])):
       <tr>
         <td><?= h($r['codice_contratto']) ?></td>
         <td><?= h((string)($r['pm_project_code'] ?? '')) ?></td>
+        <td style="font-weight:600"><?= number_format((float)$r['ore'],2,',','.') ?></td>
         <td><?= number_format((float)$r['ore_ordinarie'],2,',','.') ?></td>
         <td><?= number_format((float)$r['ore_straordinario'],2,',','.') ?></td>
         <td><?= number_format((float)$r['ore_reperibilita'],2,',','.') ?></td>
@@ -1152,14 +1165,24 @@ if (!empty($trendG['rows'])):
         <td><?= number_format((float)$r['costo_contratto'],2,',','.') ?></td>
         <td><?= number_format((float)$r['tot_costo_tab'],2,',','.') ?></td>
       </tr>
-    <?php $sO+=(float)$r['ore_ordinarie'];$sS+=(float)$r['ore_straordinario'];$sR+=(float)$r['ore_reperibilita'];$sG+=(int)$r['giorni_uomo'];$sC+=(float)$r['costo_contratto'];$sT+=(float)$r['tot_costo_tab']; endforeach; ?>
+    <?php $sTot=($sTot??0)+(float)$r['ore']; $sO+=(float)$r['ore_ordinarie'];$sS+=(float)$r['ore_straordinario'];$sR+=(float)$r['ore_reperibilita'];$sG+=(int)$r['giorni_uomo'];$sC+=(float)$r['costo_contratto'];$sT+=(float)$r['tot_costo_tab']; endforeach; ?>
     </tbody>
     <tfoot><tr><td colspan="2">Totali</td>
+      <td><?= number_format($sTot ?? 0,2,',','.') ?></td>
       <td><?= number_format($sO,2,',','.') ?></td><td><?= number_format($sS,2,',','.') ?></td>
       <td><?= number_format($sR,2,',','.') ?></td><td><?= number_format($sG,0,',','.') ?></td>
       <td><?= number_format($sC,2,',','.') ?></td><td><?= number_format($sT,2,',','.') ?></td>
     </tr></tfoot>
   </table>
+  <?php // v1.9.90 — quadratura con i KPI e attività DGB fuori perimetro
+    $dOre = round((float)($tot['ore'] ?? 0) - (float)($sTot ?? 0), 2); ?>
+  <p style="font-size:11px;color:var(--muted);margin:-12px 0 16px">
+    Righe = moduli di intervento del pannello (stessi filtri di KPI, grafici, costi e giorni) collegati al contratto DGB:
+    ore totali <?= number_format((float)($sTot ?? 0),2,',','.') ?> su <?= number_format((float)($tot['ore'] ?? 0),2,',','.') ?> dei KPI<?= $dOre > 0 ? ' (differenza: moduli con attività DGB annullata o assente)' : '' ?>.
+    <?php if ((int)$nSm['attivita'] > 0): ?>
+      Fuori da queste sezioni (in tutto il periodo, a prescindere dagli altri filtri): <?= number_format((float)$nSm['attivita'],0,',','.') ?> attività DGB senza modulo di intervento
+      (<?= number_format((float)$nSm['ore'],1,',','.') ?> h): non sono sincronizzate come rapportini.
+    <?php endif; ?></p>
 <?php endif; ?>
 
 <?php // [PM_V1_9_34_APPLIED] Sezione Dettaglio per Commessa — v1.9.73: righe caricate su richiesta ?>
@@ -1183,6 +1206,7 @@ if (!empty($trendG['rows'])):
 </style>
 <h2 class="rsi34-h2">Dettaglio per Commessa
   <span class="rsi34-badge"><?= count($dettSintesi) ?> contratti · <?= number_format($pmNr, 0, ',', '.') ?> righe</span></h2>
+<?= $filtriBox ?? '' ?>
 <p style="color:var(--muted);font-size:12px;margin:0 0 8px">
   Apri un contratto per vederne le righe: vengono caricate solo quando servono.
   Stampa ed export Word includono il dettaglio completo.</p>
