@@ -69,7 +69,7 @@ $linkSp = fn(array $r): string => !empty($r['external_link'])
     ? '<a href="' . htmlspecialchars((string)$r['external_link'], ENT_QUOTES, 'UTF-8') . '" target="_blank" rel="noopener" title="Apri sul gestionale (SharePoint)" style="white-space:nowrap;font-size:10px;font-weight:700"><i class="fa-solid fa-arrow-up-right-from-square"></i> SP</a>'
     : '<span style="color:#cbd5e1">—</span>';
 $schedaPrj = fn(array $r): string => !empty($r['project_id'])
-    ? '<a class="btn btn-sm btn-blue" style="white-space:nowrap;font-size:10px;padding:2px 7px" href="' . htmlspecialchars(url_safe('project_dashboard', ['id' => (int)$r['project_id']]), ENT_QUOTES, 'UTF-8') . '" title="Apri la scheda del progetto"><i class="fa-solid fa-chart-line"></i> Scheda Progetto</a>'
+    ? '<a class="btn btn-sm btn-blue" style="white-space:nowrap;font-size:10px;padding:2px 7px" href="' . url_safe('project_dashboard', ['id' => (int)$r['project_id']]) . '" title="Apri la scheda del progetto"><i class="fa-solid fa-chart-line"></i> Scheda Progetto</a>'
     : '<span style="color:#cbd5e1">—</span>';
 $periodoTxt = ($f['from'] !== '' || $f['to'] !== '')
     ? 'dal ' . ($f['from'] !== '' ? date('d/m/Y', strtotime($f['from'])) : 'inizio') . ' al ' . ($f['to'] !== '' ? date('d/m/Y', strtotime($f['to'])) : 'fine')

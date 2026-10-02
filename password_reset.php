@@ -145,26 +145,26 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:linear-gradient(135d
 
 <?php if ($step === 'disabled'): ?>
     <div class="info">La reimpostazione della password in autonomia non è attiva. Contatta l'amministratore del portale.</div>
-    <a class="btn" href="<?= h(url_safe('login')) ?>">Torna all'accesso</a>
+    <a class="btn" href="<?= url_safe('login') ?>">Torna all'accesso</a>
 
 <?php elseif ($step === 'sent'): ?>
     <div class="ok">Se l'indirizzo corrisponde a un account attivo, riceverai a breve un'email con il link per scegliere
       una nuova password. Il link è valido <strong><?= (int)$ttl ?> minuti</strong> e si può usare una sola volta.</div>
     <p style="font-size:13px;color:#64748b;margin-bottom:18px">Non la trovi? Controlla anche la cartella spam. Puoi ripetere la richiesta tra qualche minuto.</p>
-    <a class="btn" href="<?= h(url_safe('login')) ?>">Torna all'accesso</a>
+    <a class="btn" href="<?= url_safe('login') ?>">Torna all'accesso</a>
 
 <?php elseif ($step === 'invalid'): ?>
     <div class="err">Il link non è valido, è già stato usato oppure è scaduto.</div>
-    <a class="btn" href="<?= h(url_safe('password_reset')) ?>">Richiedi un nuovo link</a>
-    <a class="lnk" href="<?= h(url_safe('login')) ?>">Torna all'accesso</a>
+    <a class="btn" href="<?= url_safe('password_reset') ?>">Richiedi un nuovo link</a>
+    <a class="lnk" href="<?= url_safe('login') ?>">Torna all'accesso</a>
 
 <?php elseif ($step === 'done'): ?>
     <div class="ok">Password aggiornata. Le altre sessioni aperte sono state chiuse e ti abbiamo inviato un'email di conferma.</div>
-    <a class="btn" href="<?= h(url_safe('login', ['r' => 'pwreset'])) ?>">Accedi con la nuova password</a>
+    <a class="btn" href="login.php?r=pwreset">Accedi con la nuova password</a>
 
 <?php elseif ($step === 'new'): ?>
     <?php if ($errors): ?><div class="err"><?= implode('<br>', array_map('h', $errors)) ?></div><?php endif; ?>
-    <form method="POST" action="<?= h(url_safe('password_reset', ['step' => 'new'])) ?>" autocomplete="off" novalidate>
+    <form method="POST" action="<?= url_safe('password_reset', ['step' => 'new']) ?>" autocomplete="off" novalidate>
       <?= csrf_field() ?>
       <div class="fg">
         <label for="np">Nuova password</label>
@@ -182,7 +182,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:linear-gradient(135d
       </div>
       <button type="submit" class="btn">Salva la nuova password</button>
     </form>
-    <a class="lnk" href="<?= h(url_safe('login')) ?>">Annulla</a>
+    <a class="lnk" href="<?= url_safe('login') ?>">Annulla</a>
     <script>
     (function () {
       var np = document.getElementById('np'), cp = document.getElementById('cp'), m = document.getElementById('pm-meter');
@@ -203,7 +203,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:linear-gradient(135d
     <?php if ($error): ?><div class="err"><?= h($error) ?></div><?php endif; ?>
     <p style="font-size:13px;color:#475569;margin-bottom:18px;line-height:1.6">Inserisci l'email con cui accedi al portale:
       ti invieremo un link per scegliere una nuova password.</p>
-    <form method="POST" action="<?= h(url_safe('password_reset')) ?>" novalidate autocomplete="off">
+    <form method="POST" action="<?= url_safe('password_reset') ?>" novalidate autocomplete="off">
       <?= csrf_field() ?>
       <div class="fg">
         <label for="em">Email</label>
@@ -211,7 +211,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:linear-gradient(135d
       </div>
       <button type="submit" class="btn">Invia il link</button>
     </form>
-    <a class="lnk" href="<?= h(url_safe('login')) ?>">Torna all'accesso</a>
+    <a class="lnk" href="<?= url_safe('login') ?>">Torna all'accesso</a>
 <?php endif; ?>
   </div>
 </div>
