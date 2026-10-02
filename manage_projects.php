@@ -229,6 +229,10 @@ $msg = ''; $reopen_new = false;
 if (!empty($_SESSION['flash_msg']))  { $msg = $_SESSION['flash_msg']; unset($_SESSION['flash_msg']); }
 if (!empty($_SESSION['reopen_new'])) { $reopen_new = true; unset($_SESSION['reopen_new']); }
 
+// v1.9.93 — un solo blocco filtri: il pannello «Filtri di ricerca» (server-side, ogni colonna filtrabile,
+// rispettato da XLSX/CSV). Niente barra automatica di footer.php (ListFilter::renderAuto), che filtrava
+// solo le righe a video, non il conteggio né gli export, e non era sincronizzata con il pannello.
+$GLOBALS['PM_NO_AUTOFILTER'] = true;
 require_once('header.php');
 
 $eur = fn($v) => $v === null || $v === '' ? '—' : number_format((float)$v, 2, ',', '.') . ' €';
