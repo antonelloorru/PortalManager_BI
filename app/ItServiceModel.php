@@ -853,8 +853,13 @@ final class ItServiceModel
         if (!isset(self::GIORNI_DIM[$dim])) return [];
         $col = $dim === 'stato_commessa' ? "COALESCE(NULLIF(`stato_commessa`,''),'(n.d.)')" : "`$dim`";
         $ord = $dim === 'anno_mese' ? 'voce' : 'ore DESC';
+        // v1.9.92 — per commessa: cliente e descrizione come in «Commesse / Progetti» (export XLSX)
+        $extra = $dim === 'commessa'
+            ? "MAX(`cliente`) AS cliente,
+                    (SELECT pd.`description` FROM `cm_projects` pd WHERE pd.`project_code` = `commessa` LIMIT 1) AS descrizione,"
+            : '';
         return $this->giorniQuery($f,
-            "SELECT $col AS voce,
+            "SELECT $col AS voce, $extra
                     COUNT(DISTINCT `operatore`) AS persone,
                     COUNT(DISTINCT CONCAT(`operatore`,'|',`giorno`)) AS giorni_uomo,
                     COUNT(DISTINCT CASE WHEN `valorizzata`=0 THEN CONCAT(`operatore`,'|',`giorno`) END) AS giorni_uomo_non_val,

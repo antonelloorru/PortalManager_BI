@@ -175,12 +175,16 @@ if ($pronto && ($_GET['export'] ?? '') === 'xlsx') {
 
     // v1.9.88 — giorni per codice linea, area tecnologica e dimensioni correlate
     foreach (ItServiceModel::GIORNI_DIM as $gd => $gl) {
-        $rr = [[$gl, 'Persone', 'Giorni-uomo', 'Giorni-uomo con ore non valorizzate', 'Interventi', 'Ore',
-                'Ore valorizzate', 'Ore non valorizzate', 'Giornate equiv.', 'Commesse', 'Produzione teorica']];
-        foreach ($it->giorniPer($f, $gd, 5000) as $x) $rr[] = [ItServiceModel::etichetta((string)$x['voce']),
+        // v1.9.92 — foglio «Giorni per commessa»: Cliente e Descrizione (da Commesse / Progetti) prima di Commessa
+        $perComm = ($gd === 'commessa');
+        $rr = [array_merge($perComm ? ['Cliente', 'Descrizione'] : [], [$gl, 'Persone', 'Giorni-uomo', 'Giorni-uomo con ore non valorizzate', 'Interventi', 'Ore',
+                'Ore valorizzate', 'Ore non valorizzate', 'Giornate equiv.', 'Commesse', 'Produzione teorica'])];
+        foreach ($it->giorniPer($f, $gd, 5000) as $x) $rr[] = array_merge(
+            $perComm ? [(string)($x['cliente'] ?? ''), (string)($x['descrizione'] ?? '')] : [],
+            [ItServiceModel::etichetta((string)$x['voce']),
             (int)$x['persone'], (int)$x['giorni_uomo'], (int)$x['giorni_uomo_non_val'], (int)$x['interventi'],
             $x['ore'], $x['ore_valorizzate'], $x['ore_non_valorizzate'], $x['giornate_equiv'],
-            (int)$x['commesse'], $x['produzione_teorica']];
+            (int)$x['commesse'], $x['produzione_teorica']]);
         $w->addSheet(mb_substr('Giorni per ' . mb_strtolower($gl), 0, 31), $rr);
     }
 
