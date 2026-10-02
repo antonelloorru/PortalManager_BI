@@ -2,6 +2,9 @@
 /**
  * ItServiceModel — letture per la Relazione di Servizio IT.
  *
+ * v1.9.88 — perimetro = tutto l'eseguito nel periodo per data del modulo di intervento: nessuna
+ *           distinzione commesse attive / chiuse alla data, nessuna linea esclusa dai giorni lavorati;
+ *           ore non valorizzate (senza tariffa) incluse e ripartite per persona, linea, area e altre dimensioni.
  * v1.9.87 — filtro «Stato commessa» (aperta / chiusa / sospesa / non chiusa) e perimetro unico:
  *           costi, giorni e sezioni DGB applicano TUTTI i filtri della pagina tramite lo stesso
  *           insieme di rapportini (perimetro()), invece di un sottoinsieme ricostruito a mano.
@@ -237,6 +240,12 @@ final class ItServiceModel
     }
 
     private array $perim = [];
+
+    /**
+     * v1.9.88 — data di riferimento delle attività DGB: data del modulo di intervento, in mancanza
+     * l'inizio dell'attività. Mai la data di chiusura o completamento (perimetro = eseguito nel periodo).
+     */
+    private const DGB_DATA = "COALESCE(a.report_date, DATE(a.date_start))";
 
     /**
      * Insieme dei rapportini (report_id) che soddisfano TUTTI i filtri della pagina, con la
@@ -696,6 +705,10 @@ final class ItServiceModel
                     COUNT(DISTINCT `area_tecnologica`)          AS aree,
                     COUNT(DISTINCT `commessa`)                  AS commesse,
                     COUNT(DISTINCT `cliente`)                   AS clienti,
+                    COUNT(DISTINCT `codice_linea`)              AS linee,
+                    ROUND(SUM(CASE WHEN `valorizzata`=1 THEN `ore` ELSE 0 END), 2) AS ore_valorizzate,
+                    ROUND(SUM(CASE WHEN `valorizzata`=0 THEN `ore` ELSE 0 END), 2) AS ore_non_valorizzate,
+                    COUNT(DISTINCT CASE WHEN `valorizzata`=0 THEN `giorno` END)   AS giorni_non_valorizzati,
                     ROUND(SUM(`produzione_teorica`), 2)         AS produzione_teorica,
                     ROUND(SUM(`valore_addebitato`), 2)          AS valore_addebitato,
                     SUM(`produzione_teorica` IS NULL)           AS righe_senza_tariffa,
@@ -743,6 +756,11 @@ final class ItServiceModel
                     COUNT(DISTINCT `area_tecnologica`) AS aree,
                     COUNT(DISTINCT `commessa`) AS commesse,
                     COUNT(DISTINCT `codice_linea`) AS linee,
+                    ROUND(SUM(CASE WHEN `valorizzata`=1 THEN `ore` ELSE 0 END), 2) AS ore_valorizzate,
+                    ROUND(SUM(CASE WHEN `valorizzata`=0 THEN `ore` ELSE 0 END), 2) AS ore_non_valorizzate,
+                    SUM(`valorizzata`=0) AS interventi_non_valorizzati,
+                    COUNT(DISTINCT CASE WHEN `valorizzata`=0 THEN CONCAT(`operatore`,'|',`giorno`) END)
+                                                        AS giorni_uomo_non_valorizzati,
                     ROUND(SUM(`produzione_teorica`), 2) AS produzione_teorica,
                     ROUND(SUM(`valore_addebitato`), 2) AS valore_addebitato,
                     SUM(`produzione_teorica` IS NULL) AS righe_senza_tariffa,
@@ -756,52 +774,51 @@ final class ItServiceModel
         return $r[0] ?? [];
     }
 
+    /** Dimensioni della ripartizione dei giorni lavorati (elenco chiuso). */
+    public const GIORNI_DIM = [
+        'codice_linea'     => 'Codice linea',
+        'area_tecnologica' => 'Area tecnologica',
+        'contratto'        => 'Linea di servizio',
+        'cliente'          => 'Cliente',
+        'commessa'         => 'Commessa',
+        'anno_mese'        => 'Mese',
+        'fascia'           => 'Fascia',
+        'stato_commessa'   => 'Stato commessa',
+    ];
+
     /**
-     * Riconciliazione: gli stessi giorni con e senza il filtro sulle attive.
-     *
-     * Serve a rispondere a "perche' il totale e' cambiato": una commessa chiusa
-     * dopo la stampa fa scendere i giorni senza che nulla sia cambiato nei
-     * moduli.
+     * v1.9.88 — Giorni lavorati ripartiti su una dimensione, ore valorizzate e non valorizzate
+     * distinte. Stesso perimetro e stessi filtri del resto della sezione.
      */
-    public function giorniRiconcilia(array $f): array
+    public function giorniPer(array $f, string $dim, int $limite = 1000): array
     {
-        // v1.9.87 — con il filtro «Stato commessa» nessun giorno e' escluso d'ufficio: niente da riconciliare
-        if (!empty($f['stati'])) return [];
-        try {
-            $w = "1=1"; $a = [];
-            if (!empty($f['from']) && !empty($f['to'])) {
-                $w = "`giorno` BETWEEN ? AND ?"; $a[] = $f['from']; $a[] = $f['to'];
-            }
-            // v1.9.87 — stesso perimetro di tutte le altre sezioni
-            if (self::haFiltri($f)) $w .= " AND `report_id` IN (" . $this->perimetro($f, true, $a) . ")";
-            $st = $this->pdo->prepare(
-                "SELECT `operatore`, `ordina`,
-                        COUNT(DISTINCT `giorno`) AS giorni_totali,
-                        COUNT(DISTINCT CASE WHEN `commessa_attiva`=1 THEN `giorno` END) AS giorni_attive,
-                        COUNT(DISTINCT CASE WHEN `commessa_attiva`=0 THEN `giorno` END) AS giorni_chiuse,
-                        ROUND(SUM(`ore`), 2) AS ore_totali,
-                        ROUND(SUM(CASE WHEN `commessa_attiva`=1 THEN `ore` ELSE 0 END), 2) AS ore_attive
-                   FROM `{$this->v['v_cm_it_giorni_base']}` WHERE $w
-                  GROUP BY `operatore`, `ordina`
-                 HAVING `giorni_chiuse` > 0
-                  ORDER BY `ordina`");
-            $st->execute($a);
-            $out = $st->fetchAll(PDO::FETCH_ASSOC);
-            $st->closeCursor();
-            return $out;
-        } catch (Throwable $e) { return []; }
+        if (!isset(self::GIORNI_DIM[$dim])) return [];
+        $col = $dim === 'stato_commessa' ? "COALESCE(NULLIF(`stato_commessa`,''),'(n.d.)')" : "`$dim`";
+        $ord = $dim === 'anno_mese' ? 'voce' : 'ore DESC';
+        return $this->giorniQuery($f,
+            "SELECT $col AS voce,
+                    COUNT(DISTINCT `operatore`) AS persone,
+                    COUNT(DISTINCT CONCAT(`operatore`,'|',`giorno`)) AS giorni_uomo,
+                    COUNT(DISTINCT CASE WHEN `valorizzata`=0 THEN CONCAT(`operatore`,'|',`giorno`) END) AS giorni_uomo_non_val,
+                    COUNT(*) AS interventi,
+                    ROUND(SUM(`ore`), 2) AS ore,
+                    ROUND(SUM(CASE WHEN `valorizzata`=1 THEN `ore` ELSE 0 END), 2) AS ore_valorizzate,
+                    ROUND(SUM(CASE WHEN `valorizzata`=0 THEN `ore` ELSE 0 END), 2) AS ore_non_valorizzate,
+                    ROUND(SUM(`ore`) / 8, 1) AS giornate_equiv,
+                    COUNT(DISTINCT `commessa`) AS commesse,
+                    ROUND(SUM(`produzione_teorica`), 2) AS produzione_teorica",
+            "GROUP BY voce ORDER BY $ord LIMIT " . (int)$limite);
     }
 
     /**
-     * Il corpo comune: periodo + perimetro unico dei filtri.
-     * v1.9.87 — senza filtro «Stato commessa» restano le sole commesse attive (definizione
-     * storica della sezione, con la riconciliazione che mostra la differenza); con il filtro
-     * lo stato scelto sostituisce quel vincolo, come in tutte le altre sezioni.
+     * Il corpo comune: periodo (data del modulo) + perimetro unico dei filtri.
+     * v1.9.88 — tutto l'eseguito: nessun vincolo sullo stato della commessa (salvo il filtro
+     * «Stato commessa» scelto dall'utente, gia' nel perimetro) e nessuna linea esclusa.
      */
     private function giorniQuery(array $f, string $select, string $coda): array
     {
         try {
-            $w = empty($f['stati']) ? "`commessa_attiva` = 1" : "1=1"; $a = [];
+            $w = "1=1"; $a = [];
             if (!empty($f['from']) && !empty($f['to'])) {
                 $w .= " AND `giorno` BETWEEN ? AND ?"; $a[] = $f['from']; $a[] = $f['to'];
             }
@@ -818,7 +835,7 @@ final class ItServiceModel
         
     /* [PM_V1_9_36_APPLIED] Espressione data effettiva e filtri condivisi */
     private function rsiWhere(array $f, array &$b): string {
-        $DT = "COALESCE(a.report_date, DATE(a.date_start), DATE(a.completed_at), DATE(a.closed_at))";
+        $DT = self::DGB_DATA;
         $w = ['COALESCE(a.deleted,0) <> 1'];
         if (!empty($f['from']) && !empty($f['to'])) { $w[] = "$DT BETWEEN ? AND ?"; $b[]=$f['from']; $b[]=$f['to']; }
         if (!empty($f['incaricati']) && is_array($f['incaricati'])) {
@@ -881,7 +898,7 @@ final class ItServiceModel
     /** Query del dettaglio per commessa, senza ORDER BY (riusata da dettaglio e sintesi). */
     private function dettaglioSql(array $f, array &$b, ?int $contractId): string
     {
-        $DT = "COALESCE(a.report_date, DATE(a.date_start), DATE(a.completed_at), DATE(a.closed_at))";
+        $DT = self::DGB_DATA;
         $where = $this->rsiWhere($f, $b);
         if ($contractId !== null) {
             $where .= (stripos($where, 'WHERE') === false ? ' WHERE ' : ' AND ') . 'a.id_contract = ?';
@@ -929,7 +946,7 @@ final class ItServiceModel
     /* [PM_V1_9_36_APPLIED] Riepilogo aggregato per Codice Contratto */
     public function riepilogoContratto(array $f): array
     {
-        $DT = "COALESCE(a.report_date, DATE(a.date_start), DATE(a.completed_at), DATE(a.closed_at))";
+        $DT = self::DGB_DATA;
         $b = []; $where = $this->rsiWhere($f, $b);
         $ORE  = "COALESCE(ao.hours, a.human_resource_hours, 0)";
         $COST = "COALESCE(ao.cost, a.human_resource_cost, a.total_cost, 0)";

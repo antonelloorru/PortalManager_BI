@@ -1,0 +1,11 @@
+# Release Checklist — v1.9.88
+- [x] VERSION = 1.9.88; migration aggiorna app_version / schema_version / release_label
+- [x] `pm_migration_sql` registra ('1.9.88','migration_v1_9_88.sql')
+- [x] Migration idempotente: RUN1/RUN2 err=0 con `sql_split_statements` (SqlConsole), nessun `;` nei commenti
+- [x] Copia materializzata della vista invalidata (struttura cambiata)
+- [x] `php -l` su app/ItServiceModel.php, app/it_service_print.php, it_service.php
+- [x] Test modello giugno 2026 (nessun filtro, Chiusa, Smart working): Giorni = KPI (interventi, ore, giorni-uomo); valorizzate + non = totale; 8 ripartizioni sommano al totale
+- [x] Test HTTP con login reale: pagina senza warning, XLSX (65 KB) e Word generati, stampa con ripartizioni
+- [x] Verifica visiva della sezione Giorni lavorati
+- [x] Nessun cambio a permessi, menu, Router
+- [x] Docs: CHANGELOG, DEPLOYMENT, TECHNICAL_DESIGN, MANUALE (utente + amministratore), RELEASE_CHECKLIST

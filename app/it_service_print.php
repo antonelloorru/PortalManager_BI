@@ -38,7 +38,8 @@ $gOp  = $it->giorniOperatore($f);
 $dettCommessa = $it->dettaglioCommessa($f);
 $riepContratto = $it->riepilogoContratto($f); // [PM_V1_9_35_APPLIED]
 $gAr  = $it->giorniArea($f);
-$gRic = $it->giorniRiconcilia($f);
+// v1.9.88 — ripartizione per codice linea e area tecnologica (ore valorizzate e non)
+$gDimP = ['codice_linea' => $it->giorniPer($f, 'codice_linea'), 'area_tecnologica' => $it->giorniPer($f, 'area_tecnologica')];
 ?><!DOCTYPE html>
 <html lang="it"><head><meta charset="utf-8">
 <title>Relazione di Servizio IT<?= $isPers ? ' — ' . h($persona) : '' ?> —
@@ -264,7 +265,7 @@ $gRic = $it->giorniRiconcilia($f);
         ['Operatori', number_format((float)($gQ['operatori'] ?? 0), 0, ',', '.'), '#0f766e'],
         ['Giorni-uomo', number_format((float)($gQ['giorni_uomo'] ?? 0), 0, ',', '.'), '#2563eb'],
         ['Ore', number_format((float)($gQ['ore'] ?? 0), 1, ',', '.'), '#334155'],
-        ['Giornate eq.', number_format((float)($gQ['giornate_equiv'] ?? 0), 1, ',', '.'), '#64748b'],
+        ['Ore non valorizzate', number_format((float)($gQ['ore_non_valorizzate'] ?? 0), 1, ',', '.'), '#64748b'],
         ['Fascia C', number_format((float)($gQ['giorni_uomo_C'] ?? 0), 0, ',', '.'), '#16a34a'],
         ['Fascia D', number_format((float)($gQ['giorni_uomo_D'] ?? 0), 0, ',', '.'), '#f59e0b'],
       ] as [$lg, $vg, $cg]): ?>
@@ -277,6 +278,7 @@ $gRic = $it->giorniRiconcilia($f);
     <table>
       <thead><tr><th>Operatore</th><th class="r">Giorni lavorati</th>
         <th class="r">Giornate eq.</th><th class="r">h/giorno</th>
+        <th class="r">Ore</th><th class="r">di cui non valoriz.</th>
         <th class="r">Fascia C</th><th class="r">Fascia D</th>
         <th class="r">Produzione teorica</th><th class="r">€/giorno</th>
         <th class="r">Commesse</th></tr></thead>
@@ -287,6 +289,8 @@ $gRic = $it->giorniRiconcilia($f);
           <td class="r"><?=number_format((float)$x['giornate_equiv'], 1, ',', '.')?></td>
           <td class="r"><?=$x['ore_per_giorno'] !== null
                 ? number_format((float)$x['ore_per_giorno'], 1, ',', '.') : '—'?></td>
+          <td class="r"><?=number_format((float)$x['ore'], 1, ',', '.')?></td>
+          <td class="r"><?=((float)$x['ore_non_valorizzate']) > 0 ? number_format((float)$x['ore_non_valorizzate'], 1, ',', '.') : '—'?></td>
           <td class="r"><?=number_format((float)$x['giorni_C'], 0, ',', '.')?></td>
           <td class="r"><?=number_format((float)$x['giorni_D'], 0, ',', '.')?></td>
           <td class="r" style="font-weight:700"><?=$x['produzione_teorica'] !== null
@@ -318,27 +322,25 @@ $gRic = $it->giorniRiconcilia($f);
       </table>
     <?php endif; ?>
 
-    <?php if ($gRic): ?>
-      <h3 style="font-size:9pt;margin:3mm 0 1mm">Giorni esclusi perché su commesse oggi chiuse</h3>
+    <?php foreach ($gDimP as $gd => $righeP): if (!$righeP) continue; ?>
+      <h3 style="font-size:9pt;margin:3mm 0 1mm">Giorni per <?=h(mb_strtolower(ItServiceModel::GIORNI_DIM[$gd]))?></h3>
       <table>
-        <thead><tr><th>Operatore</th><th class="r">Giorni totali</th><th class="r">Su attive</th>
-          <th class="r">Su chiuse</th><th class="r">Ore totali</th>
-          <th class="r">Ore su attive</th></tr></thead>
+        <thead><tr><th><?=h(ItServiceModel::GIORNI_DIM[$gd])?></th><th class="r">Persone</th><th class="r">Giorni-uomo</th>
+          <th class="r">Ore</th><th class="r">Valorizzate</th><th class="r">Non valorizzate</th>
+          <th class="r">Produzione teorica</th></tr></thead>
         <tbody>
-        <?php foreach ($gRic as $x): ?>
-          <tr><td><?=h($x['operatore'])?></td>
-            <td class="r"><?=number_format((float)$x['giorni_totali'], 0, ',', '.')?></td>
-            <td class="r" style="font-weight:700"><?=number_format((float)$x['giorni_attive'], 0, ',', '.')?></td>
-            <td class="r"><?=number_format((float)$x['giorni_chiuse'], 0, ',', '.')?></td>
-            <td class="r"><?=number_format((float)$x['ore_totali'], 2, ',', '.')?></td>
-            <td class="r"><?=number_format((float)$x['ore_attive'], 2, ',', '.')?></td></tr>
+        <?php foreach ($righeP as $x): ?>
+          <tr><td><?=h(ItServiceModel::etichetta((string)$x['voce']))?></td>
+            <td class="r"><?=number_format((float)$x['persone'], 0, ',', '.')?></td>
+            <td class="r" style="font-weight:700"><?=number_format((float)$x['giorni_uomo'], 0, ',', '.')?></td>
+            <td class="r"><?=number_format((float)$x['ore'], 1, ',', '.')?></td>
+            <td class="r"><?=number_format((float)$x['ore_valorizzate'], 1, ',', '.')?></td>
+            <td class="r"><?=number_format((float)$x['ore_non_valorizzate'], 1, ',', '.')?></td>
+            <td class="r"><?=$x['produzione_teorica'] !== null ? number_format((float)$x['produzione_teorica'], 2, ',', '.') : '—'?></td></tr>
         <?php endforeach; ?>
         </tbody>
       </table>
-      <p class="nota">Il filtro guarda lo stato della commessa <strong>oggi</strong>, non alla data
-        dell'intervento: questo report ristampato dopo la chiusura di una commessa darà numeri più
-        bassi senza che nulla sia cambiato nei moduli.</p>
-    <?php endif; ?>
+    <?php endforeach; ?>
 
     <p class="nota"><strong>«Giorni lavorati» sono giorni distinti</strong>: due interventi nello
       stesso giorno contano una volta sola. Un giorno con interventi in due fasce conta in entrambe,
