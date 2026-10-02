@@ -2,6 +2,9 @@
 /**
  * DirModel — letture per il report direzionale e le schede commerciale.
  *
+ * v1.9.94 — intervallo date (Data Inizio / Data Fine): commesse la cui durata interseca il periodo,
+ *           andamento sui mesi del periodo; indicatore Fido; competenza pro-rata mensile degli
+ *           ordini cliente (ProRata) raggruppata per anno.
  * v1.9.78 — filtro globale Codice Contratto / PM Project (PmContractFilter) su quadro,
  * agenti, grafici, commesse, attenzione, andamento, perimetro ed export.
  *
@@ -16,6 +19,9 @@ declare(strict_types=1);
 final class DirModel
 {
     private PDO $pdo;
+
+    /** v1.9.94 — presenza di un fido (sforamento consentito) sulla commessa: su valore o su costi. */
+    public const FIDO = "(COALESCE(pf.`credit_on_value`,0) <> 0 OR COALESCE(pf.`credit_on_costs`,0) <> 0)";
 
     /** v1.9.73 — nome da interrogare per ciascuna vista: copia aggiornata se lenta, altrimenti la vista. */
     private array $v = [];
@@ -55,6 +61,7 @@ final class DirModel
             // v1.9.78 — filtro globale Codice Contratto / PM Project
             'contratti' => PmContractFilter::fromRequest($q),
         ];
+        if ($f['from'] !== '' && $f['to'] !== '' && $f['from'] > $f['to']) [$f['from'], $f['to']] = [$f['to'], $f['from']];
         return $f;
     }
 
@@ -100,6 +107,9 @@ final class DirModel
         }
         $cf = $this->cf($f);
         if ($cf->active()) $w[] = $cf->sql('code', 'c.`commessa`', $a);   // v1.9.78
+        // v1.9.94 — intervallo date: commesse attive nel periodo (durata che interseca [Da, A])
+        if ($f['from'] !== '') { $w[] = "(c.`end_date` IS NULL OR c.`end_date` >= ?)";   $a[] = $f['from']; }
+        if ($f['to']   !== '') { $w[] = "(c.`start_date` IS NULL OR c.`start_date` <= ?)"; $a[] = $f['to']; }
         return [implode(' AND ', $w), $a];
     }
 
@@ -132,8 +142,10 @@ final class DirModel
                                      AND c.`consumo_valore_pct` < 100) AS prossime,
                     SUM(c.`aperta`=1 AND c.`divergenza_pct` >= 20) AS divergenti,
                     SUM(c.`aperta`=1 AND c.`giorni_a_scadenza` BETWEEN 0 AND 30) AS in_scadenza,
-                    SUM(c.`aperta`=1 AND c.`giorni_senza_movimenti` > 90) AS ferme
-               FROM `{$this->v['v_cm_dir_commessa']}` c WHERE $w");
+                    SUM(c.`aperta`=1 AND c.`giorni_senza_movimenti` > 90) AS ferme,
+                    SUM(" . self::FIDO . ") AS con_fido
+               FROM `{$this->v['v_cm_dir_commessa']}` c
+               LEFT JOIN `cm_projects` pf ON pf.`id` = c.`commessa_id` WHERE $w");
         $st->execute($a);
         $r = $st->fetch(PDO::FETCH_ASSOC) ?: [];
         $st->closeCursor();
@@ -202,18 +214,24 @@ final class DirModel
     public function attenzione(array $f, int $limite = 200): array
     {
         $w = ['1=1']; $a = [];
-        if ($f['agente'] !== '') { $w[] = "`agente` = ?"; $a[] = $f['agente']; }
+        if ($f['agente'] !== '') { $w[] = "x.`agente` = ?"; $a[] = $f['agente']; }
         if (!empty($f['linee'])) {
-            $w[] = "`commessa` IN (SELECT `commessa` FROM `{$this->v['v_cm_dir_commessa']}`
+            $w[] = "x.`commessa` IN (SELECT `commessa` FROM `{$this->v['v_cm_dir_commessa']}`
                                     WHERE `linea_servizio` IN ("
                  . implode(',', array_fill(0, count($f['linee']), '?')) . "))";
             foreach ($f['linee'] as $v) $a[] = $v;
         }
         $cf = $this->cf($f);
-        if ($cf->active()) $w[] = $cf->sql('code', '`commessa`', $a);   // v1.9.78
+        if ($cf->active()) $w[] = $cf->sql('code', 'x.`commessa`', $a);   // v1.9.78
+        // v1.9.94 — intervallo date
+        if ($f['from'] !== '') { $w[] = "(pf.`end_date` IS NULL OR pf.`end_date` >= ?)";   $a[] = $f['from']; }
+        if ($f['to']   !== '') { $w[] = "(pf.`start_date` IS NULL OR pf.`start_date` <= ?)"; $a[] = $f['to']; }
         $st = $this->pdo->prepare(
-            "SELECT * FROM `{$this->v['v_cm_dir_attenzione']}` WHERE " . implode(' AND ', $w)
-          . " ORDER BY `priorita`, `valore` DESC LIMIT " . (int)$limite);
+            "SELECT x.*, pf.`credit_on_value` AS fido_valore, pf.`credit_on_costs` AS fido_costi, " . self::FIDO . " AS fido
+               FROM `{$this->v['v_cm_dir_attenzione']}` x
+               LEFT JOIN `cm_projects` pf ON pf.`project_code` = x.`commessa`
+              WHERE " . implode(' AND ', $w)
+          . " ORDER BY x.`priorita`, x.`valore` DESC LIMIT " . (int)$limite);
         $st->execute($a);
         $out = $st->fetchAll(PDO::FETCH_ASSOC);
         $st->closeCursor();
@@ -225,7 +243,9 @@ final class DirModel
     {
         [$w, $a] = $this->where($f);
         $st = $this->pdo->prepare(
-            "SELECT * FROM `{$this->v['v_cm_dir_commessa']}` c WHERE $w
+            "SELECT c.*, pf.`credit_on_value` AS fido_valore, pf.`credit_on_costs` AS fido_costi, " . self::FIDO . " AS fido
+               FROM `{$this->v['v_cm_dir_commessa']}` c
+               LEFT JOIN `cm_projects` pf ON pf.`id` = c.`commessa_id` WHERE $w
               ORDER BY c.`valore` DESC LIMIT " . (int)$limite);
         $st->execute($a);
         $out = $st->fetchAll(PDO::FETCH_ASSOC);
@@ -240,10 +260,14 @@ final class DirModel
         // basta: stesso calcolo di v_cm_dir_andamento sulle tabelle, ristretto
         // alle commesse selezionate.
         $cf = $this->cf($f);
+        // v1.9.94 — con l'intervallo date i mesi sono quelli del periodo, non gli ultimi $mesi
+        $daYm = $f['from'] !== '' ? substr($f['from'], 0, 7) : null;
+        $aYm  = $f['to']   !== '' ? substr($f['to'], 0, 7)   : null;
         if ($cf->active()) {
-            $a = [$mesi];
-            $w = ["DATE_FORMAT(ir.`report_date`, '%Y-%m') >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL ? MONTH), '%Y-%m')",
-                  "ir.`report_date` IS NOT NULL"];
+            $a = []; $w = ["ir.`report_date` IS NOT NULL"];
+            if ($daYm === null && $aYm === null) { $w[] = "DATE_FORMAT(ir.`report_date`, '%Y-%m') >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL ? MONTH), '%Y-%m')"; $a[] = $mesi; }
+            if ($daYm !== null) { $w[] = "DATE_FORMAT(ir.`report_date`, '%Y-%m') >= ?"; $a[] = $daYm; }
+            if ($aYm  !== null) { $w[] = "DATE_FORMAT(ir.`report_date`, '%Y-%m') <= ?"; $a[] = $aYm; }
             if ($f['agente'] !== '') { $w[] = "COALESCE(p.`commercial_ref`, '(non attribuita)') = ?"; $a[] = $f['agente']; }
             $w[] = $cf->sql('pid', 'ir.`project_id`', $a);
             $st = $this->pdo->prepare(
@@ -259,8 +283,10 @@ final class DirModel
             $st->closeCursor();
             return $out;
         }
-        $w = ["a.`anno_mese` >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL ? MONTH), '%Y-%m')"];
-        $a = [$mesi];
+        $w = []; $a = [];
+        if ($daYm === null && $aYm === null) { $w[] = "a.`anno_mese` >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL ? MONTH), '%Y-%m')"; $a[] = $mesi; }
+        if ($daYm !== null) { $w[] = "a.`anno_mese` >= ?"; $a[] = $daYm; }
+        if ($aYm  !== null) { $w[] = "a.`anno_mese` <= ?"; $a[] = $aYm; }
         if ($f['agente'] !== '') { $w[] = "a.`agente` = ?"; $a[] = $f['agente']; }
         $st = $this->pdo->prepare(
             "SELECT a.`anno_mese` AS ym, SUM(a.`commesse_movimentate`) AS commesse,
@@ -272,6 +298,73 @@ final class DirModel
         $out = $st->fetchAll(PDO::FETCH_ASSOC);
         $st->closeCursor();
         return $out;
+    }
+
+    /**
+     * v1.9.94 — Valore degli ordini cliente per competenza (pro-rata temporis mensile, ProRata).
+     *
+     * Fonte: ordini della commessa (cm_project_operations, tipi COR «Ordine cliente» e COV «Riporto da
+     * contratto precedente», importo = revenue, data = op_date). Commesse a ricavo senza ordini: il valore
+     * contrattuale della commessa con data ordine = inizio commessa (indicato come «valore contratto»).
+     * Durata: start_date → end_date della commessa; l'inizio si sposta alla data ordine se successiva.
+     * Periodo: [Data Inizio, Data Fine] del filtro; senza date, l'intera durata.
+     *
+     * @return array{periodo:array, anni:array<int,array>, commesse:array<int,array>, totale:float}
+     */
+    public function competenza(array $f): array
+    {
+        require_once __DIR__ . '/ProRata.php';
+        [$w, $a] = $this->where($f);
+        $st = $this->pdo->prepare(
+            "SELECT c.`commessa_id`, c.`commessa`, c.`denominazione`, c.`cliente`, c.`agente`, c.`stato`,
+                    c.`start_date`, c.`end_date`, c.`valore`,
+                    pf.`credit_on_value` AS fido_valore, pf.`credit_on_costs` AS fido_costi, " . self::FIDO . " AS fido,
+                    o.`op_type_code` AS tipo, o.`op_date` AS data_ordine, o.`order_code` AS ordine, o.`revenue` AS importo
+               FROM `{$this->v['v_cm_dir_commessa']}` c
+               JOIN `cm_projects` pf ON pf.`id` = c.`commessa_id`
+               LEFT JOIN `cm_project_operations` o
+                      ON o.`project_id` = c.`commessa_id` AND o.`op_type_code` IN ('COR','COV') AND COALESCE(o.`revenue`,0) <> 0
+              WHERE $w AND c.`ha_ricavo` = 1 AND c.`start_date` IS NOT NULL AND c.`end_date` IS NOT NULL
+              ORDER BY c.`commessa`, o.`op_date`");
+        $st->execute($a);
+        $da = $f['from'] !== '' ? $f['from'] : null;
+        $al = $f['to']   !== '' ? $f['to']   : null;
+        $anni = []; $comm = []; $tot = 0.0;
+        foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) {
+            $daOrd = $r['tipo'] !== null;
+            $imp   = $daOrd ? (float)$r['importo'] : (float)$r['valore'];
+            if ($imp == 0.0) continue;
+            $p = ProRata::ripartisci($imp, (string)$r['start_date'], (string)$r['end_date'],
+                                     $daOrd ? (string)$r['data_ordine'] : null, $da, $al);
+            $id = (int)$r['commessa_id'];
+            if (!isset($comm[$id])) {
+                $comm[$id] = ['commessa' => $r['commessa'], 'denominazione' => $r['denominazione'], 'cliente' => $r['cliente'],
+                              'agente' => $r['agente'], 'stato' => $r['stato'], 'inizio' => $r['start_date'], 'fine' => $r['end_date'],
+                              'fido' => (int)$r['fido'], 'fido_valore' => $r['fido_valore'], 'fido_costi' => $r['fido_costi'],
+                              'ordini' => [], 'importo' => 0.0, 'valore_periodo' => 0.0, 'anni' => []];
+            }
+            $c = &$comm[$id];
+            $c['ordini'][] = ['fonte' => $daOrd ? ($r['tipo'] === 'COV' ? 'Riporto' : 'Ordine cliente') : 'Valore contratto',
+                              'codice' => $r['ordine'], 'data' => $daOrd ? $r['data_ordine'] : $r['start_date'],
+                              'importo' => $imp, 'mesi_totali' => $p['mesi_totali'], 'quota_mensile' => $p['quota_mensile'],
+                              'inizio' => $p['inizio'], 'fine' => $p['fine'], 'anni' => $p['anni']];
+            $c['importo'] += $imp;
+            $c['valore_periodo'] += $p['valore_periodo'];
+            foreach ($p['anni'] as $y => $x) {
+                $c['anni'][$y]['valore'] = ($c['anni'][$y]['valore'] ?? 0) + $x['valore'];
+                $c['anni'][$y]['mesi']   = max($c['anni'][$y]['mesi'] ?? 0, $x['mesi']);
+                $anni[$y]['valore']   = ($anni[$y]['valore'] ?? 0) + $x['valore'];
+                $anni[$y]['commesse'][$id] = true;
+            }
+            $tot += $p['valore_periodo'];
+            unset($c);
+        }
+        ksort($anni);
+        foreach ($anni as $y => &$x) { $x['valore'] = round($x['valore'], 2); $x['commesse'] = count($x['commesse']); }
+        unset($x);
+        $comm = array_values(array_filter($comm, fn($c) => $c['valore_periodo'] != 0.0));
+        usort($comm, fn($p, $q) => $q['valore_periodo'] <=> $p['valore_periodo']);
+        return ['periodo' => ['da' => $da, 'a' => $al], 'anni' => $anni, 'commesse' => $comm, 'totale' => round($tot, 2)];
     }
 
     /** Elenco degli agenti, per il selettore. */

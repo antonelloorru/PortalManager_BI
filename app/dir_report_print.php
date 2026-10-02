@@ -14,6 +14,7 @@ if (!empty($f['linee'])) $filtri[] = 'Linee: ' . implode(', ', $f['linee']);
 if (!empty($f['aziende'])) $filtri[] = 'Aziende: ' . implode(', ', $f['aziende']);
 if (($f['q'] ?? '') !== '')       $filtri[] = 'Ricerca: ' . $f['q'];
 if (($f['cliente'] ?? '') !== '') $filtri[] = 'Cliente: ' . $f['cliente'];
+if (($f['from'] ?? '') !== '' || ($f['to'] ?? '') !== '') $filtri[] = 'Periodo: ' . $periodoTxt;   // v1.9.94
 // v1.9.78 — filtro globale contratto
 if (!empty($f['contratti'])) array_unshift($filtri, PmContractFilter::describe($f['contratti'], $vCtr ?? []));
 ?><!DOCTYPE html>
@@ -112,9 +113,9 @@ if (!empty($f['contratti'])) array_unshift($filtri, PmContractFilter::describe($
     <?php foreach ($agenti as $a): ?>
       <tr><td><?=h($a['agente'])?></td>
         <td class="r"><?=$n($a['commesse'])?></td><td class="r"><?=$n($a['aperte'])?></td>
-        <td class="r"><?=$n($a['clienti'])?></td><td class="r"><?=$n($a['valore'])?></td>
-        <td class="r"><?=$n($a['margine'])?></td><td class="r"><?=$n1($a['margine_pct'])?>%</td>
-        <td class="r"><?=$n($a['ore'])?></td><td class="r"><?=$n($a['sforate'])?></td>
+        <td class="r"><?=$n($a['clienti'])?></td><td class="r"><?=$eur($a['valore'])?></td>
+        <td class="r"><?=$eur($a['margine'])?></td><td class="r"><?=$n1($a['margine_pct'])?>%</td>
+        <td class="r"><?=$hrs($a['ore'])?></td><td class="r"><?=$n($a['sforate'])?></td>
         <td class="r"><?=$n($a['divergenti'])?></td><td class="r"><?=$n($a['in_scadenza'])?></td>
         <td class="r"><?=$n($a['ferme'])?></td></tr>
     <?php endforeach; ?>
@@ -134,25 +135,44 @@ if (!empty($f['contratti'])) array_unshift($filtri, PmContractFilter::describe($
     <thead><tr><th>Motivo</th><th>Commessa</th><th>Cliente</th>
       <?php if ($ag === ''): ?><th>Agente</th><?php endif; ?>
       <th class="r">Valore</th><th class="r">Consumo</th><th class="r">Avanz.</th>
-      <th class="r">Divergenza</th><th class="r">Marg.%</th><th class="r">Scad.</th></tr></thead>
+      <th class="r">Divergenza</th><th class="r">Marg.%</th><th class="r">Scad.</th><th>Fido</th></tr></thead>
     <tbody>
     <?php foreach (array_slice($att, 0, 120) as $x): ?>
       <tr><td><?=h($x['motivo'])?></td>
         <td><?=h($x['commessa'])?></td>
         <td><?=h(mb_strimwidth((string)$x['cliente'], 0, 26, '…'))?></td>
         <?php if ($ag === ''): ?><td><?=h($x['agente'])?></td><?php endif; ?>
-        <td class="r"><?=$n($x['valore'])?></td>
+        <td class="r"><?=$eur($x['valore'])?></td>
         <td class="r"><?=$n1($x['consumo_valore_pct'])?>%</td>
         <td class="r"><?=$n1($x['avanzamento_pct'])?>%</td>
         <td class="r" style="font-weight:700"><?=$n1($x['divergenza_pct'])?></td>
         <td class="r"><?=$n1($x['margine_pct'])?>%</td>
-        <td class="r"><?=$x['giorni_a_scadenza'] !== null ? $n($x['giorni_a_scadenza']).'g' : '—'?></td></tr>
+        <td class="r"><?=$x['giorni_a_scadenza'] !== null ? $gg($x['giorni_a_scadenza']) : '—'?></td>
+        <td><?=!empty($x['fido']) ? 'FIDO' : '—'?></td></tr>
     <?php endforeach; ?>
     </tbody>
   </table>
   <?php if (count($att) > 120): ?>
     <p class="nota">Mostrate le prime 120 di <?=$n(count($att))?>. L'export XLSX le contiene tutte.</p>
   <?php endif; ?>
+<?php endif; ?>
+
+<?php // v1.9.94 — competenza pro-rata mensile ?>
+<?php if (!empty($comp['anni'])): ?>
+<div class="blocco">
+  <h2>Valore ordini per competenza — <?=h($periodoTxt)?></h2>
+  <table>
+    <thead><tr><th>Anno</th><th class="r">Valore di competenza</th><th class="r">Commesse</th></tr></thead>
+    <tbody>
+    <?php foreach ($comp['anni'] as $y => $x): ?>
+      <tr><td><?=(int)$y?></td><td class="r"><?=$eur2($x['valore'])?></td><td class="r"><?=$n($x['commesse'])?></td></tr>
+    <?php endforeach; ?>
+      <tr style="font-weight:700"><td>Totale</td><td class="r"><?=$eur2($comp['totale'])?></td><td class="r"><?=$n(count($comp['commesse']))?></td></tr>
+    </tbody>
+  </table>
+  <p class="nota">Pro-rata temporis mensile: ordine ÷ mesi di calendario della durata della commessa (dalla data ordine se successiva),
+    × mesi che cadono nel periodo, per anno. Dettaglio per commessa e per ordine nell'export XLSX.</p>
+</div>
 <?php endif; ?>
 
 <p class="nota" style="margin-top:5mm;border-top:1px solid #cbd5e1;padding-top:2mm">
