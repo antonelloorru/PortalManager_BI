@@ -2,6 +2,9 @@
 /**
  * ItServiceModel — letture per la Relazione di Servizio IT.
  *
+ * v1.9.89 — ore per classe (ordinarie / fuori orario / reperibilità / non classificate) uguali in ogni
+ *           tabella: dettaglio aggregato, giorni per persona, andamento. Rapportino agganciato per id
+ *           (non per codice modulo). Dettaglio delle ore non valorizzate con il motivo.
  * v1.9.88 — perimetro = tutto l'eseguito nel periodo per data del modulo di intervento: nessuna
  *           distinzione commesse attive / chiuse alla data, nessuna linea esclusa dai giorni lavorati;
  *           ore non valorizzate (senza tariffa) incluse e ripartite per persona, linea, area e altre dimensioni.
@@ -324,6 +327,10 @@ final class ItServiceModel
                     SUM(s.`durata` = 'mezza giornata')  AS mezze_giornate,
                     SUM({$cQ['fuori']} > 0)              AS fuori_orario,
                     ROUND(SUM({$cQ['fuori']}), 2)       AS ore_fuori_orario,
+                    ROUND(SUM({$cQ['ord']}), 2)         AS ore_ordinarie,
+                    ROUND(SUM({$cQ['rep']}), 2)         AS ore_reperibilita,
+                    SUM({$cQ['repC']})                  AS reperibilita,
+                    ROUND(SUM({$cQ['nc']}), 2)          AS ore_non_classificate,
                     ROUND(SUM(CASE WHEN s.`ha_ricavo`=1 THEN s.`ore` ELSE 0 END), 2) AS ore_ricavo,
                     COUNT(DISTINCT s.`linea_servizio`)  AS linee,
                     COUNT(DISTINCT s.`commessa`)        AS commesse,
@@ -370,9 +377,11 @@ final class ItServiceModel
                     SUM(s.`modalita` = 'da remoto')     AS da_remoto,
                     SUM(s.`modalita` = 'smart working') AS smart_working,
                     SUM({$cQ['repC']})                  AS reperibilita,
+                    ROUND(SUM({$cQ['ord']}), 2)         AS ore_ordinarie,
                     ROUND(SUM({$cQ['rep']}), 2)         AS ore_reperibilita,
                     SUM({$cQ['fuori']} > 0)              AS fuori_orario,
                     ROUND(SUM({$cQ['fuori']}), 2)       AS ore_fuori_orario,
+                    ROUND(SUM({$cQ['nc']}), 2)          AS ore_non_classificate,
                     ROUND(SUM(CASE WHEN s.`ha_ricavo`=1 THEN s.`ore` ELSE 0 END), 2) AS ore_ricavo
                FROM `{$this->v['v_cm_it_servizio']}` s {$this->irJoin()}
               WHERE $w GROUP BY $sel $ord LIMIT " . (int)$limite);
@@ -479,7 +488,9 @@ final class ItServiceModel
     private function irJoin(): string
     {
         return $this->haModulo()
-            ? " LEFT JOIN `cm_intervention_reports` ir ON ir.`id` = (SELECT MIN(x.`id`) FROM `cm_intervention_reports` x WHERE x.`report_code` = s.`modulo`) "
+            // v1.9.89 — il rapportino della riga (report_id), non il primo con lo stesso codice modulo:
+            // con piu' tecnici sullo stesso modulo si leggevano orari e reperibilita' di un altro tecnico
+            ? " LEFT JOIN `cm_intervention_reports` ir ON ir.`id` = s.`report_id` "
             : '';
     }
 
@@ -772,6 +783,59 @@ final class ItServiceModel
                                                         AS giorni_uomo_D",
             "");
         return $r[0] ?? [];
+    }
+
+    /**
+     * v1.9.89 — Ore per classe e giorni per persona, con la STESSA regola di dettaglio, andamento e
+     * KPI (oreClassi): ordinarie + fuori orario + reperibilità + non classificate = ore.
+     * Chiave = nome dell'incaricato (= `operatore` della sezione giorni: stesso campo del rapportino).
+     * @return array<string,array>
+     */
+    public function classiPerPersona(array $f): array
+    {
+        [$w, $a] = $this->where($f);
+        $c = $this->oreClassi();
+        $st = $this->pdo->prepare(
+            "SELECT s.`incaricato` AS persona,
+                    ROUND(SUM({$c['ord']}), 2)   AS ore_ordinarie,
+                    ROUND(SUM({$c['fuori']}), 2) AS ore_fuori_orario,
+                    ROUND(SUM({$c['rep']}), 2)   AS ore_reperibilita,
+                    ROUND(SUM({$c['nc']}), 2)    AS ore_non_classificate,
+                    SUM({$c['repC']})            AS interventi_reperibilita,
+                    COUNT(DISTINCT CASE WHEN {$c['repC']} THEN s.`giorno` END)        AS giorni_reperibilita,
+                    COUNT(DISTINCT CASE WHEN {$c['fuori']} > 0 THEN s.`giorno` END)  AS giorni_fuori_orario,
+                    COUNT(DISTINCT CASE WHEN {$c['ord']} > 0 THEN s.`giorno` END)    AS giorni_ordinari
+               FROM `{$this->v['v_cm_it_servizio']}` s {$this->irJoin()} WHERE $w
+              GROUP BY s.`incaricato`");
+        $st->execute($a);
+        $out = [];
+        foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) $out[(string)$r['persona']] = $r;
+        $st->closeCursor();
+        return $out;
+    }
+
+    /**
+     * v1.9.89 — Dettaglio delle ore non valorizzate (moduli senza tariffa di listino), per codice linea,
+     * commessa e persona, con il motivo: commessa senza listino oppure combinazione fascia/unità non prevista.
+     */
+    public function nonValorizzate(array $f, int $limite = 2000): array
+    {
+        return $this->giorniQuery($f,
+            "SELECT `codice_linea`, `contratto`, `commessa`, `cliente`, `operatore`, `ordina`,
+                    CASE WHEN EXISTS (SELECT 1 FROM `cm_contract_rates` crx
+                                       WHERE crx.`project_code` = `commessa` AND crx.`rate_nature` = 'R'
+                                         AND crx.`rate_value` > 0)
+                         THEN 'Tariffa mancante per fascia/unità' ELSE 'Commessa senza listino' END AS motivo,
+                    GROUP_CONCAT(DISTINCT CONCAT('Fascia ', `fascia`, ' · ',
+                                 CASE `um` WHEN 'D' THEN 'giornata' WHEN 'HD' THEN 'mezza giornata' ELSE 'ora' END)
+                                 ORDER BY `fascia`, `um` SEPARATOR ', ') AS combinazioni,
+                    COUNT(*) AS interventi,
+                    COUNT(DISTINCT `giorno`) AS giorni,
+                    ROUND(SUM(`ore`), 2) AS ore,
+                    MIN(`giorno`) AS dal, MAX(`giorno`) AS al",
+            "AND `valorizzata` = 0
+             GROUP BY `codice_linea`, `contratto`, `commessa`, `cliente`, `operatore`, `ordina`
+             ORDER BY `codice_linea`, `commessa`, `ordina` LIMIT " . (int)$limite);
     }
 
     /** Dimensioni della ripartizione dei giorni lavorati (elenco chiuso). */

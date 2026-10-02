@@ -75,6 +75,8 @@ try {
     $gOp   = $it->giorniOperatore($f);
     $gAr   = $it->giorniArea($f);
     // v1.9.88 — ripartizione dei giorni (ore valorizzate e non) per le dimensioni richieste
+    $gCls  = $it->classiPerPersona($f);      // v1.9.89 — ore per classe per persona (stessa regola dei KPI)
+    $gNv   = $it->nonValorizzate($f);        // v1.9.89 — dettaglio ore non valorizzate
     $gDim  = [];
     foreach (array_keys(ItServiceModel::GIORNI_DIM) as $gd) $gDim[$gd] = $it->giorniPer($f, $gd);
     // [PM_V1_9_34_APPLIED]
@@ -96,7 +98,7 @@ try {
     // rifare le stesse query nel catch le fa fallire di nuovo, e nel percorso
     // normale le variabili restano indefinite. Il template le usa comunque, e
     // PHP produce un avviso su ogni riferimento.
-    $cQ2 = $gQ = []; $cRie2 = $gOp = $gAr = $gDim = [];
+    $cQ2 = $gQ = []; $cRie2 = $gOp = $gAr = $gDim = $gCls = $gNv = [];
     $dettCommessa = []; $riepContratto = [];
     $vLin = $vSet = $vInc = $vSed = $vCod = $vAz = []; $gCod = $gAz = []; $vCtr = [];
 }
@@ -113,27 +115,34 @@ if ($pronto && ($_GET['export'] ?? '') === 'xlsx') {
 
     // foglio 1: l'aggregazione come mostrata a video
     $int = [array_merge(array_map(fn($g) => ItServiceModel::DIM[$g], $f['gb']),
-        ['Interventi','Giornate-uomo','Ore','Ore extra','Ore viaggio','Km',
-         'Giornate','Mezze giornate','Presso cliente','Da remoto','Smart working',
-         'Reperibilità','Fuori orario','Ore a ricavo'])];
+        ['Interventi','Giornate-uomo','Ore totali','Ore ordinarie','Ore fuori orario','Ore reperibilità',
+         'Ore non classificate','Ore extra','Ore viaggio','Km',
+         'N. giornate','N. mezze giornate','N. presso cliente','N. da remoto','N. smart working',
+         'N. interventi reperibilità','N. interventi fuori orario','Ore a ricavo'])];
     foreach ($righe as $r) {
         $riga = [];
         foreach ($f['gb'] as $g) $riga[] = $r[$g];
         $int[] = array_merge($riga, [(int)$r['interventi'], (int)$r['giornate_uomo'],
-            $r['ore'], $r['ore_extra'], $r['ore_viaggio'], $r['km'],
+            $r['ore'], $r['ore_ordinarie'], $r['ore_fuori_orario'], $r['ore_reperibilita'], $r['ore_non_classificate'],
+            $r['ore_extra'], $r['ore_viaggio'], $r['km'],
             (int)$r['giornate'], (int)$r['mezze_giornate'], (int)$r['presso_cliente'],
             (int)$r['da_remoto'], (int)$r['smart_working'], (int)$r['reperibilita'],
             (int)$r['fuori_orario'], $r['ore_ricavo']]);
     }
     // v1.9.19 — i giorni lavorati nell'export
-    $rgo = [['Operatore','Giorni lavorati','Interventi','Ore','Ore valorizzate','Ore non valorizzate',
+    $clsX = $it->classiPerPersona($f);
+    $rgo = [['Operatore','Giorni lavorati','Interventi','Ore','Ore ordinarie','Ore fuori orario','Ore reperibilità',
+             'Giorni con reperibilità','Ore valorizzate','Ore non valorizzate',
              'Giorni con ore non valorizzate','Giornate equiv.','Ore/giorno',
-             'Giorni A','Giorni B','Giorni C','Giorni D','Giorni E','Giorni X',
-             'Ore C','Ore D','Aree','Linee','Commesse','Clienti',
+             'Giorni fascia tariffaria A','Giorni fascia tariffaria B','Giorni fascia tariffaria C','Giorni fascia tariffaria D','Giorni fascia tariffaria E','Giorni fascia tariffaria X',
+             'Ore fascia tariffaria C','Ore fascia tariffaria D','Aree','Linee','Commesse','Clienti',
              'Produzione teorica','Produzione/giorno','Addebitato','Righe senza tariffa',
              'Dal','Al']];
     foreach ($it->giorniOperatore($f) as $x) $rgo[] = [$x['operatore'],
-        (int)$x['giorni_lavorati'], (int)$x['interventi'], $x['ore'], $x['ore_valorizzate'],
+        (int)$x['giorni_lavorati'], (int)$x['interventi'], $x['ore'],
+        (float)($clsX[$x['operatore']]['ore_ordinarie'] ?? 0), (float)($clsX[$x['operatore']]['ore_fuori_orario'] ?? 0),
+        (float)($clsX[$x['operatore']]['ore_reperibilita'] ?? 0), (int)($clsX[$x['operatore']]['giorni_reperibilita'] ?? 0),
+        $x['ore_valorizzate'],
         $x['ore_non_valorizzate'], (int)$x['giorni_non_valorizzati'], $x['giornate_equiv'],
         $x['ore_per_giorno'], (int)$x['giorni_A'], (int)$x['giorni_B'], (int)$x['giorni_C'],
         (int)$x['giorni_D'], (int)$x['giorni_E'], (int)$x['giorni_X'], $x['ore_C'], $x['ore_D'],
@@ -148,6 +157,14 @@ if ($pronto && ($_GET['export'] ?? '') === 'xlsx') {
         (int)$x['giorni'], (int)$x['interventi'], $x['ore'], $x['quota_ore_pct'],
         (int)$x['commesse'], $x['produzione_teorica']];
     $w->addSheet('Giorni per area', $rga);
+
+    // v1.9.89 — dettaglio ore non valorizzate
+    $rnv = [['Codice linea','Linea di servizio','Commessa','Cliente','Persona','Interventi','Giorni','Ore',
+             'Motivo','Fascia · unità senza tariffa','Dal','Al']];
+    foreach ($it->nonValorizzate($f, 100000) as $x) $rnv[] = [$x['codice_linea'], $x['contratto'], $x['commessa'],
+        $x['cliente'], $x['operatore'], (int)$x['interventi'], (int)$x['giorni'], $x['ore'], $x['motivo'],
+        $x['combinazioni'], $x['dal'], $x['al']];
+    $w->addSheet('Ore non valorizzate', $rnv);
 
     // v1.9.88 — giorni per codice linea, area tecnologica e dimensioni correlate
     foreach (ItServiceModel::GIORNI_DIM as $gd => $gl) {
@@ -315,13 +332,14 @@ if ($pronto && ($_GET['export'] ?? '') === 'docx') {
         $doc->pageBreak();
         $doc->heading('Dettaglio — ' . $gbLbl, 1);
         $hdr = array_map(fn($g) => ItServiceModel::DIM[$g], $f['gb']);
-        $hdr = array_merge($hdr, ['Interv.','Giornate','Ore','Extra','Viaggio','Km','Giorn.','Mezze','Cliente','Remoto','Smart','Reper.','F.orario']);
+        $hdr = array_merge($hdr, ['Interv.','Gg-uomo','Ore','Ordin.','F.orario h','Reperib. h','N. rep.','Extra','Viaggio','Km','N. cliente','N. remoto','N. smart']);
         $rr = [];
         foreach (array_slice($righe, 0, 300) as $r) {
             $row = [];
             foreach ($f['gb'] as $g) $row[] = mb_strimwidth((string)$r[$g], 0, 30, '…');
-            $row = array_merge($row, [$hh($r['interventi']),$hh($r['giornate_uomo']),$hh1($r['ore']),$hh1($r['ore_extra']),$hh1($r['ore_viaggio']),
-                ((float)$r['km']>0?$hh1($r['km']):'—'),$hh($r['giornate']),$hh($r['mezze_giornate']),$hh($r['presso_cliente']),$hh($r['da_remoto']),$hh($r['smart_working']),$hh($r['reperibilita']),$hh($r['fuori_orario'])]);
+            $row = array_merge($row, [$hh($r['interventi']),$hh($r['giornate_uomo']),$hh1($r['ore']),$hh1($r['ore_ordinarie']),$hh1($r['ore_fuori_orario']),
+                $hh1($r['ore_reperibilita']),$hh($r['reperibilita']),$hh1($r['ore_extra']),$hh1($r['ore_viaggio']),
+                ((float)$r['km']>0?$hh1($r['km']):'—'),$hh($r['presso_cliente']),$hh($r['da_remoto']),$hh($r['smart_working'])]);
             $rr[] = $row;
         }
         $ng = count($f['gb']);
@@ -337,14 +355,20 @@ if ($pronto && ($_GET['export'] ?? '') === 'docx') {
             ['label'=>'Giorni-uomo','value'=>$hh($gQ['giorni_uomo'] ?? 0),'color'=>'2563EB'],
             ['label'=>'Ore','value'=>$hh1($gQ['ore'] ?? 0),'color'=>'334155'],
             ['label'=>'Ore non valorizzate','value'=>$hh1($gQ['ore_non_valorizzate'] ?? 0),'color'=>'64748B'],
-            ['label'=>'Fascia C','value'=>$hh($gQ['giorni_uomo_C'] ?? 0),'color'=>'16A34A'],
-            ['label'=>'Fascia D','value'=>$hh($gQ['giorni_uomo_D'] ?? 0),'color'=>'F59E0B'],
+            ['label'=>'Ore fuori orario','value'=>$hh1($tot['ore_fuori_orario'] ?? 0),'color'=>'B45309'],
+            ['label'=>'Ore reperibilità','value'=>$hh1($tot['ore_reperibilita'] ?? 0),'color'=>'7C3AED'],
         ]);
         $rr = [];
-        foreach ($gOp as $x) $rr[] = [$x['operatore'],$hh($x['giorni_lavorati']),$hh1($x['ore']),$hh1($x['ore_non_valorizzate']),
-            ($x['ore_per_giorno']!==null?$hh1($x['ore_per_giorno']):'—'),$hh($x['giorni_C']),$hh($x['giorni_D']),
-            ($x['produzione_teorica']!==null?$hh1($x['produzione_teorica']):'—'),$hh($x['commesse'])];
-        $doc->table(['Operatore','Giorni lavorati','Ore','di cui non valoriz.','h/giorno','Fascia C','Fascia D','Produzione teorica','Commesse'], $rr, ['right'=>[1,2,3,4,5,6,7,8]]);
+        foreach ($gOp as $x) { $cl = $gCls[$x['operatore']] ?? [];
+            $rr[] = [$x['operatore'],$hh($x['giorni_lavorati']),$hh1($x['ore']),$hh1($cl['ore_ordinarie'] ?? 0),$hh1($cl['ore_fuori_orario'] ?? 0),
+            $hh1($cl['ore_reperibilita'] ?? 0),$hh1($x['ore_valorizzate']),$hh1($x['ore_non_valorizzate']),
+            ($x['produzione_teorica']!==null?$hh1($x['produzione_teorica']):'—')]; }
+        $doc->table(['Operatore','Giorni','Ore totali','Ordinarie','Fuori orario','Reperibilità','Valorizzate','Non valoriz.','Produzione teorica'], $rr, ['right'=>[1,2,3,4,5,6,7,8]]);
+        if ($gNv) {
+            $doc->heading('Ore non valorizzate', 2);
+            $rr = []; foreach (array_slice($gNv, 0, 300) as $x) $rr[] = [$x['codice_linea'], $x['commessa'], $x['operatore'], $hh($x['giorni']), $hh1($x['ore']), $x['motivo']];
+            $doc->table(['Codice linea','Commessa','Persona','Giorni','Ore','Motivo'], $rr, ['right'=>[3,4]]);
+        }
         foreach (['codice_linea', 'area_tecnologica'] as $gd) {
             if (empty($gDim[$gd])) continue;
             $doc->heading('Giorni per ' . mb_strtolower(ItServiceModel::GIORNI_DIM[$gd]), 2);
@@ -357,7 +381,7 @@ if ($pronto && ($_GET['export'] ?? '') === 'docx') {
             $rr=[]; foreach ($gAr as $x) $rr[]=[$x['operatore'],$x['area_tecnologica'],$hh($x['giorni']),$hh($x['interventi']),$hh1($x['ore']),$hh1($x['quota_ore_pct']).'%',($x['produzione_teorica']!==null?$hh1($x['produzione_teorica']):'—')];
             $doc->table(['Operatore','Area tecnologica','Giorni','Interventi','Ore','Quota','Produzione teorica'], $rr, ['right'=>[2,3,4,5,6]]);
         }
-        $doc->note('«Giorni lavorati» sono giorni distinti: due interventi nello stesso giorno contano una volta. Un giorno in due fasce conta in entrambe, quindi C + D può superare i giorni totali. Produzione teorica = ore × listino. Perimetro: tutto l\'eseguito nel periodo per data del modulo, ore non valorizzate (senza tariffa) comprese.');
+        $doc->note('«Giorni lavorati» sono giorni distinti: due interventi nello stesso giorno contano una volta. Ore per classe: ordinarie + fuori orario + reperibilità = ore totali (stessa regola del resto della relazione). Produzione teorica = ore × listino. Perimetro: tutto l\'eseguito nel periodo per data del modulo, ore non valorizzate (senza tariffa) comprese.');
     }
 
     // COSTI
@@ -725,39 +749,62 @@ if (!empty($trendG['rows'])):
       <thead><tr>
         <?php foreach ($f['gb'] as $g): ?><th><?=h(ItServiceModel::DIM[$g])?></th><?php endforeach; ?>
         <th class="r" style="text-align:right">Interventi</th>
-        <th style="text-align:right">Giornate</th><th style="text-align:right">Ore</th>
-        <th style="text-align:right">Extra</th><th style="text-align:right">Viaggio</th>
-        <th style="text-align:right">Km</th><th style="text-align:right">Giorn.</th>
-        <th style="text-align:right">Mezze</th><th style="text-align:right">Cliente</th>
-        <th style="text-align:right">Remoto</th><th style="text-align:right">Smart</th>
-        <th style="text-align:right">Reper.</th><th style="text-align:right">F.orario</th>
+        <th style="text-align:right">Giornate-uomo</th><th style="text-align:right">Ore totali</th>
+        <th style="text-align:right;border-bottom:2px solid #16a34a">Ore ordinarie</th>
+        <th style="text-align:right;border-bottom:2px solid #f59e0b">Ore fuori orario</th>
+        <th style="text-align:right;border-bottom:2px solid #7c3aed">Ore reperibilità</th>
+        <th style="text-align:right;border-bottom:2px solid #7c3aed" title="numero di interventi in reperibilità">N. interv. reperib.</th>
+        <th style="text-align:right">Ore extra</th><th style="text-align:right">Ore viaggio</th>
+        <th style="text-align:right">Km</th>
+        <th style="text-align:right" title="numero di interventi">N. presso cliente</th>
+        <th style="text-align:right" title="numero di interventi">N. remoto</th>
+        <th style="text-align:right" title="numero di interventi">N. smart</th>
       </tr></thead>
       <tbody>
-      <?php foreach ($righe as $r): ?>
+      <?php $tD = []; foreach ($righe as $r): foreach (['interventi','giornate_uomo','ore','ore_ordinarie','ore_fuori_orario','ore_reperibilita','reperibilita','ore_extra','ore_viaggio','km','presso_cliente','da_remoto','smart_working'] as $k) $tD[$k] = ($tD[$k] ?? 0) + (float)$r[$k]; ?>
         <tr>
           <?php foreach ($f['gb'] as $g): ?><td><?=h((string)$r[$g])?></td><?php endforeach; ?>
           <td style="text-align:right"><?=$hh($r['interventi'])?></td>
           <td style="text-align:right"><?=$hh($r['giornate_uomo'])?></td>
           <td style="text-align:right;font-weight:700"><?=$hh1($r['ore'])?></td>
+          <td style="text-align:right;color:#16a34a"><?=$hh1($r['ore_ordinarie'])?></td>
+          <td style="text-align:right;color:#b45309"><?=(float)$r['ore_fuori_orario'] > 0 ? $hh1($r['ore_fuori_orario']) : '—'?></td>
+          <td style="text-align:right;color:#7c3aed;font-weight:600"><?=(float)$r['ore_reperibilita'] > 0 ? $hh1($r['ore_reperibilita']) : '—'?></td>
+          <td style="text-align:right;color:#7c3aed"><?=(int)$r['reperibilita'] > 0 ? $hh($r['reperibilita']) : '—'?></td>
           <td style="text-align:right;color:var(--muted)"><?=$hh1($r['ore_extra'])?></td>
           <td style="text-align:right;color:#f59e0b"><?=$hh1($r['ore_viaggio'])?></td>
           <td style="text-align:right"><?=(float)$r['km'] > 0 ? $hh1($r['km']) : '—'?></td>
-          <td style="text-align:right"><?=$hh($r['giornate'])?></td>
-          <td style="text-align:right"><?=$hh($r['mezze_giornate'])?></td>
           <td style="text-align:right"><?=$hh($r['presso_cliente'])?></td>
           <td style="text-align:right"><?=$hh($r['da_remoto'])?></td>
           <td style="text-align:right"><?=$hh($r['smart_working'])?></td>
-          <td style="text-align:right"><?=$hh($r['reperibilita'])?></td>
-          <td style="text-align:right;color:#f59e0b"><?=$hh($r['fuori_orario'])?></td>
         </tr>
       <?php endforeach; ?>
       </tbody>
+      <?php if ($righe): // v1.9.89 — totali: coincidono con i KPI e con «Ore per modalità» ?>
+      <tfoot><tr style="font-weight:700;background:#f8fafc">
+        <td colspan="<?=count($f['gb'])?>">Totale<?= count($righe) >= 500 ? ' (prime 500 righe)' : '' ?></td>
+        <td style="text-align:right"><?=$hh($tD['interventi'])?></td>
+        <td style="text-align:right">—</td>
+        <td style="text-align:right"><?=$hh1($tD['ore'])?></td>
+        <td style="text-align:right;color:#16a34a"><?=$hh1($tD['ore_ordinarie'])?></td>
+        <td style="text-align:right;color:#b45309"><?=$hh1($tD['ore_fuori_orario'])?></td>
+        <td style="text-align:right;color:#7c3aed"><?=$hh1($tD['ore_reperibilita'])?></td>
+        <td style="text-align:right;color:#7c3aed"><?=$hh($tD['reperibilita'])?></td>
+        <td style="text-align:right"><?=$hh1($tD['ore_extra'])?></td>
+        <td style="text-align:right"><?=$hh1($tD['ore_viaggio'])?></td>
+        <td style="text-align:right"><?=$tD['km'] > 0 ? $hh1($tD['km']) : '—'?></td>
+        <td style="text-align:right"><?=$hh($tD['presso_cliente'])?></td>
+        <td style="text-align:right"><?=$hh($tD['da_remoto'])?></td>
+        <td style="text-align:right"><?=$hh($tD['smart_working'])?></td>
+      </tr></tfoot>
+      <?php endif; ?>
     </table>
   </div>
   <p style="font-size:11px;color:var(--muted);margin-top:8px">
     <strong>Giornate-uomo</strong>: coppia incaricato + giorno. Chi svolge cinque interventi in un
-    giorno ha lavorato una giornata. <strong>Le ore extra sono comprese nelle ore</strong>, non
-    aggiuntive. <strong>Km</strong> compare solo dove la distanza sede-cliente è stata rilevata:
+    giorno ha lavorato una giornata. <strong>Ore ordinarie + fuori orario + reperibilità = ore totali</strong>
+    (+ eventuali non classificate; stessa regola di KPI, andamento e giorni per persona); le colonne «N.» contano interventi, non ore.
+    <strong>Le ore extra sono comprese nelle ore</strong>, non aggiuntive. <strong>Km</strong> compare solo dove la distanza sede-cliente è stata rilevata:
     una cella vuota significa dato assente, non distanza nulla.
   </p>
 </div>
@@ -793,9 +840,11 @@ if (!empty($trendG['rows'])):
          $hh1($gQ['giornate_equiv'] ?? 0) . ' giornate eq.'],
         ['Ore valorizzate', $hh1($gQ['ore_valorizzate'] ?? 0), '#7c3aed', 'con tariffa di listino'],
         ['Ore non valorizzate', $hh1($gQ['ore_non_valorizzate'] ?? 0), '#64748b',
-         $hh($gQ['giorni_uomo_non_valorizzati'] ?? 0) . ' giorni-uomo'],
-        ['Giorni in fascia C', $hh($gQ['giorni_uomo_C'] ?? 0), '#16a34a', 'orario ordinario'],
-        ['Giorni in fascia D', $hh($gQ['giorni_uomo_D'] ?? 0), '#f59e0b', 'extra-orario'],
+         $hh($gQ['giorni_uomo_non_valorizzati'] ?? 0) . ' giorni-uomo · dettaglio sotto'],
+        ['Ore fuori orario', $hh1($tot['ore_fuori_orario'] ?? 0), '#b45309',
+         $hh1($tot['ore_ordinarie'] ?? 0) . ' h ordinarie'],
+        ['Ore reperibilità', $hh1($tot['ore_reperibilita'] ?? 0), '#7c3aed',
+         $hh($tot['reperibilita'] ?? 0) . ' interventi'],
         ['Produzione teorica', $hh1($gQ['produzione_teorica'] ?? 0), '#7c3aed', 'a listino'],
       ] as [$l, $v, $c, $sb]): ?>
         <div style="text-align:center;padding:11px;background:#f8fafc;border-radius:8px">
@@ -810,9 +859,9 @@ if (!empty($trendG['rows'])):
     <?php if ($fLetta < 50): ?>
       <div style="background:#fffbeb;border-left:3px solid #f59e0b;padding:8px 11px;
                   border-radius:0 6px 6px 0;font-size:11px;margin-bottom:8px">
-        <strong>Solo il <?=$hh1($fLetta)?>% dei moduli ha la fascia letta dall'attività</strong>: per
-        gli altri è dedotta dall'orario di inizio. Il conteggio per fascia eredita questa
-        incertezza — i giorni in fascia D potrebbero essere in parte supposti.
+        <strong>Solo il <?=$hh1($fLetta)?>% dei moduli ha la fascia tariffaria letta dall'attività</strong>: per
+        gli altri è dedotta dall'orario di inizio. Riguarda la tariffa applicata (produzione teorica),
+        non le ore per classe della tabella.
       </div>
     <?php endif; ?>
     <?php if ($senzaTar > 0): ?>
@@ -828,19 +877,22 @@ if (!empty($trendG['rows'])):
       <thead>
         <tr style="font-size:9px;color:var(--muted)">
           <th></th>
-          <th colspan="3" style="text-align:center;border-bottom:2px solid #2563eb">GIORNI</th>
-          <th colspan="2" style="text-align:center;border-bottom:2px solid #64748b">ORE</th>
-          <th colspan="2" style="text-align:center;border-bottom:2px solid #16a34a">PER FASCIA</th>
+          <th colspan="3" style="text-align:center;border-bottom:2px solid #2563eb">GIORNI LAVORATI (TOTALE)</th>
+          <th colspan="4" style="text-align:center;border-bottom:2px solid #334155">ORE PER CLASSE (ORDINARIE + FUORI ORARIO + REPERIBILITÀ = TOTALE)</th>
+          <th colspan="2" style="text-align:center;border-bottom:2px solid #64748b">ORE PER VALORE</th>
           <th colspan="2" style="text-align:center;border-bottom:2px solid #7c3aed">PRODUZIONE</th>
           <th></th>
         </tr>
         <tr><th>Operatore</th>
-          <th style="text-align:right">Lavorati</th>
+          <th style="text-align:right" title="giorni distinti con almeno un intervento">Giorni</th>
+          <th style="text-align:right" title="di cui giorni con almeno un intervento in reperibilità">di cui in reperib.</th>
           <th style="text-align:right">Giornate eq.</th>
-          <th style="text-align:right">h/giorno</th>
-          <th style="text-align:right">Totali</th>
-          <th style="text-align:right" title="ore senza tariffa di listino">non valoriz.</th>
-          <th style="text-align:right">C</th><th style="text-align:right">D</th>
+          <th style="text-align:right">Ore totali</th>
+          <th style="text-align:right;color:#16a34a">Ordinarie</th>
+          <th style="text-align:right;color:#b45309">Fuori orario</th>
+          <th style="text-align:right;color:#7c3aed">Reperibilità</th>
+          <th style="text-align:right;color:#7c3aed" title="con tariffa di listino">Valorizzate</th>
+          <th style="text-align:right;color:#64748b" title="senza tariffa di listino: vedi dettaglio sotto">Non valorizzate</th>
           <th style="text-align:right">Teorica</th>
           <th style="text-align:right">€/giorno</th>
           <th>Aree tecnologiche</th></tr>
@@ -851,14 +903,16 @@ if (!empty($trendG['rows'])):
           <td style="font-weight:600"><?=h($x['operatore'])?>
             <span style="font-size:9px;color:var(--muted)">
               · <?=$hh($x['interventi'])?> interventi · <?=$hh($x['commesse'])?> commesse</span></td>
+          <?php $cl = $gCls[$x['operatore']] ?? []; ?>
           <td style="text-align:right;font-weight:700;font-size:13px"><?=$hh($x['giorni_lavorati'])?></td>
+          <td style="text-align:right;color:#7c3aed"><?=(int)($cl['giorni_reperibilita'] ?? 0) > 0 ? $hh($cl['giorni_reperibilita']) : '—'?></td>
           <td style="text-align:right;color:var(--muted)"><?=$hh1($x['giornate_equiv'])?></td>
-          <td style="text-align:right;color:var(--muted)"><?=$hh1($x['ore_per_giorno'])?></td>
-          <td style="text-align:right;font-weight:600"><?=$hh1($x['ore'])?></td>
+          <td style="text-align:right;font-weight:700"><?=$hh1($x['ore'])?></td>
+          <td style="text-align:right;color:#16a34a"><?=$hh1($cl['ore_ordinarie'] ?? 0)?></td>
+          <td style="text-align:right;color:#b45309"><?=(float)($cl['ore_fuori_orario'] ?? 0) > 0 ? $hh1($cl['ore_fuori_orario']) : '—'?></td>
+          <td style="text-align:right;color:#7c3aed;font-weight:600"><?=(float)($cl['ore_reperibilita'] ?? 0) > 0 ? $hh1($cl['ore_reperibilita']) : '—'?></td>
+          <td style="text-align:right;color:#7c3aed"><?=$hh1($x['ore_valorizzate'])?></td>
           <td style="text-align:right;color:#64748b"><?=((float)$x['ore_non_valorizzate']) > 0 ? $hh1($x['ore_non_valorizzate']) : '—'?></td>
-          <td style="text-align:right;color:#16a34a"><?=$hh($x['giorni_C'])?></td>
-          <td style="text-align:right;color:#f59e0b;
-                font-weight:<?=((int)$x['giorni_D'])>0?'700':'400'?>"><?=$hh($x['giorni_D'])?></td>
           <td style="text-align:right;font-weight:700">
             <?=$x['produzione_teorica']!==null?$hh1($x['produzione_teorica']):'—'?></td>
           <td style="text-align:right;color:var(--muted)">
@@ -874,6 +928,21 @@ if (!empty($trendG['rows'])):
         </tr>
       <?php endforeach; ?>
       </tbody>
+      <?php // v1.9.89 — totali della tabella: coincidono con i KPI della pagina ?>
+      <tfoot><tr style="font-weight:700;background:#f8fafc">
+        <td>Totale (<?=$hh(count($gOp))?> persone)</td>
+        <td style="text-align:right"><?=$hh($gQ['giorni_uomo'] ?? 0)?> <span style="font-weight:400;font-size:9px">gg-uomo</span></td>
+        <td style="text-align:right;color:#7c3aed"><?=$hh(array_sum(array_map(fn($c) => (int)$c['giorni_reperibilita'], $gCls)))?></td>
+        <td style="text-align:right"><?=$hh1($gQ['giornate_equiv'] ?? 0)?></td>
+        <td style="text-align:right"><?=$hh1($gQ['ore'] ?? 0)?></td>
+        <td style="text-align:right;color:#16a34a"><?=$hh1($tot['ore_ordinarie'] ?? 0)?></td>
+        <td style="text-align:right;color:#b45309"><?=$hh1($tot['ore_fuori_orario'] ?? 0)?></td>
+        <td style="text-align:right;color:#7c3aed"><?=$hh1($tot['ore_reperibilita'] ?? 0)?></td>
+        <td style="text-align:right;color:#7c3aed"><?=$hh1($gQ['ore_valorizzate'] ?? 0)?></td>
+        <td style="text-align:right;color:#64748b"><?=$hh1($gQ['ore_non_valorizzate'] ?? 0)?></td>
+        <td style="text-align:right"><?=$hh1($gQ['produzione_teorica'] ?? 0)?></td>
+        <td></td><td></td>
+      </tr></tfoot>
     </table>
 
     <?php // v1.9.88 — ripartizione per codice linea, area tecnologica e dimensioni correlate ?>
@@ -909,14 +978,64 @@ if (!empty($trendG['rows'])):
       <?php endforeach; ?>
     </div>
 
+    <?php // v1.9.89 — dettaglio delle ore non valorizzate (senza tariffa di listino) ?>
+    <?php if ($gNv):
+          $nvMot = []; $nvLin = [];
+          foreach ($gNv as $x) {
+              $nvMot[$x['motivo']] = ($nvMot[$x['motivo']] ?? 0) + (float)$x['ore'];
+              $nvLin[$x['codice_linea']]['ore'] = ($nvLin[$x['codice_linea']]['ore'] ?? 0) + (float)$x['ore'];
+              $nvLin[$x['codice_linea']]['label'] = $x['contratto'];
+          }
+          arsort($nvMot); uasort($nvLin, fn($p, $q) => $q['ore'] <=> $p['ore']); ?>
+      <details id="non-valorizzate" open style="margin-top:12px;border:1px solid #cbd5e1;border-radius:8px;padding:8px 10px;background:#f8fafc">
+        <summary style="cursor:pointer;font-size:12px;font-weight:700">
+          <i class="fa-solid fa-circle-minus" style="color:#64748b"></i>
+          Dettaglio ore non valorizzate — <?=$hh1($gQ['ore_non_valorizzate'] ?? 0)?> h
+          <span style="font-weight:400;color:var(--muted);font-size:11px">· <?=$hh(count($gNv))?> righe persona × commessa
+            · senza tariffa di listino: contano nei giorni e nelle ore, non nella produzione teorica</span></summary>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0">
+          <?php foreach ($nvMot as $m => $o): ?>
+            <span style="background:#fff;border:1px solid #cbd5e1;border-radius:12px;padding:2px 9px;font-size:11px">
+              <strong><?=h($m)?></strong> <?=$hh1($o)?> h</span>
+          <?php endforeach; ?>
+          <?php foreach (array_slice($nvLin, 0, 8, true) as $cl => $o): ?>
+            <span style="background:#eef2ff;border-radius:12px;padding:2px 9px;font-size:11px" title="<?=h($o['label'])?>">
+              <?=h($cl)?> <?=$hh1($o['ore'])?> h</span>
+          <?php endforeach; ?>
+        </div>
+        <div style="max-height:420px;overflow:auto">
+        <table class="data-table" style="width:100%;font-size:11px;margin:0">
+          <thead><tr><th>Codice linea</th><th>Commessa</th><th>Cliente</th><th>Persona</th>
+            <th style="text-align:right">Interventi</th><th style="text-align:right">Giorni</th>
+            <th style="text-align:right">Ore</th><th>Motivo</th><th>Fascia · unità senza tariffa</th></tr></thead>
+          <tbody>
+          <?php foreach ($gNv as $x): ?>
+            <tr><td title="<?=h((string)$x['contratto'])?>"><?=h((string)$x['codice_linea'])?></td>
+              <td><code><?=h((string)$x['commessa'])?></code></td>
+              <td><?=h(mb_strimwidth((string)$x['cliente'], 0, 32, '…'))?></td>
+              <td><?=h((string)$x['operatore'])?></td>
+              <td style="text-align:right"><?=$hh($x['interventi'])?></td>
+              <td style="text-align:right"><?=$hh($x['giorni'])?></td>
+              <td style="text-align:right;font-weight:700"><?=$hh1($x['ore'])?></td>
+              <td style="color:<?=$x['motivo'] === 'Commessa senza listino' ? '#64748b' : '#b45309'?>"><?=h((string)$x['motivo'])?></td>
+              <td style="color:var(--muted)"><?=$x['motivo'] === 'Commessa senza listino' ? '—' : h((string)$x['combinazioni'])?></td></tr>
+          <?php endforeach; ?>
+          </tbody>
+        </table>
+        </div>
+      </details>
+    <?php endif; ?>
+
     <p style="font-size:11px;color:var(--muted);margin-top:8px;padding-top:8px;
               border-top:1px solid #f1f5f9">
       <strong>«Giorni lavorati» sono giorni distinti</strong>: due interventi nello stesso giorno
       contano una volta sola. Le <strong>giornate equivalenti</strong> sono le ore diviso 8 —
       chi lavora due ore al giorno per venti giorni ha 20 giorni lavorati e 5 giornate.
-      Un giorno con interventi in due fasce <strong>conta in entrambe</strong>, quindi C + D può
-      superare i giorni totali. La <strong>produzione teorica</strong> è ore × listino: ciò che il
-      lavoro varrebbe, non ciò che è stato fatturato.
+      <strong>Ore per classe</strong>: ordinarie (dentro l'orario di lavoro), fuori orario e reperibilità
+      (intervento in reperibilità, qualunque orario) — stessa regola di KPI, andamento e dettaglio; la somma
+      è il totale. «di cui in reperib.» conta i giorni con almeno un intervento in reperibilità.
+      <strong>Valorizzate</strong> = con tariffa di listino. La <strong>produzione teorica</strong> è ore × listino:
+      ciò che il lavoro varrebbe, non ciò che è stato fatturato.
     </p>
   </div>
 <?php endif; ?>
