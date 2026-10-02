@@ -930,19 +930,112 @@ final class ItServiceModel
     private const RSI_EXTRA = "LEAST(COALESCE(ao.extra_hours, ir.`extra_hours`, 0), COALESCE(ir.`quantity_hours`, 0))";
     private const RSI_COST  = "COALESCE(ao.cost, a.human_resource_cost, a.total_cost, 0)";
 
-    /** v1.9.90 — attività DGB del periodo senza modulo di intervento (fuori dalle due sezioni). */
+    /* ── v1.9.91 — Attività DGB senza modulo di intervento ─────────────────────
+     *
+     * Restano fuori dal perimetro (non hanno un rapportino). Nella pagina hanno una sezione propria.
+     * Filtri applicabili senza rapportino: periodo (data dell'attività), contratto/PM project,
+     * stato commessa, incaricato (operatore DGB), cliente, linea e codice linea (commessa collegata),
+     * ricerca libera. Le dimensioni esistenti solo sui rapportini (settore, modalità, fascia, durata,
+     * sede, natura, azienda) non si applicano e sono dichiarate in pagina.
+     */
+    private const SM_MOTIVO = "CASE
+            WHEN a.status IN ('assigned','new','planned','scheduled') THEN 'Assegnata, non ancora rendicontata'
+            WHEN a.status = 'in_progress' THEN 'In corso, non ancora rendicontata'
+            WHEN a.status LIKE 'frozen%' THEN 'Congelata / sospesa'
+            WHEN a.status IN ('completed','closed','approved') THEN 'Eseguita ma senza modulo (da sincronizzare)'
+            WHEN a.status = 'aborted' THEN 'Annullata'
+            ELSE CONCAT('Altro stato: ', COALESCE(a.status,'(vuoto)')) END";
+
+    private function smFrom(array $f, array &$b): string
+    {
+        $w = ['COALESCE(a.deleted,0) <> 1',
+              'NOT EXISTS (SELECT 1 FROM `cm_intervention_reports` x WHERE x.`dgb_activity_id` = a.id)',
+              self::DGB_DATA . ' BETWEEN ? AND ?'];
+        $b[] = $f['from']; $b[] = $f['to'];
+        if ($c = $this->ctrCondDgb('a.id_contract', $f, $b)) $w[] = $c;
+        if ($c = self::statoCond('pst.`dgb_contract_id` = a.id_contract', $f)) $w[] = $c;
+        if (!empty($f['incaricati'])) {
+            $ph = implode(',', array_fill(0, count($f['incaricati']), '?'));
+            $w[] = "(TRIM(CONCAT_WS(' ', op.first_name, op.second_name)) IN ($ph) OR TRIM(CONCAT_WS(' ', op.second_name, op.first_name)) IN ($ph))";
+            foreach ($f['incaricati'] as $v) $b[] = $v;
+            foreach ($f['incaricati'] as $v) $b[] = $v;
+        }
+        if (($f['cliente'] ?? '') !== '') { $w[] = "COALESCE(cli.name, p.client_raw) LIKE ?"; $b[] = '%' . $f['cliente'] . '%'; }
+        if (!empty($f['codici'])) {
+            $w[] = "p.service_line IN (" . implode(',', array_fill(0, count($f['codici']), '?')) . ")";
+            foreach ($f['codici'] as $v) $b[] = $v;
+        }
+        if (!empty($f['linee'])) {
+            $w[] = "COALESCE(cm.label, p.service_line) IN (" . implode(',', array_fill(0, count($f['linee']), '?')) . ")";
+            foreach ($f['linee'] as $v) $b[] = $v;
+        }
+        if (($f['q'] ?? '') !== '') {
+            $w[] = "(a.code LIKE ? OR c.code LIKE ? OR p.project_code LIKE ? OR cli.name LIKE ? OR a.ticket LIKE ?)";
+            $lk = '%' . $f['q'] . '%'; array_push($b, $lk, $lk, $lk, $lk, $lk);
+        }
+        return "
+          FROM dgb_forms_activity a
+          LEFT JOIN dgb_forms_activity_operator ao ON ao.id_activity = a.id AND ao.id_operator = a.id_operator
+          LEFT JOIN dgb_operator op ON op.id = a.id_operator
+          LEFT JOIN dgb_forms_contract c ON c.id = a.id_contract
+          LEFT JOIN (SELECT dgb_contract_id, MIN(id) AS id FROM cm_projects GROUP BY dgb_contract_id) px ON px.dgb_contract_id = a.id_contract
+          LEFT JOIN cm_projects p ON p.id = px.id
+          LEFT JOIN cm_contract_models cm ON cm.service_line = p.service_line
+          LEFT JOIN clients cli ON cli.id = COALESCE(c.id_customer_comp, a.id_customer_comp)
+          WHERE " . implode(' AND ', $w);
+    }
+
+    /** Filtri della pagina che non si applicano alle attività senza modulo. */
+    public static function filtriNonApplicabiliSenzaModulo(array $f): array
+    {
+        $out = [];
+        foreach (['settori' => 'settore', 'aziende' => 'azienda', 'modalita' => 'modalità', 'fasce' => 'fascia',
+                  'durate' => 'durata', 'sedi' => 'sede'] as $k => $l) if (!empty($f[$k])) $out[] = $l;
+        if (($f['ricavo'] ?? '') !== '') $out[] = 'natura';
+        return $out;
+    }
+
+    /** v1.9.91 — Totali per motivo. */
     public function attivitaSenzaModulo(array $f): array
     {
+        $b = [];
         try {
             $st = $this->pdo->prepare(
-                "SELECT COUNT(*) AS attivita, ROUND(SUM(COALESCE(ao.hours, a.human_resource_hours, 0)), 2) AS ore
-                   FROM dgb_forms_activity a
-                   LEFT JOIN dgb_forms_activity_operator ao ON ao.id_activity = a.id AND ao.id_operator = a.id_operator
-                  WHERE COALESCE(a.deleted,0) <> 1 AND " . self::DGB_DATA . " BETWEEN ? AND ?
-                    AND NOT EXISTS (SELECT 1 FROM `cm_intervention_reports` x WHERE x.`dgb_activity_id` = a.id)");
-            $st->execute([$f['from'], $f['to']]);
-            return $st->fetch(PDO::FETCH_ASSOC) ?: ['attivita' => 0, 'ore' => 0];
-        } catch (Throwable $e) { return ['attivita' => 0, 'ore' => 0]; }
+                "SELECT " . self::SM_MOTIVO . " AS motivo, COUNT(*) AS attivita,
+                        ROUND(SUM(COALESCE(ao.hours, a.human_resource_hours, a.planned_hours, 0)), 2) AS ore,
+                        COUNT(DISTINCT a.id_contract) AS contratti, COUNT(DISTINCT a.id_operator) AS operatori
+                 " . $this->smFrom($f, $b) . " GROUP BY motivo ORDER BY attivita DESC");
+            $st->execute($b);
+            $per = $st->fetchAll(PDO::FETCH_ASSOC);
+        } catch (Throwable $e) { $per = []; }
+        return ['attivita' => array_sum(array_column($per, 'attivita')),
+                'ore'      => round(array_sum(array_map(fn($r) => (float)$r['ore'], $per)), 2),
+                'motivi'   => $per];
+    }
+
+    /** v1.9.91 — Dettaglio per contratto × operatore × motivo (con $perAttivita: una riga per attività, per l'export). */
+    public function attivitaSenzaModuloDettaglio(array $f, bool $perAttivita = false, int $limite = 1000): array
+    {
+        $b = [];
+        $contr = "COALESCE(NULLIF(c.code,''), p.project_code, CONCAT('Contratto #', a.id_contract))";
+        $oper  = "COALESCE(NULLIF(TRIM(CONCAT_WS(' ', op.second_name, op.first_name)),''), CONCAT('Operatore #', a.id_operator))";
+        $ore   = "COALESCE(ao.hours, a.human_resource_hours, a.planned_hours, 0)";
+        $sql = $perAttivita
+            ? "SELECT a.id AS attivita_id, a.code AS codice, a.ticket, a.status AS stato, " . self::SM_MOTIVO . " AS motivo,
+                      " . self::DGB_DATA . " AS data, $contr AS contratto, p.project_code AS pm_project, p.service_line AS codice_linea,
+                      COALESCE(cli.name, p.client_raw) AS cliente, $oper AS operatore,
+                      ROUND($ore, 2) AS ore, (ao.id IS NOT NULL) AS allocata, a.date_dead_line AS scadenza
+               " . $this->smFrom($f, $b) . " ORDER BY data, contratto LIMIT " . (int)$limite
+            : "SELECT a.id_contract AS contract_id, MAX($contr) AS contratto, MAX(p.project_code) AS pm_project,
+                      MAX(p.service_line) AS codice_linea, MAX(COALESCE(cli.name, p.client_raw)) AS cliente,
+                      $oper AS operatore, " . self::SM_MOTIVO . " AS motivo,
+                      COUNT(*) AS attivita, ROUND(SUM($ore), 2) AS ore,
+                      MIN(" . self::DGB_DATA . ") AS dal, MAX(" . self::DGB_DATA . ") AS al
+               " . $this->smFrom($f, $b) . "
+               GROUP BY a.id_contract, operatore, motivo
+               ORDER BY motivo, contratto, operatore LIMIT " . (int)$limite;
+        try { $st = $this->pdo->prepare($sql); $st->execute($b); return $st->fetchAll(PDO::FETCH_ASSOC); }
+        catch (Throwable $e) { return []; }
     }
 
     /* [PM_V1_9_36_APPLIED] Dettaglio per Commessa (sorgente dgb_forms_activity diretta) */

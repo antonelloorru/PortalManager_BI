@@ -133,6 +133,10 @@ if ($pronto && ($_GET['print'] ?? '') === '1') {
     exit;
 }
 
+// v1.9.91 — un solo blocco filtri (pannello della pagina, server-side): niente barra automatica di
+// footer.php (ListFilter::renderAuto), che filtrava solo le righe a video di una tabella senza
+// aggiornare totali, grafici, stampa ed export e non era sincronizzata con i filtri della pagina.
+$GLOBALS['PM_NO_AUTOFILTER'] = true;
 require_once('header.php');
 
 $qs = function (array $over = []) use ($f) {

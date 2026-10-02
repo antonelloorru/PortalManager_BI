@@ -497,4 +497,26 @@ $gDimP = ['codice_linea' => $it->giorniPer($f, 'codice_linea'), 'area_tecnologic
   </table>
 <?php endforeach; ?>
 <?php endif; ?>
+
+<?php // v1.9.91 — Attività DGB senza modulo di intervento (stampa) ?>
+<?php if ($incOn('senzamodulo') && !empty($smDett)): ?>
+<h2 class="pr34-h2" style="margin:18px 0 6px;font-size:14px">Attività DGB senza modulo di intervento —
+  <?= number_format((float)$nSm['attivita'], 0, ',', '.') ?> attività · <?= number_format((float)$nSm['ore'], 1, ',', '.') ?> h</h2>
+<table class="pr34-tbl" style="width:100%;border-collapse:collapse">
+  <thead><tr><th>Contratto</th><th>Linea</th><th>Operatore</th><th>Motivo</th><th>Attività</th><th>Ore</th><th>Dal</th><th>Al</th></tr></thead>
+  <tbody>
+  <?php foreach (array_slice($smDett, 0, 400) as $x): ?>
+    <tr><td><?= htmlspecialchars((string)$x['contratto'], ENT_QUOTES, 'UTF-8') ?></td>
+      <td><?= htmlspecialchars((string)$x['codice_linea'], ENT_QUOTES, 'UTF-8') ?></td>
+      <td><?= htmlspecialchars((string)$x['operatore'], ENT_QUOTES, 'UTF-8') ?></td>
+      <td><?= htmlspecialchars((string)$x['motivo'], ENT_QUOTES, 'UTF-8') ?></td>
+      <td><?= (int)$x['attivita'] ?></td>
+      <td><?= number_format((float)$x['ore'], 1, ',', '.') ?></td>
+      <td><?= date('d/m/Y', strtotime((string)$x['dal'])) ?></td>
+      <td><?= date('d/m/Y', strtotime((string)$x['al'])) ?></td></tr>
+  <?php endforeach; ?>
+  </tbody>
+</table>
+<p class="nota">Escluse dai totali della relazione: attività senza modulo di intervento (assegnate non rendicontate, congelate, o eseguite non sincronizzate). Ore allocate o pianificate.</p>
+<?php endif; ?>
 </body></html>

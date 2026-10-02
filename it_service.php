@@ -19,10 +19,11 @@ $it = new ItServiceModel($pdo);
 $f  = $it->normFilters($_GET);
 
 // v1.9.46 — dettagli selezionabili prima di stampa/export
-$INC_ALL = ['quadro','andamento','dettaglio','giorni','costi','contratti','commesse'];
+$INC_ALL = ['quadro','andamento','dettaglio','giorni','costi','contratti','commesse','senzamodulo'];
 $INC_LBL = ['quadro'=>'Quadro / KPI','andamento'=>'Andamento mensile','dettaglio'=>'Dettaglio interventi',
             'giorni'=>'Giorni per operatore','costi'=>'Riepilogo costi',
-            'contratti'=>'Riepilogo per contratto','commesse'=>'Dettaglio per commessa'];
+            'contratti'=>'Riepilogo per contratto','commesse'=>'Dettaglio per commessa',
+            'senzamodulo'=>'Attività DGB senza modulo'];
 $inc = isset($_GET['inc']) ? array_values(array_intersect($INC_ALL, (array)$_GET['inc'])) : $INC_ALL;
 if (!$inc) $inc = $INC_ALL;
 $incOn = fn(string $k): bool => in_array($k, $inc, true);
@@ -90,6 +91,9 @@ try {
     // v1.9.90 — filtri applicati e attività DGB fuori perimetro, per le sezioni per contratto
     $filtriTxt = $it->descrizioneFiltri($f, $vCtr);
     $nSm       = $it->attivitaSenzaModulo($f);
+    // v1.9.91 — dettaglio delle attività DGB senza modulo (sezione dedicata)
+    $smDett    = $it->attivitaSenzaModuloDettaglio($f);
+    $smNonAppl = ItServiceModel::filtriNonApplicabiliSenzaModulo($f);
 } catch (Throwable $e) {
     $pronto = false; $errore = $e->getMessage();
     $trendG = ['from' => '', 'to' => '', 'rows' => []];
@@ -102,7 +106,7 @@ try {
     // normale le variabili restano indefinite. Il template le usa comunque, e
     // PHP produce un avviso su ogni riferimento.
     $cQ2 = $gQ = []; $cRie2 = $gOp = $gAr = $gDim = $gCls = $gNv = [];
-    $dettCommessa = []; $riepContratto = []; $filtriTxt = []; $nSm = ['attivita' => 0, 'ore' => 0];
+    $dettCommessa = []; $riepContratto = []; $filtriTxt = []; $nSm = ['attivita' => 0, 'ore' => 0, 'motivi' => []]; $smDett = []; $smNonAppl = [];
     $vLin = $vSet = $vInc = $vSed = $vCod = $vAz = []; $gCod = $gAz = []; $vCtr = [];
 }
 
@@ -181,6 +185,14 @@ if ($pronto && ($_GET['export'] ?? '') === 'xlsx') {
     }
 
     $w->addSheet('Dettaglio', $int);
+
+    // v1.9.91 — attività DGB senza modulo di intervento (una riga per attività)
+    $rsm = [['Data','Attività','Ticket','Stato DGB','Motivo','Contratto','PM Project','Codice linea','Cliente',
+             'Operatore','Ore (pianificate/allocate)','Allocazione','Scadenza']];
+    foreach ($it->attivitaSenzaModuloDettaglio($f, true, 100000) as $x) $rsm[] = [$x['data'], $x['codice'], $x['ticket'],
+        $x['stato'], $x['motivo'], $x['contratto'], $x['pm_project'], $x['codice_linea'], $x['cliente'], $x['operatore'],
+        $x['ore'], (int)$x['allocata'] ? 'sì' : 'no', $x['scadenza']];
+    $w->addSheet('DGB senza modulo', $rsm);
 
     // foglio 2: matrice pivot incaricato x linea di servizio.
     //
@@ -423,6 +435,17 @@ if ($pronto && ($_GET['export'] ?? '') === 'docx') {
             foreach ($rows as $r) $rr[] = [(string)$r['report_date'], $r['operator_name'], ((string)($r['ticket'] ?? '') ?: '—'), $r['fascia'], $r['regime'], $hh1($r['ore']), $eur($r['costo_contratto']), $eur($r['tot_costo_tab'])];
             $doc->table(['Data','Operatore','Ticket','Fascia','Regime','Ore','Costo','Tabella'], $rr, ['right'=>[5,6,7]]);
         }
+    }
+
+    // ATTIVITA' DGB SENZA MODULO — v1.9.91
+    if ($incOn('senzamodulo') && $smDett) {
+        $doc->heading('Attività DGB senza modulo di intervento', 1);
+        $rr = []; foreach ($nSm['motivi'] as $x) $rr[] = [$x['motivo'], $hh($x['attivita']), $hh1($x['ore']), $hh($x['contratti']), $hh($x['operatori'])];
+        $doc->table(['Motivo','Attività','Ore','Contratti','Operatori'], $rr, ['right'=>[1,2,3,4]]);
+        $rr = []; foreach (array_slice($smDett, 0, 300) as $x) $rr[] = [$x['contratto'], (string)$x['codice_linea'], $x['operatore'], $x['motivo'], $hh($x['attivita']), $hh1($x['ore']),
+            date('d/m', strtotime($x['dal'])) . '–' . date('d/m', strtotime($x['al']))];
+        $doc->table(['Contratto','Linea','Operatore','Motivo','Attività','Ore','Periodo'], $rr, ['right'=>[4,5]]);
+        $doc->note('Attività del periodo (data attività) senza modulo di intervento: non entrano nei totali della relazione. Ore = allocate o pianificate.');
     }
 
     $doc->download("relazione_servizio_it_{$f['from']}_{$f['to']}.docx");
@@ -1180,8 +1203,8 @@ if (!empty($trendG['rows'])):
     Righe = moduli di intervento del pannello (stessi filtri di KPI, grafici, costi e giorni) collegati al contratto DGB:
     ore totali <?= number_format((float)($sTot ?? 0),2,',','.') ?> su <?= number_format((float)($tot['ore'] ?? 0),2,',','.') ?> dei KPI<?= $dOre > 0 ? ' (differenza: moduli con attività DGB annullata o assente)' : '' ?>.
     <?php if ((int)$nSm['attivita'] > 0): ?>
-      Fuori da queste sezioni (in tutto il periodo, a prescindere dagli altri filtri): <?= number_format((float)$nSm['attivita'],0,',','.') ?> attività DGB senza modulo di intervento
-      (<?= number_format((float)$nSm['ore'],1,',','.') ?> h): non sono sincronizzate come rapportini.
+      Fuori da queste sezioni: <?= number_format((float)$nSm['attivita'],0,',','.') ?> attività DGB senza modulo di intervento
+      (<?= number_format((float)$nSm['ore'],1,',','.') ?> h) — <a href="#dgb-senza-modulo">dettaglio nella sezione dedicata</a>.
     <?php endif; ?></p>
 <?php endif; ?>
 
@@ -1248,6 +1271,57 @@ if (!empty($trendG['rows'])):
   });
 })();
 </script>
+<?php endif; ?>
+
+<?php // ── v1.9.91 — Attività DGB senza modulo di intervento ───────────────────── ?>
+<?php if ((int)$nSm['attivita'] > 0): ?>
+<div class="card" id="dgb-senza-modulo" style="margin:18px 0 14px;border-left:4px solid #64748b">
+  <div class="card-header">
+    <span class="card-title"><i class="fa-solid fa-link-slash"></i> Attività DGB senza modulo di intervento</span>
+    <span style="font-size:11px;color:var(--muted);margin-left:8px">
+      <?=$hh($nSm['attivita'])?> attività · <?=$hh1($nSm['ore'])?> h · fuori dai totali della relazione</span>
+  </div>
+  <div style="font-size:11px;color:var(--muted);margin:0 0 8px">
+    <i class="fa-solid fa-filter"></i> Periodo <?=h(date('d/m/Y', strtotime($f['from'])))?> – <?=h(date('d/m/Y', strtotime($f['to'])))?> (data dell'attività)
+    · filtri applicati: contratto, stato commessa, incaricato, cliente, linea, codice linea, ricerca
+    <?php if ($smNonAppl): ?><br><span style="color:#b45309">Non applicabili (dati presenti solo sui moduli): <?=h(implode(', ', $smNonAppl))?>.</span><?php endif; ?>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-bottom:10px">
+    <?php foreach ($nSm['motivi'] as $m): ?>
+      <div style="padding:10px;background:#f8fafc;border-radius:8px">
+        <div style="font-size:16px;font-weight:800;color:#334155"><?=$hh($m['attivita'])?> <span style="font-size:11px;font-weight:600;color:var(--muted)">attività · <?=$hh1($m['ore'])?> h</span></div>
+        <div style="font-size:11px;font-weight:700"><?=h($m['motivo'])?></div>
+        <div style="font-size:10px;color:var(--muted)"><?=$hh($m['contratti'])?> contratti · <?=$hh($m['operatori'])?> operatori</div>
+      </div>
+    <?php endforeach; ?>
+  </div>
+  <div style="max-height:460px;overflow:auto">
+  <table class="data-table" data-pm-nofilter style="width:100%;font-size:11px">
+    <thead><tr><th>Contratto</th><th>PM Project</th><th>Codice linea</th><th>Cliente</th><th>Operatore</th><th>Motivo</th>
+      <th style="text-align:right">Attività</th><th style="text-align:right" title="ore allocate o, in mancanza, pianificate">Ore</th><th>Dal</th><th>Al</th></tr></thead>
+    <tbody>
+    <?php foreach ($smDett as $x): ?>
+      <tr><td><code><?=h((string)$x['contratto'])?></code></td>
+        <td><?=h((string)$x['pm_project'])?></td>
+        <td><?=h((string)$x['codice_linea'])?></td>
+        <td><?=h(mb_strimwidth((string)$x['cliente'], 0, 32, '…'))?></td>
+        <td><?=h((string)$x['operatore'])?></td>
+        <td style="color:<?=str_starts_with((string)$x['motivo'], 'Eseguita') ? '#dc2626' : '#475569'?>"><?=h((string)$x['motivo'])?></td>
+        <td style="text-align:right"><?=$hh($x['attivita'])?></td>
+        <td style="text-align:right;font-weight:700"><?=$hh1($x['ore'])?></td>
+        <td><?=h(date('d/m/Y', strtotime((string)$x['dal'])))?></td>
+        <td><?=h(date('d/m/Y', strtotime((string)$x['al'])))?></td></tr>
+    <?php endforeach; ?>
+    </tbody>
+  </table>
+  </div>
+  <p style="font-size:11px;color:var(--muted);margin-top:8px">
+    Attività presenti nel DGB per il periodo ma senza modulo di intervento collegato, quindi escluse da KPI, grafici, costi,
+    giorni e riepiloghi. <strong>Assegnata / in corso</strong>: pianificata, non ancora rendicontata (ore pianificate).
+    <strong>Congelata</strong>: sospesa nel DGB. <strong>Eseguita ma senza modulo</strong>: chiusa nel DGB ma non sincronizzata —
+    va recuperata con la sincronizzazione. L'export XLSX contiene una riga per attività (foglio «DGB senza modulo»).
+  </p>
+</div>
 <?php endif; ?>
 
 <?php require_once('footer.php'); ?>

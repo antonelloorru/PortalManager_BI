@@ -509,6 +509,10 @@ $recent    = $imp->recentBatches(8);
 
 $msg = '';
 if (!empty($_SESSION['flash_msg'])) { $msg = $_SESSION['flash_msg']; unset($_SESSION['flash_msg']); }
+// v1.9.91 — un solo blocco filtri (pannello della pagina, server-side): niente barra automatica di
+// footer.php (ListFilter::renderAuto), che filtrava solo le righe a video di una tabella senza
+// aggiornare totali, grafici, stampa ed export e non era sincronizzata con i filtri della pagina.
+$GLOBALS['PM_NO_AUTOFILTER'] = true;
 require_once('header.php');
 
 $eur = fn($v) => $v !== null ? number_format((float)$v, 2, ',', '.') : '—';
