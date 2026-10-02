@@ -227,7 +227,8 @@ final class DirModel
         if ($f['from'] !== '') { $w[] = "(pf.`end_date` IS NULL OR pf.`end_date` >= ?)";   $a[] = $f['from']; }
         if ($f['to']   !== '') { $w[] = "(pf.`start_date` IS NULL OR pf.`start_date` <= ?)"; $a[] = $f['to']; }
         $st = $this->pdo->prepare(
-            "SELECT x.*, pf.`credit_on_value` AS fido_valore, pf.`credit_on_costs` AS fido_costi, " . self::FIDO . " AS fido
+            "SELECT x.*, pf.`id` AS project_id, pf.`external_link`,
+                    pf.`credit_on_value` AS fido_valore, pf.`credit_on_costs` AS fido_costi, " . self::FIDO . " AS fido
                FROM `{$this->v['v_cm_dir_attenzione']}` x
                LEFT JOIN `cm_projects` pf ON pf.`project_code` = x.`commessa`
               WHERE " . implode(' AND ', $w)
@@ -243,7 +244,7 @@ final class DirModel
     {
         [$w, $a] = $this->where($f);
         $st = $this->pdo->prepare(
-            "SELECT c.*, pf.`credit_on_value` AS fido_valore, pf.`credit_on_costs` AS fido_costi, " . self::FIDO . " AS fido
+            "SELECT c.*, pf.`external_link`, pf.`credit_on_value` AS fido_valore, pf.`credit_on_costs` AS fido_costi, " . self::FIDO . " AS fido
                FROM `{$this->v['v_cm_dir_commessa']}` c
                LEFT JOIN `cm_projects` pf ON pf.`id` = c.`commessa_id` WHERE $w
               ORDER BY c.`valore` DESC LIMIT " . (int)$limite);
@@ -317,7 +318,7 @@ final class DirModel
         [$w, $a] = $this->where($f);
         $st = $this->pdo->prepare(
             "SELECT c.`commessa_id`, c.`commessa`, c.`denominazione`, c.`cliente`, c.`agente`, c.`stato`,
-                    c.`start_date`, c.`end_date`, c.`valore`,
+                    c.`start_date`, c.`end_date`, c.`valore`, pf.`external_link`,
                     pf.`credit_on_value` AS fido_valore, pf.`credit_on_costs` AS fido_costi, " . self::FIDO . " AS fido,
                     o.`op_type_code` AS tipo, o.`op_date` AS data_ordine, o.`order_code` AS ordine, o.`revenue` AS importo
                FROM `{$this->v['v_cm_dir_commessa']}` c
@@ -338,7 +339,8 @@ final class DirModel
                                      $daOrd ? (string)$r['data_ordine'] : null, $da, $al);
             $id = (int)$r['commessa_id'];
             if (!isset($comm[$id])) {
-                $comm[$id] = ['commessa' => $r['commessa'], 'denominazione' => $r['denominazione'], 'cliente' => $r['cliente'],
+                $comm[$id] = ['project_id' => $id, 'external_link' => $r['external_link'],
+                              'commessa' => $r['commessa'], 'denominazione' => $r['denominazione'], 'cliente' => $r['cliente'],
                               'agente' => $r['agente'], 'stato' => $r['stato'], 'inizio' => $r['start_date'], 'fine' => $r['end_date'],
                               'fido' => (int)$r['fido'], 'fido_valore' => $r['fido_valore'], 'fido_costi' => $r['fido_costi'],
                               'ordini' => [], 'importo' => 0.0, 'valore_periodo' => 0.0, 'anni' => []];

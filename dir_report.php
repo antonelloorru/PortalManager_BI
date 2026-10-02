@@ -64,6 +64,13 @@ $fidoBadge = function (array $r): string {
        . ((float)($r['fido_costi'] ?? 0) != 0 ? ' · su costi: ' . number_format((float)$r['fido_costi'], 0, ',', '.') . ' €' : '');
     return '<span title="' . htmlspecialchars($t, ENT_QUOTES, 'UTF-8') . '" style="background:#fef3c7;color:#92400e;border-radius:6px;padding:1px 6px;font-size:10px;font-weight:700">FIDO</span>';
 };
+// v1.9.95 — Link SP e Scheda Progetto, come in Commesse / Progetti
+$linkSp = fn(array $r): string => !empty($r['external_link'])
+    ? '<a href="' . htmlspecialchars((string)$r['external_link'], ENT_QUOTES, 'UTF-8') . '" target="_blank" rel="noopener" title="Apri sul gestionale (SharePoint)" style="white-space:nowrap;font-size:10px;font-weight:700"><i class="fa-solid fa-arrow-up-right-from-square"></i> SP</a>'
+    : '<span style="color:#cbd5e1">—</span>';
+$schedaPrj = fn(array $r): string => !empty($r['project_id'])
+    ? '<a class="btn btn-sm btn-blue" style="white-space:nowrap;font-size:10px;padding:2px 7px" href="' . htmlspecialchars(url_safe('project_dashboard', ['id' => (int)$r['project_id']]), ENT_QUOTES, 'UTF-8') . '" title="Apri la scheda del progetto"><i class="fa-solid fa-chart-line"></i> Scheda Progetto</a>'
+    : '<span style="color:#cbd5e1">—</span>';
 $periodoTxt = ($f['from'] !== '' || $f['to'] !== '')
     ? 'dal ' . ($f['from'] !== '' ? date('d/m/Y', strtotime($f['from'])) : 'inizio') . ' al ' . ($f['to'] !== '' ? date('d/m/Y', strtotime($f['to'])) : 'fine')
     : 'intera durata delle commesse';
@@ -479,7 +486,7 @@ $qs = function (array $over = []) use ($f) {
   <?php else: ?>
     <div style="overflow-x:auto">
     <table class="data-table" style="width:100%;font-size:11px">
-      <thead><tr><th>Motivo</th><th>Commessa</th><th>Cliente</th>
+      <thead><tr><th>Motivo</th><th>Commessa</th><th>Link SP</th><th>Scheda Progetto</th><th>Cliente</th>
         <?php if ($ag === ''): ?><th>Agente</th><?php endif; ?>
         <th style="text-align:right">Valore</th><th style="text-align:right">Consumo</th>
         <th style="text-align:right">Avanz.</th><th style="text-align:right">Divergenza</th>
@@ -491,6 +498,8 @@ $qs = function (array $over = []) use ($f) {
                 background:<?=$colPrio[(int)$x['priorita']] ?? '#94a3b8'?>;margin-right:5px"></span>
             <?=h($x['motivo'])?></td>
           <td style="font-family:monospace;font-size:10px"><?=h($x['commessa'])?></td>
+          <td style="text-align:center"><?=$linkSp($x)?></td>
+          <td><?=$schedaPrj($x)?></td>
           <td><?=h(mb_strimwidth((string)$x['cliente'], 0, 24, '…'))?></td>
           <?php if ($ag === ''): ?><td style="font-size:10px"><?=h($x['agente'])?></td><?php endif; ?>
           <td style="text-align:right"><?=$eur($x['valore'])?></td>
@@ -569,7 +578,7 @@ $qs = function (array $over = []) use ($f) {
   </div>
   <div style="max-height:520px;overflow:auto">
   <table class="data-table" style="width:100%;font-size:11px">
-    <thead><tr><th>Commessa</th><th>Cliente</th><?php if ($ag === ''): ?><th>Agente</th><?php endif; ?><th>Fido</th>
+    <thead><tr><th>Commessa</th><th>Link SP</th><th>Scheda Progetto</th><th>Cliente</th><?php if ($ag === ''): ?><th>Agente</th><?php endif; ?><th>Fido</th>
       <th>Durata</th><th style="text-align:right">Importo ordini</th>
       <?php foreach ($anniC as $y): ?><th style="text-align:right"><?=(int)$y?></th><?php endforeach; ?>
       <th style="text-align:right">Nel periodo</th></tr></thead>
@@ -585,6 +594,8 @@ $qs = function (array $over = []) use ($f) {
                 = <?=$eur2($o['quota_mensile'])?>/mese<?php foreach ($o['anni'] as $y => $x): ?> · <?=(int)$y?>: <?=$n($x['mesi'])?> mesi = <?=$eur2($x['valore'])?><?php endforeach; ?></div>
             <?php endforeach; ?>
           </div></details></td>
+        <td style="text-align:center"><?=$linkSp($c)?></td>
+        <td><?=$schedaPrj($c)?></td>
         <td><?=h(mb_strimwidth((string)$c['cliente'], 0, 28, '…'))?></td>
         <?php if ($ag === ''): ?><td style="font-size:10px"><?=h((string)$c['agente'])?></td><?php endif; ?>
         <td><?=$fidoBadge($c)?></td>
