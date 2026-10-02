@@ -2,6 +2,9 @@
 /**
  * ItServiceModel — letture per la Relazione di Servizio IT.
  *
+ * v1.9.87 — filtro «Stato commessa» (aperta / chiusa / sospesa / non chiusa) e perimetro unico:
+ *           costi, giorni e sezioni DGB applicano TUTTI i filtri della pagina tramite lo stesso
+ *           insieme di rapportini (perimetro()), invece di un sottoinsieme ricostruito a mano.
  * v1.9.78 — filtro contratto delegato a PmContractFilter (condiviso con SD, direzionale, DGB).
  * v1.9.77 — filtro globale Codice Contratto / PM Project (`contratti`) su tutti i dataset.
  *
@@ -48,6 +51,14 @@ final class ItServiceModel
         'anno_mese'         => 'Mese',
     ];
 
+    /**
+     * v1.9.87 — Stato commessa (cm_projects.operational_status). «Chiusa» e «Non chiusa» sono
+     * complementari e coincidono con `commessa_attiva` di v_cm_it_giorni_base:
+     * chiuse = Chiusa / Annullata / Persa.
+     */
+    public const STATI = ['aperta' => 'Aperta', 'chiusa' => 'Chiusa', 'sospesa' => 'Sospesa', 'non_chiusa' => 'Non chiusa'];
+    private const STATI_CHIUSI = "('CHIUSA','ANNULLATA','PERSA')";
+
     /** v1.9.73 — nome da interrogare per ciascuna vista: copia aggiornata se lenta, altrimenti la vista. */
     private array $v = [];
 
@@ -85,6 +96,8 @@ final class ItServiceModel
             // commessa (cm_projects.project_code) oppure 'dgb:<id_contract>'
             // v1.9.78 — filtro condiviso fra le pagine (PmContractFilter, persistente in sessione)
             'contratti' => PmContractFilter::fromRequest($q),
+            // v1.9.87 — stato della commessa (multi-selezione, elenco chiuso)
+            'stati'     => array_values(array_intersect(array_keys(self::STATI), $arr($q['stato_commessa'] ?? []))),
             'ricavo'    => in_array($q['ricavo'] ?? '', ['1', '0'], true) ? (string)$q['ricavo'] : '',
             // v1.9.8 — ricerca libera e cliente, come nel pannello di
             // Commesse/Progetti: senza, per isolare una commessa bisognava
@@ -141,6 +154,7 @@ final class ItServiceModel
         }
         if ($f['ricavo'] !== '') { $w[] = "s.`ha_ricavo` = ?"; $a[] = (int)$f['ricavo']; }
         if ($c = $this->ctrCond('s.`commessa`', $f, $a)) $w[] = $c;
+        if ($c = self::statoCond('pst.`project_code` = s.`commessa`', $f)) $w[] = $c;   // v1.9.87
 
         if ($f['q'] !== '') {
             $w[] = "(s.`commessa` LIKE ? OR s.`cliente` LIKE ? OR s.`modulo` LIKE ?)";
@@ -185,6 +199,79 @@ final class ItServiceModel
         return $cf->active() ? $cf->sql('id', $col, $a) : null;
     }
 
+    /* ── v1.9.87 — Stato commessa e perimetro unico ─────────────────────────── */
+
+    /**
+     * Condizione sullo stato della commessa; $join lega `cm_projects pst` alla riga
+     * (codice commessa o id contratto DGB). NULL se il filtro e' vuoto.
+     * Valori da elenco chiuso: nessun parametro.
+     */
+    private static function statoCond(string $join, array $f): ?string
+    {
+        if (empty($f['stati'])) return null;
+        $st = "UPPER(TRIM(COALESCE(pst.`operational_status`,'')))";
+        $or = [];
+        foreach ($f['stati'] as $k) {
+            if ($k === 'aperta')     $or[] = "$st = 'APERTA'";
+            if ($k === 'sospesa')    $or[] = "$st = 'SOSPESA'";
+            if ($k === 'chiusa')     $or[] = "$st IN " . self::STATI_CHIUSI;
+            if ($k === 'non_chiusa') $or[] = "$st NOT IN " . self::STATI_CHIUSI;
+        }
+        return $or ? "EXISTS (SELECT 1 FROM `cm_projects` pst WHERE $join AND (" . implode(' OR ', $or) . "))" : null;
+    }
+
+    /** Filtri attivi oltre al periodo (qualunque dimensione). */
+    private static function haFiltri(array $f): bool
+    {
+        foreach (['linee','codici','settori','aziende','incaricati','modalita','fasce','durate','sedi','contratti','stati'] as $k)
+            if (!empty($f[$k])) return true;
+        return ($f['ricavo'] ?? '') !== '' || ($f['q'] ?? '') !== '' || ($f['cliente'] ?? '') !== '';
+    }
+
+    /** Filtri su dimensioni esistenti solo nella vista dei rapportini (non nelle tabelle DGB). */
+    private static function haFiltriServizio(array $f): bool
+    {
+        foreach (['linee','codici','settori','aziende','modalita','fasce','durate','sedi'] as $k)
+            if (!empty($f[$k])) return true;
+        return ($f['ricavo'] ?? '') !== '' || ($f['q'] ?? '') !== '';
+    }
+
+    private array $perim = [];
+
+    /**
+     * Insieme dei rapportini (report_id) che soddisfano TUTTI i filtri della pagina, con la
+     * stessa clausola di KPI, grafici e tabelle (where()). Le sezioni costruite su altre viste
+     * (costi, giorni, DGB) lo usano come perimetro: un'unica definizione, nessuna divergenza.
+     *
+     * Calcolato una volta per richiesta in una tabella temporanea; se non e' possibile crearla
+     * si ripiega su una sottoquery con i suoi parametri (aggiunti ad $a).
+     * $conPeriodo=false: senza il vincolo di data (per le sezioni DGB, che datano l'attivita').
+     *
+     * @return string espressione da usare come `col IN (<espressione>)`
+     */
+    private function perimetro(array $f, bool $conPeriodo, array &$a): string
+    {
+        $fx = $f;
+        if (!$conPeriodo) { $fx['from'] = '0001-01-01'; $fx['to'] = '9999-12-31'; }
+        [$w, $wa] = $this->where($fx);
+        $key = md5($w . '|' . json_encode($wa));
+        if (!isset($this->perim[$key])) {
+            $t = 'tmp_its_perim_' . substr($key, 0, 12);
+            try {
+                $this->pdo->exec("CREATE TEMPORARY TABLE IF NOT EXISTS `$t` (`report_id` INT NOT NULL PRIMARY KEY) ENGINE=MEMORY");
+                $this->pdo->exec("TRUNCATE TABLE `$t`");
+                $st = $this->pdo->prepare("INSERT IGNORE INTO `$t` (`report_id`)
+                                           SELECT DISTINCT s.`report_id` FROM `{$this->v['v_cm_it_servizio']}` s WHERE $w");
+                $st->execute($wa);
+                $this->perim[$key] = ['sql' => "SELECT `report_id` FROM `$t`", 'args' => []];
+            } catch (Throwable $e) {
+                $this->perim[$key] = ['sql' => "SELECT s.`report_id` FROM `{$this->v['v_cm_it_servizio']}` s WHERE $w", 'args' => $wa];
+            }
+        }
+        foreach ($this->perim[$key]['args'] as $v) $a[] = $v;
+        return $this->perim[$key]['sql'];
+    }
+
     /** Opzioni del filtro: commesse presenti nella Relazione IT + contratti DGB senza PM Project. */
     public function valoriContratti(): array
     {
@@ -202,6 +289,7 @@ final class ItServiceModel
                   ['durate','Durate']] as [$k, $l]) {
             if (!empty($f[$k])) $out[] = $l . ': ' . implode(', ', array_map([self::class, 'etichetta'], $f[$k]));
         }
+        if (!empty($f['stati'])) $out[] = 'Stato commessa: ' . implode(', ', array_map(fn($k) => self::STATI[$k] ?? $k, $f['stati']));
         if (($f['ricavo'] ?? '') !== '') $out[] = 'Natura: ' . ($f['ricavo'] === '1' ? 'a ricavo' : 'interne');
         if (($f['q'] ?? '') !== '')       $out[] = 'Ricerca: ' . $f['q'];
         if (($f['cliente'] ?? '') !== '') $out[] = 'Cliente: ' . $f['cliente'];
@@ -568,18 +656,10 @@ final class ItServiceModel
             if (!empty($f['from']) && !empty($f['to'])) {
                 $w = "`giorno` BETWEEN ? AND ?"; $a[] = $f['from']; $a[] = $f['to'];
             }
-            if (!empty($f['incaricati']) && is_array($f['incaricati'])) {
-                $ph = implode(',', array_fill(0, count($f['incaricati']), '?'));
-                $w .= " AND `tecnico` IN ($ph)";
-                foreach ($f['incaricati'] as $v) $a[] = $v;
-            }
-            if (!empty($f['codici']) && is_array($f['codici'])) {
-                $ph = implode(',', array_fill(0, count($f['codici']), '?'));
-                $w .= " AND `codice_linea` IN ($ph)";
-                foreach ($f['codici'] as $v) $a[] = $v;
-            }
-            if (($f['cliente'] ?? '') !== '') { $w .= " AND `cliente` LIKE ?"; $a[] = '%' . $f['cliente'] . '%'; }
-            if ($c = $this->ctrCond('`commessa`', $f, $a)) $w .= " AND $c";   // v1.9.77
+            // v1.9.87 — tutti i filtri della pagina, tramite il perimetro unico dei rapportini
+            // (prima: solo incaricati, codici linea, cliente e contratto → costi disallineati
+            // da KPI e grafici con linee, settori, modalità, fasce, durate, sedi, natura, ricerca)
+            if (self::haFiltri($f)) $w .= " AND `report_id` IN (" . $this->perimetro($f, true, $a) . ")";
             $st = $this->pdo->prepare("$select FROM `{$this->v['v_cm_sd_costi_valorizzati']}` WHERE $w $coda");
             $st->execute($a);
             $out = $st->fetchAll(PDO::FETCH_ASSOC);
@@ -685,17 +765,15 @@ final class ItServiceModel
      */
     public function giorniRiconcilia(array $f): array
     {
+        // v1.9.87 — con il filtro «Stato commessa» nessun giorno e' escluso d'ufficio: niente da riconciliare
+        if (!empty($f['stati'])) return [];
         try {
             $w = "1=1"; $a = [];
             if (!empty($f['from']) && !empty($f['to'])) {
                 $w = "`giorno` BETWEEN ? AND ?"; $a[] = $f['from']; $a[] = $f['to'];
             }
-            if (!empty($f['incaricati']) && is_array($f['incaricati'])) {
-                $ph = implode(',', array_fill(0, count($f['incaricati']), '?'));
-                $w .= " AND `operatore` IN ($ph)";
-                foreach ($f['incaricati'] as $v) $a[] = $v;
-            }
-            if ($c = $this->ctrCond('`commessa`', $f, $a)) $w .= " AND $c";   // v1.9.77
+            // v1.9.87 — stesso perimetro di tutte le altre sezioni
+            if (self::haFiltri($f)) $w .= " AND `report_id` IN (" . $this->perimetro($f, true, $a) . ")";
             $st = $this->pdo->prepare(
                 "SELECT `operatore`, `ordina`,
                         COUNT(DISTINCT `giorno`) AS giorni_totali,
@@ -714,26 +792,20 @@ final class ItServiceModel
         } catch (Throwable $e) { return []; }
     }
 
-    /** Il corpo comune: filtro di periodo e incaricati, sulle sole attive. */
+    /**
+     * Il corpo comune: periodo + perimetro unico dei filtri.
+     * v1.9.87 — senza filtro «Stato commessa» restano le sole commesse attive (definizione
+     * storica della sezione, con la riconciliazione che mostra la differenza); con il filtro
+     * lo stato scelto sostituisce quel vincolo, come in tutte le altre sezioni.
+     */
     private function giorniQuery(array $f, string $select, string $coda): array
     {
         try {
-            $w = "`commessa_attiva` = 1"; $a = [];
+            $w = empty($f['stati']) ? "`commessa_attiva` = 1" : "1=1"; $a = [];
             if (!empty($f['from']) && !empty($f['to'])) {
                 $w .= " AND `giorno` BETWEEN ? AND ?"; $a[] = $f['from']; $a[] = $f['to'];
             }
-            if (!empty($f['incaricati']) && is_array($f['incaricati'])) {
-                $ph = implode(',', array_fill(0, count($f['incaricati']), '?'));
-                $w .= " AND `operatore` IN ($ph)";
-                foreach ($f['incaricati'] as $v) $a[] = $v;
-            }
-            if (!empty($f['codici']) && is_array($f['codici'])) {
-                $ph = implode(',', array_fill(0, count($f['codici']), '?'));
-                $w .= " AND `codice_linea` IN ($ph)";
-                foreach ($f['codici'] as $v) $a[] = $v;
-            }
-            if (($f['cliente'] ?? '') !== '') { $w .= " AND `cliente` LIKE ?"; $a[] = '%' . $f['cliente'] . '%'; }
-            if ($c = $this->ctrCond('`commessa`', $f, $a)) $w .= " AND $c";   // v1.9.77
+            if (self::haFiltri($f)) $w .= " AND `report_id` IN (" . $this->perimetro($f, true, $a) . ")";
             $st = $this->pdo->prepare("$select FROM `{$this->v['v_cm_it_giorni_base']}` WHERE $w $coda");
             $st->execute($a);
             $out = $st->fetchAll(PDO::FETCH_ASSOC);
@@ -758,6 +830,16 @@ final class ItServiceModel
         }
         if (!empty($f['cliente'])) { $w[] = "cli.name LIKE ?"; $b[]='%'.$f['cliente'].'%'; }
         if ($c = $this->ctrCondDgb('a.id_contract', $f, $b)) $w[] = $c;   // v1.9.77
+        // v1.9.87 — stato commessa: PM Project collegato al contratto DGB
+        if ($c = self::statoCond('pst.`dgb_contract_id` = a.id_contract', $f)) $w[] = $c;
+        // v1.9.87 — dimensioni che esistono solo sui rapportini (linea, settore, azienda,
+        // modalità, fascia, durata, sede, natura, ricerca): attività il cui rapportino rientra
+        // nel perimetro unico. Senza questi filtri il riepilogo DGB li ignorava.
+        if (self::haFiltriServizio($f)) {
+            $w[] = "a.id IN (SELECT irp.`dgb_activity_id` FROM `cm_intervention_reports` irp
+                              WHERE irp.`dgb_activity_id` IS NOT NULL
+                                AND irp.`id` IN (" . $this->perimetro($f, false, $b) . "))";
+        }
         return 'WHERE ' . implode(' AND ', $w);
     }
 
@@ -862,7 +944,10 @@ final class ItServiceModel
                  MAX(p.project_code) AS pm_project_code,
                  ROUND(SUM(CASE WHEN COALESCE(ao.during_availability,0)=0
                                 THEN GREATEST(0, $ORE - COALESCE(ao.extra_hours,0)) ELSE 0 END),2) AS ore_ordinarie,
-                 ROUND(SUM(COALESCE(ao.extra_hours,0)),2) AS ore_straordinario,
+                 -- v1.9.87: straordinario solo fuori reperibilità e non oltre le ore della riga
+                 -- (prima le ore extra in reperibilità erano contate sia qui sia in ore_reperibilita)
+                 ROUND(SUM(CASE WHEN COALESCE(ao.during_availability,0)=0
+                                THEN LEAST(COALESCE(ao.extra_hours,0), $ORE) ELSE 0 END),2) AS ore_straordinario,
                  ROUND(SUM(CASE WHEN COALESCE(ao.during_availability,0)=1 THEN $ORE ELSE 0 END),2) AS ore_reperibilita,
                  COUNT(DISTINCT CONCAT($DT,'#',a.id_operator)) AS giorni_uomo,
                  ROUND(SUM($COST),2) AS costo_contratto,

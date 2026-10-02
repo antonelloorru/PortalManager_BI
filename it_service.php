@@ -408,6 +408,7 @@ $qs = function (array $over = []) use ($f, $inc, $INC_ALL) {
           'q' => $f['q'], 'cliente' => $f['cliente']];
     foreach (['contratti','linee','codici','settori','aziende','incaricati','modalita','fasce','durate','sedi','gb'] as $k)
         if (!empty($f[$k])) $p[$k] = implode(',', $f[$k]);
+    if (!empty($f['stati'])) $p['stato_commessa'] = implode(',', $f['stati']);   // v1.9.87
     if (count($inc) < count($INC_ALL)) $p['inc'] = $inc; // subset -> inc[] nei link stampa/export
     return url_safe('it_service', array_merge(array_filter($p, fn($v) => $v !== '' && $v !== []), $over));
 };
@@ -443,7 +444,7 @@ $qs = function (array $over = []) use ($f, $inc, $INC_ALL) {
 <?php // v1.9.8 — pannello uniformato al template di Commesse/Progetti ?>
 <?php
   $attivi = ($f['q'] !== '') + ($f['cliente'] !== '') + ($f['ricavo'] !== '');
-  foreach (['contratti','linee','codici','settori','aziende','incaricati','modalita','fasce','durate','sedi'] as $k)
+  foreach (['contratti','stati','linee','codici','settori','aziende','incaricati','modalita','fasce','durate','sedi'] as $k)
       $attivi += (count($f[$k]) > 0) ? 1 : 0;
 ?>
 <details class="pm-panel" <?= $attivi > 0 ? 'open' : '' ?>>
@@ -457,9 +458,15 @@ $qs = function (array $over = []) use ($f, $inc, $INC_ALL) {
       <?= route_slug_field() ?>
 
       <div class="pm-group">
-        <h4>Contratto <span class="pm-multi">(filtro globale: KPI, grafici, tabelle, costi, giorni, DGB, stampa ed export)</span></h4>
+        <h4>Contratto e stato commessa <span class="pm-multi">(filtro globale: KPI, grafici, tabelle, costi, giorni, DGB, stampa ed export)</span></h4>
         <div class="pm-grid-auto">
           <?= PmContractFilter::field($vCtr, $f['contratti'], 'vale anche per Service Desk, Report direzionale, DGB') ?>
+          <?php // v1.9.87 — stato della commessa (anagrafica PM Project), applicato a tutte le sezioni ?>
+          <div class="form-group"><label>Stato commessa <span class="pm-multi">(multipla)</span></label>
+            <select name="stato_commessa[]" multiple size="4" class="pm-ms" data-placeholder="Tutti">
+              <?php foreach (ItServiceModel::STATI as $sk => $sl): ?>
+                <option value="<?=$sk?>" <?=in_array($sk, $f['stati'], true) ? 'selected' : ''?>><?=h($sl)?></option>
+              <?php endforeach; ?></select></div>
         </div>
       </div>
 
@@ -765,7 +772,10 @@ if (!empty($trendG['rows'])):
       <span class="card-title"><i class="fa-solid fa-user-clock"></i>
         Giorni lavorati per persona</span>
       <span style="font-size:11px;color:var(--muted);margin-left:8px">
-        solo commesse attive a produzione · WTS-ACM, WTS-CSS, WTS-CC, WTS-MEG</span>
+        <?= empty($f['stati'])
+              ? 'solo commesse attive a produzione'
+              : 'stato commessa: ' . h(implode(', ', array_map(fn($k) => ItServiceModel::STATI[$k], $f['stati']))) ?>
+        · WTS-ACM, WTS-CSS, WTS-CC, WTS-MEG</span>
     </div>
 
     <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:10px">
