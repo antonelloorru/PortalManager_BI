@@ -2,6 +2,10 @@
 /**
  * app/DgbModel.php — Analytics attività DogoBit (v1.8.8)
  *
+ * v1.9.97 — filtri multi-valore (pannello come Relazione di Servizio IT) e nuovi parametri:
+ *           cliente, codice linea, tipo attività, ticket, modulo di intervento, sforamento ore,
+ *           reperibilità sull'intervento, smart working, straordinario. Stessa clausola per
+ *           tabella, KPI, carico, riepilogo orario, distribuzione e matrice (whereActivities/whereDetail).
  * v1.9.78 — filtro globale Codice Contratto / PM Project (PmContractFilter) in
  * whereActivities() e whereDetail(): tabella, KPI, carico, anomalie, riepilogo orario,
  * quadro del periodo, distribuzione temporale, matrice oraria (e relative assenze).
@@ -104,29 +108,127 @@ final class DgbModel
     public static function normFilters(array $in): array
     {
         $d = fn($k) => (isset($in[$k]) && preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)$in[$k])) ? $in[$k] : '';
-        $rt = strtoupper(trim((string)($in['report_type'] ?? '')));
-        $md = strtolower(trim((string)($in['mode'] ?? '')));
+        // v1.9.97 — valori multipli (array o CSV); i link storici a valore singolo restano validi
+        $arr = static function ($v): array {
+            if (is_string($v)) $v = $v === '' ? [] : explode(',', $v);
+            $out = [];
+            foreach ((array)$v as $x) { if (is_array($x)) continue; $x = trim((string)$x); if ($x !== '') $out[$x] = true; }
+            return array_keys($out);
+        };
+        $only = static fn(array $vals, array $ok) => array_values(array_intersect($vals, $ok));
+        $ints = static fn(array $vals) => array_values(array_unique(array_map('intval', array_filter($vals, fn($v) => ctype_digit((string)$v)))));
+        $yn   = static fn($k) => in_array((string)($in[$k] ?? ''), ['0', '1'], true) ? (string)$in[$k] : '';
         $sh = (float)($in['stdh'] ?? 8);
         if ($sh < 1 || $sh > 24) $sh = 8;
-        $sched = strtolower(trim((string)($in['schedule'] ?? '')));
-        $oncall = (string)($in['oncall'] ?? '');
+
+        $operators = $ints($arr($in['operator'] ?? []));
+        $statuses  = $arr($in['status'] ?? []);
+        $rtypes    = $only(array_map('strtoupper', $arr($in['report_type'] ?? [])), ['STD', 'R_ANTEA']);
+        $modes     = $only(array_map('strtolower', $arr($in['mode'] ?? [])), ['sede', 'remoto', 'smart']);
+        $scheds    = $only(array_map('strtolower', $arr($in['schedule'] ?? [])), ['ordinario', 'turni']);
+        $one = static fn(array $v) => count($v) === 1 ? $v[0] : '';
         return [
             'from'        => $d('from'),
             'to'          => $d('to'),
             // v1.8.48: ricerca per codice attivita o ticket
-            'q'           => trim((string)($in['q'] ?? '')),
-            'operator'    => (int)($in['operator'] ?? 0),
-            'status'      => trim((string)($in['status'] ?? '')),
+            'q'           => mb_substr(trim((string)($in['q'] ?? '')), 0, 100),
+            'operators'   => $operators,
+            'statuses'    => $statuses,
+            'report_types'=> $rtypes,
+            'modes'       => $modes,
+            'schedules'   => $scheds,
+            // compatibilita': forme a valore singolo usate da link, matrice e anomalie
+            'operator'    => count($operators) === 1 ? $operators[0] : 0,
+            'status'      => $one($statuses),
+            'report_type' => $one($rtypes),
+            'mode'        => $one($modes),
+            'schedule'    => $one($scheds),
             'contract'    => (int)($in['contract'] ?? 0),
-            'report_type' => in_array($rt, ['STD', 'R_ANTEA'], true) ? $rt : '',
-            'mode'        => in_array($md, ['sede', 'remoto'], true) ? $md : '',
             'stdh'        => $sh,
-            'schedule'    => in_array($sched, ['ordinario', 'turni'], true) ? $sched : '',
-            'oncall'      => in_array($oncall, ['0', '1'], true) ? $oncall : '',
+            'oncall'      => $yn('oncall'),
+            // v1.9.97 — nuovi parametri
+            'clienti'     => $ints($arr($in['clienti'] ?? [])),
+            'linee'       => $arr($in['linee'] ?? []),
+            'tipi'        => $ints($arr($in['tipi'] ?? [])),
+            'rep'         => $yn('rep'),       // intervento in reperibilita' (allocazione)
+            'extra'       => $yn('extra'),     // con ore di straordinario
+            'ticket'      => $yn('ticket'),    // ticket presente
+            'modulo'      => $yn('modulo'),    // modulo di intervento collegato
+            'sforo'       => $yn('sforo'),     // consuntivo oltre il pianificato
             // v1.9.78 — filtro globale (sostituisce il filtro a scelta singola `contract`,
             // che resta accettato nei link come selezione di un contratto DGB)
             'contratti'   => PmContractFilter::fromRequest($in),
         ];
+    }
+
+    /** v1.9.97 — numero di filtri attivi (badge del pannello). */
+    public static function activeCount(array $f): int
+    {
+        $n = 0;
+        foreach (['operators','statuses','report_types','modes','schedules','clienti','linee','tipi','contratti'] as $k) $n += !empty($f[$k]) ? 1 : 0;
+        foreach (['q','from','to','oncall','rep','extra','ticket','modulo','sforo'] as $k) $n += (($f[$k] ?? '') !== '') ? 1 : 0;
+        return $n + (((float)($f['stdh'] ?? 8)) != 8.0 ? 1 : 0);
+    }
+
+    /** v1.9.97 — parametri GET dei filtri (link, export, paginazione). */
+    public static function query(array $f): array
+    {
+        $p = [];
+        foreach (['operators' => 'operator', 'statuses' => 'status', 'report_types' => 'report_type', 'modes' => 'mode',
+                  'schedules' => 'schedule', 'clienti' => 'clienti', 'linee' => 'linee', 'tipi' => 'tipi'] as $k => $g)
+            if (!empty($f[$k])) $p[$g] = implode(',', $f[$k]);
+        if (!empty($f['contratti'])) $p['contratti'] = implode(',', $f['contratti']);
+        foreach (['from','to','q','oncall','rep','extra','ticket','modulo','sforo'] as $k) if (($f[$k] ?? '') !== '') $p[$k] = $f[$k];
+        if ((float)$f['stdh'] != 8.0) $p['stdh'] = $f['stdh'];
+        return $p;
+    }
+
+    /** Condizioni a livello di ATTIVITA' (alias $a), comuni a tabella e dettaglio. */
+    private function activityConds(array $f, array &$args, string $a = 'a'): array
+    {
+        $w = [];
+        if ($f['statuses']) { $w[] = "$a.status IN (" . implode(',', array_fill(0, count($f['statuses']), '?')) . ")"; array_push($args, ...$f['statuses']); }
+        if ($this->cf($f)->active()) $w[] = $this->cf($f)->sql('id', "$a.id_contract", $args);   // v1.9.78
+        if (!empty($f['q'])) { $w[] = "($a.code LIKE ? OR $a.ticket LIKE ?)"; $args[] = '%' . $f['q'] . '%'; $args[] = '%' . $f['q'] . '%'; }
+        if ($f['clienti']) {
+            $ph = implode(',', array_fill(0, count($f['clienti']), '?'));
+            $w[] = "COALESCE((SELECT cc.id_customer_comp FROM dgb_forms_contract cc WHERE cc.id = $a.id_contract), $a.id_customer_comp) IN ($ph)";
+            array_push($args, ...$f['clienti']);
+        }
+        if ($f['linee']) {
+            $w[] = "EXISTS (SELECT 1 FROM cm_projects pl WHERE pl.dgb_contract_id = $a.id_contract AND pl.service_line IN ("
+                 . implode(',', array_fill(0, count($f['linee']), '?')) . "))";
+            array_push($args, ...$f['linee']);
+        }
+        if ($f['tipi']) { $w[] = "$a.id_activitytype IN (" . implode(',', array_fill(0, count($f['tipi']), '?')) . ")"; array_push($args, ...$f['tipi']); }
+        if ($f['ticket'] !== '') $w[] = ($f['ticket'] === '1' ? '' : 'NOT ') . "(COALESCE($a.ticket,'') <> '')";
+        if ($f['modulo'] !== '') $w[] = ($f['modulo'] === '1' ? '' : 'NOT ') . "EXISTS (SELECT 1 FROM cm_intervention_reports irx WHERE irx.dgb_activity_id = $a.id)";
+        if ($f['sforo'] !== '') $w[] = ($f['sforo'] === '1' ? '' : 'NOT ') . "(COALESCE($a.planned_hours,0) > 0 AND COALESCE($a.human_resource_hours,0) > $a.planned_hours)";
+        return $w;
+    }
+
+    /** Condizioni a livello di ALLOCAZIONE (incaricato sull'attivita', alias $x). */
+    private function allocConds(array $f, array &$args, string $x): array
+    {
+        $w = [];
+        if ($f['operators']) { $w[] = "$x.id_operator IN (" . implode(',', array_fill(0, count($f['operators']), '?')) . ")"; array_push($args, ...$f['operators']); }
+        if ($f['report_types']) { $w[] = "$x.exec_report_type IN (" . implode(',', array_fill(0, count($f['report_types']), '?')) . ")"; array_push($args, ...$f['report_types']); }
+        if ($f['modes']) {
+            $m = [];
+            if (in_array('remoto', $f['modes'], true)) $m[] = "$x.from_remote = 1";
+            if (in_array('smart', $f['modes'], true))  $m[] = "$x.smart_working = 1";
+            if (in_array('sede', $f['modes'], true))   $m[] = "(COALESCE($x.from_remote,0) = 0 AND COALESCE($x.smart_working,0) = 0)";
+            $w[] = '(' . implode(' OR ', $m) . ')';
+        }
+        if ($f['schedules']) {
+            $w[] = "EXISTS (SELECT 1 FROM dgb_operator_profile pf WHERE pf.dgb_operator_id = $x.id_operator AND pf.schedule_type IN ("
+                 . implode(',', array_fill(0, count($f['schedules']), '?')) . "))";
+            array_push($args, ...$f['schedules']);
+        }
+        if ($f['oncall'] !== '') { $w[] = "EXISTS (SELECT 1 FROM dgb_operator_profile pf2 WHERE pf2.dgb_operator_id = $x.id_operator AND pf2.on_call = ?)"; $args[] = (int)$f['oncall']; }
+        if ($f['rep'] !== '')   $w[] = $f['rep'] === '1' ? "COALESCE($x.during_availability,0) = 1" : "COALESCE($x.during_availability,0) = 0";
+        if ($f['extra'] !== '') $w[] = $f['extra'] === '1' ? "COALESCE($x.extra_hours,0) > 0" : "COALESCE($x.extra_hours,0) = 0";
+        return $w;
     }
 
     /* ── Giorni lavorativi (lun-ven) ─────────────────────────────────────── */
@@ -142,53 +244,69 @@ final class DgbModel
         return $n;
     }
 
-    /** WHERE + args sulle attività (alias a). Filtro incaricato via EXISTS sul dettaglio. */
+    /** WHERE + args sulle attività (alias a). Filtri sull'incaricato via EXISTS su UNA stessa allocazione. */
     private function whereActivities(array $f): array
     {
         $w = ['a.deleted = 0']; $args = [];
         if ($f['from'])   { $w[] = "a.date_start >= ?"; $args[] = $f['from'] . ' 00:00:00'; }
         if ($f['to'])     { $w[] = "a.date_start <= ?"; $args[] = $f['to'] . ' 23:59:59'; }
-        if ($f['status']) { $w[] = "a.status = ?";      $args[] = $f['status']; }
-        if ($this->cf($f)->active()) $w[] = $this->cf($f)->sql('id', 'a.id_contract', $args);   // v1.9.78
-        if ($f['operator']) {
-            $w[] = "EXISTS (SELECT 1 FROM dgb_forms_activity_operator x WHERE x.id_activity = a.id AND x.id_operator = ?)";
-            $args[] = $f['operator'];
-        }
-        if ($f['schedule']) {
-            $w[] = "EXISTS (SELECT 1 FROM dgb_forms_activity_operator x JOIN dgb_operator_profile pf ON pf.dgb_operator_id=x.id_operator WHERE x.id_activity=a.id AND pf.schedule_type=?)";
-            $args[] = $f['schedule'];
-        }
-        // v1.8.48: ricerca per codice o ticket. Serve al collegamento dal tab
-        // Consuntivo della scheda commessa, dove il codice rapporto coincide con
-        // il codice attivita: si arriva qui gia' filtrati sulla riga cercata.
-        if (!empty($f['q'])) {
-            $w[] = "(a.code LIKE ? OR a.ticket LIKE ?)";
-            $args[] = '%' . $f['q'] . '%';
-            $args[] = '%' . $f['q'] . '%';
-        }
-        if ($f['oncall'] !== '') {
-            $w[] = "EXISTS (SELECT 1 FROM dgb_forms_activity_operator x JOIN dgb_operator_profile pf ON pf.dgb_operator_id=x.id_operator WHERE x.id_activity=a.id AND pf.on_call=?)";
-            $args[] = (int)$f['oncall'];
-        }
-        // v1.8.50: modalita' e tipo report erano applicati ai KPI (whereDetail)
-        // ma non alla tabella. Applicando "da remoto" i totali scendevano e
-        // l'elenco restava invariato: due numeri diversi sulla stessa schermata,
-        // che e' il modo piu' rapido per far perdere fiducia a un cruscotto.
-        // Gli attributi stanno sull'allocazione, quindi servono EXISTS.
-        if ($f['mode'] === 'remoto') {
-            $w[] = "EXISTS (SELECT 1 FROM dgb_forms_activity_operator x WHERE x.id_activity = a.id AND x.from_remote = 1)";
-        }
-        if ($f['mode'] === 'sede') {
-            $w[] = "EXISTS (SELECT 1 FROM dgb_forms_activity_operator x WHERE x.id_activity = a.id AND COALESCE(x.from_remote,0) = 0)";
-        }
-        if (!empty($f['report_type'])) {
-            $w[] = "EXISTS (SELECT 1 FROM dgb_forms_activity_operator x WHERE x.id_activity = a.id AND x.exec_report_type = ?)";
-            $args[] = $f['report_type'];
+        $w = array_merge($w, $this->activityConds($f, $args, 'a'));
+        // v1.8.50 / v1.9.97 — gli attributi dell'incaricato (modalità, tipo report, reperibilità,
+        // straordinario, orario) stanno sull'allocazione: una sola EXISTS, così tutti valgono per
+        // lo STESSO incaricato e tabella e KPI restano allineati.
+        $xa = []; $xc = $this->allocConds($f, $xa, 'x');
+        if ($xc) {
+            $w[] = "EXISTS (SELECT 1 FROM dgb_forms_activity_operator x WHERE x.id_activity = a.id AND " . implode(' AND ', $xc) . ")";
+            array_push($args, ...$xa);
         }
         return [implode(' AND ', $w), $args];
     }
 
     /* ── Sorgenti filtri ─────────────────────────────────────────────────── */
+
+    /** v1.9.97 — clienti presenti nelle attività. @return array<int,string> id => nome */
+    public function clientiOptions(): array
+    {
+        try {
+            $rows = $this->pdo->query(
+                "SELECT cl.id, cl.name, COUNT(*) n FROM dgb_forms_activity a
+                   LEFT JOIN dgb_forms_contract c ON c.id = a.id_contract
+                   JOIN clients cl ON cl.id = COALESCE(c.id_customer_comp, a.id_customer_comp)
+                  WHERE a.deleted = 0 GROUP BY cl.id, cl.name ORDER BY cl.name")->fetchAll(PDO::FETCH_ASSOC);
+        } catch (Throwable $e) { return []; }
+        $o = []; foreach ($rows as $r) $o[(string)$r['id']] = $r['name'] . ' (' . number_format((int)$r['n'], 0, ',', '.') . ')';
+        return $o;
+    }
+
+    /** v1.9.97 — codici linea delle commesse collegate ai contratti DGB. */
+    public function lineeOptions(): array
+    {
+        try {
+            $rows = $this->pdo->query(
+                "SELECT p.service_line AS v, COALESCE(MAX(cm.label), p.service_line) AS l, COUNT(*) n
+                   FROM dgb_forms_activity a JOIN cm_projects p ON p.dgb_contract_id = a.id_contract
+                   LEFT JOIN cm_contract_models cm ON cm.service_line = p.service_line
+                  WHERE a.deleted = 0 AND p.service_line IS NOT NULL AND p.service_line <> ''
+                  GROUP BY p.service_line ORDER BY p.service_line")->fetchAll(PDO::FETCH_ASSOC);
+        } catch (Throwable $e) { return []; }
+        $o = []; foreach ($rows as $r) $o[(string)$r['v']] = $r['v'] . ($r['l'] !== $r['v'] ? ' — ' . $r['l'] : '') . ' (' . number_format((int)$r['n'], 0, ',', '.') . ')';
+        return $o;
+    }
+
+    /** v1.9.97 — tipi di attività (fascia) presenti. */
+    public function tipiOptions(): array
+    {
+        try {
+            $rows = $this->pdo->query(
+                "SELECT a.id_activitytype AS v, COALESCE(MAX(fa.etichetta), CONCAT('Tipo ', a.id_activitytype)) AS l, COUNT(*) n
+                   FROM dgb_forms_activity a LEFT JOIN cm_um_fasce fa ON fa.id_activitytype = a.id_activitytype
+                  WHERE a.deleted = 0 AND a.id_activitytype IS NOT NULL
+                  GROUP BY a.id_activitytype ORDER BY a.id_activitytype")->fetchAll(PDO::FETCH_ASSOC);
+        } catch (Throwable $e) { return []; }
+        $o = []; foreach ($rows as $r) $o[(string)$r['v']] = $r['l'] . ' (' . number_format((int)$r['n'], 0, ',', '.') . ')';
+        return $o;
+    }
+
 
     public function operators(): array
     {
@@ -339,14 +457,7 @@ final class DgbModel
         $w = ['a.deleted = 0']; $args = [];
         if ($f['from'])    { $w[] = "$wd >= ?"; $args[] = $f['from']; }
         if ($f['to'])      { $w[] = "$wd <= ?"; $args[] = $f['to']; }
-        if ($f['status'])  { $w[] = "a.status = ?"; $args[] = $f['status']; }
-        if ($this->cf($f)->active()) $w[] = $this->cf($f)->sql('id', 'a.id_contract', $args);   // v1.9.78
-        if ($f['operator']){ $w[] = "ao.id_operator = ?"; $args[] = $f['operator']; }
-        if ($f['report_type']) { $w[] = "ao.exec_report_type = ?"; $args[] = $f['report_type']; }
-        if ($f['mode'] === 'remoto') { $w[] = "ao.from_remote = 1"; }
-        elseif ($f['mode'] === 'sede') { $w[] = "COALESCE(ao.from_remote,0) = 0"; }
-        if ($f['schedule']) { $w[] = "EXISTS (SELECT 1 FROM dgb_operator_profile pf WHERE pf.dgb_operator_id=ao.id_operator AND pf.schedule_type=?)"; $args[] = $f['schedule']; }
-        if ($f['oncall'] !== '') { $w[] = "EXISTS (SELECT 1 FROM dgb_operator_profile pf WHERE pf.dgb_operator_id=ao.id_operator AND pf.on_call=?)"; $args[] = (int)$f['oncall']; }
+        $w = array_merge($w, $this->activityConds($f, $args, 'a'), $this->allocConds($f, $args, 'ao'));
         return [implode(' AND ', $w), $args, $wd];
     }
 
@@ -629,10 +740,11 @@ final class DgbModel
             // nome sarebbe esposto alle differenze di forma fra gestionale e
             // anagrafica, gia' viste con l'inversione nome/cognome (v1.8.77).
             $opId = (int)($f['operator'] ?? 0);
+            // v1.9.97 — piu' incaricati selezionati: le assenze di tutti
+            $ops = count($f['operators'] ?? []) > 1 ? array_map('intval', $f['operators']) : [];
             // v1.9.78 — con il filtro contratto: le assenze degli incaricati che nel
             // mese hanno lavorato sui contratti selezionati
-            $ops = [];
-            if ($opId <= 0 && $this->cf($f)->active()) {
+            if (!$ops && $opId <= 0 && $this->cf($f)->active()) {
                 $ao = [$mFrom, $mTo];
                 $in = $this->cf($f)->sql('id', 'a.id_contract', $ao);
                 $sto = $this->pdo->prepare("SELECT DISTINCT ao.id_operator FROM dgb_forms_activity_operator ao
