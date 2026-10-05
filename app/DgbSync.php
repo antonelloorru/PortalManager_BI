@@ -147,12 +147,14 @@ final class DgbSync
         // identificativo inventato dal portale: cercando il codice del gestionale
         // non si trovava nulla. Ora scrive `a.code`, che e' il codice reale, e
         // dichiara la grana in `source_uid` come fanno gli altri canali.
-        $cols = ['source_uid','source_system','report_code','report_date','start_at','project_id','project_code','ticket',
+        $cols = ['source_uid','source_system','report_code','report_date','start_at','end_at','project_id','project_code','ticket',
                  'technician_id','technician_raw','remote','on_call',
                  'quantity_hours','extra_hours','client_revenue_import','company_cost_import',
                  'imported_by','imported_at','dgb_source_id','dgb_activity_id','dgb_activity_code'];
         $ph = '(' . implode(',', array_fill(0, count($cols), '?')) . ')';
-        $upd = "report_date=VALUES(report_date), start_at=VALUES(start_at), project_id=VALUES(project_id),"
+        // v1.10.04 — end_at = fine attivita' DGB: la Relazione IT classifica le ore su start_at/end_at
+        // (PmOrario) come la pagina DGB su date_start/date_dead_line; il valore gia' presente non si sovrascrive
+        $upd = "report_date=VALUES(report_date), start_at=VALUES(start_at), end_at=COALESCE(end_at, VALUES(end_at)), project_id=VALUES(project_id),"
              . "project_code=VALUES(project_code), ticket=VALUES(ticket), technician_id=VALUES(technician_id),"
              . "technician_raw=VALUES(technician_raw), remote=VALUES(remote), on_call=VALUES(on_call),"
              . "quantity_hours=VALUES(quantity_hours),"
@@ -165,7 +167,7 @@ final class DgbSync
             $sql = "SELECT ao.id, ao.id_operator, ao.hours, ao.extra_hours, ao.cost, ao.revenue,
                            ao.from_remote, ao.during_availability,
                            a.id AS activity_id, a.code AS activity_code,
-                           a.id_contract, a.ticket, a.report_date, a.date_start
+                           a.id_contract, a.ticket, a.report_date, a.date_start, a.date_dead_line
                       FROM dgb_forms_activity_operator ao
                       JOIN dgb_forms_activity a ON a.id = ao.id_activity
                      WHERE ao.id > ? AND a.deleted=0" . $extraWhere . "
@@ -192,7 +194,7 @@ final class DgbSync
                 $actCode = trim((string)($r['activity_code'] ?? '')) ?: ('DGB-' . (int)$r['id']);
                 $grana   = $actCode . '#' . $opId;
                 $vals = [
-                    $grana, 'dgb', $actCode, $repDate, $r['date_start'] ?: null, $pj['id'], $pj['code'], $r['ticket'],
+                    $grana, 'dgb', $actCode, $repDate, $r['date_start'] ?: null, $r['date_dead_line'] ?: null, $pj['id'], $pj['code'], $r['ticket'],
                     $techId, $techRaw, (int)$r['from_remote'], (int)$r['during_availability'],
                     (float)$r['hours'], $extra, (float)$r['revenue'], (float)$r['cost'],
                     $userId, date('Y-m-d H:i:s'), (int)$r['id'],

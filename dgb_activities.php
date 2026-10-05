@@ -457,7 +457,7 @@ if ($tab === 'anomalie') {
 if (strtolower((string)($_GET['export'] ?? '')) === 'aggxlsx') {
     $agg = $model->aggrega($f, 50000); $tot = $model->aggregaTotale($f);
     $met = ['attivita' => 'Attività', 'allocazioni' => 'Allocazioni', 'giornate_uomo' => 'Giornate-uomo (gg)', 'ore' => 'Ore consuntivate (h)',
-            'ore_ordinarie' => 'Ordinarie (h)', 'ore_straordinario' => 'Straordinario (h)', 'ore_reperibilita' => 'Reperibilità (h)',
+            'ore_ordinarie' => 'Ordinarie (h)', 'ore_fuori_orario' => 'Fuori orario (h)', 'ore_reperibilita' => 'Reperibilità (h)', 'ore_extra' => 'Extra dichiarate (h)',
             'ore_viaggio' => 'Viaggio (h)', 'costo' => 'Costo (€)', 'ricavo' => 'Ricavo (€)', 'margine' => 'Margine (€)',
             'presso_cliente' => 'Presso cliente (n.)', 'da_remoto' => 'Da remoto (n.)', 'smart_working' => 'Smart working (n.)'];
     $data = [array_merge(array_map(fn($d) => DgbModel::DIM[$d], $f['gb']), array_values($met))];
@@ -480,6 +480,8 @@ if (strtolower((string)($_GET['export'] ?? '')) === 'aggxlsx') {
 
 // dati analisi
 $kpi   = $model->kpi($f);
+// v1.10.04 — fasce ordinarie configurate (PmOrario), per le didascalie
+$fasceTxt = implode(" e ", array_map(fn($x) => substr($x[0], 0, 5) . "–" . substr($x[1], 0, 5), PmOrario::fasce($pdo)));
 $hb    = $model->hoursBreakdown($f);
 // v1.8.80 — quadro del periodo: capacita' e composizione delle ore
 $ps    = $model->periodSummary($f);
@@ -1029,13 +1031,13 @@ $qs = function (array $over = []) use ($f, $tab, $gran, $month) {
   <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
     <?php foreach ([
       ['In orario ordinario', $ps['ore_in_orario'], '#2563eb',
-       'Ore che cadono nelle fasce 09–13 e 14–18 dei giorni feriali'],
+       'Ore che cadono nelle fasce ' . $fasceTxt . ' dei giorni feriali, esclusa la reperibilità'],
       ['Fuori orario ordinario', $ps['ore_fuori_orario'], '#f59e0b',
-       'Tutte le altre, fine settimana compreso. Calcolate dalla collocazione temporale'],
-      ['Extra dichiarate', $ps['ore_extra'], '#dc2626',
-       'Straordinario dichiarato sul modulo dal gestionale'],
+       'Ore − ordinarie, fine settimana compreso, esclusa la reperibilità'],
       ['In reperibilità', $ps['ore_reperibilita'], '#7c3aed',
-       'Interventi svolti durante un turno di reperibilità'],
+       'Interventi svolti durante un turno di reperibilità (tutte le ore)'],
+      ['Extra dichiarate', $ps['ore_extra'], '#dc2626',
+       'Straordinario dichiarato sul modulo dal gestionale (misura informativa)'],
       ['Da remoto', $ps['ore_remoto'], '#0d9488', 'Intervento non in sede cliente'],
       ['Smart working', $ps['ore_smart'], '#0891b2', 'Lavoro agile'],
       ['Ore di viaggio', $ps['ore_viaggio'], '#64748b', 'Trasferta, esclusa dalle ore di intervento'],
@@ -1052,9 +1054,10 @@ $qs = function (array $over = []) use ($f, $tab, $gran, $month) {
   </div>
 
   <p style="font-size:11px;color:var(--muted);margin-top:10px">
-    <strong>Le voci del dettaglio si sovrappongono</strong> e non vanno sommate: un intervento da remoto
-    durante un turno di reperibilità conta in entrambe. Solo <em>in orario</em> e <em>fuori orario</em>
-    formano una partizione, e infatti sommano esattamente alle ore consuntivate.
+    <strong>In orario</strong>, <strong>fuori orario</strong> e <strong>in reperibilità</strong> formano una
+    partizione e sommano esattamente alle ore consuntivate, con la stessa regola della Relazione di Servizio IT.
+    Le altre voci si sovrappongono e non vanno sommate: un intervento da remoto durante un turno
+    di reperibilità conta in entrambe.
   </p>
 
   <?php
@@ -1075,11 +1078,13 @@ $qs = function (array $over = []) use ($f, $tab, $gran, $month) {
 </div>
 
 <!-- Orario ordinario/straordinario & carico -->
-<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:14px">
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:14px">
   <?php
+  // v1.10.04 — classi orarie della Relazione di Servizio IT (ordinarie + fuori orario + reperibilità = carico)
   $hcards = [
     ['Ore ordinarie', $eur($hb['ordinary']), '#2563eb'],
-    ['Straordinario', $eur($hb['overtime']).($hb['overtime_pct']!==null?' ('.$hb['overtime_pct'].'%)':''), '#f59e0b'],
+    ['Fuori orario', $eur($hb['overtime']).($hb['overtime_pct']!==null?' ('.$hb['overtime_pct'].'%)':''), '#f59e0b'],
+    ['Reperibilità', $eur($hb['oncall']).($hb['oncall_pct']!==null?' ('.$hb['oncall_pct'].'%)':''), '#7c3aed'],
     ['Trasferta', $eur($hb['trip']), '#7c3aed'],
     ['Carico totale', $eur($hb['workload']), '#0f172a'],
     ['Capacità standard', $eur($hb['std_capacity']), '#64748b'],
@@ -1107,7 +1112,7 @@ $qs = function (array $over = []) use ($f, $tab, $gran, $month) {
           $periodo = 'mesi del periodo';
       }
       $totOre = 0.0;
-      foreach ($dist['buckets'] as $b) $totOre += (float)$b['ordinary'] + (float)$b['overtime'];
+      foreach ($dist['buckets'] as $b) $totOre += (float)$b['ordinary'] + (float)$b['overtime'] + (float)($b['oncall'] ?? 0);
     ?>
     <span class="card-title"><i class="fa-solid fa-chart-column"></i>
       Distribuzione carico — ordinario, fuori orario e reperibilità
@@ -1303,7 +1308,7 @@ $qs = function (array $over = []) use ($f, $tab, $gran, $month) {
       completa quando una cella contiene più nature.
       Le <strong>assenze</strong> — ferie, permessi, recuperi, malattia — stanno nella banda sotto la
       griglia: sono ore <em>non</em> lavorate e non appartengono a una fascia oraria.
-      Le fasce ordinarie sono 09–13 e 14–18 dal lunedì al venerdì: <strong>nel fine settimana anche
+      Le fasce ordinarie sono <?=h($fasceTxt)?> dal lunedì al venerdì (le ore in reperibilità sono sempre fuori fascia): <strong>nel fine settimana anche
       quelle ore sono fuori fascia</strong>, ed è per questo che le colonne del sabato e della domenica
       risultano arancioni per intera.
       Le ore di un intervento sono <strong>ripartite sulle fasce che attraversa</strong>, non attribuite
@@ -1314,10 +1319,11 @@ $qs = function (array $over = []) use ($f, $tab, $gran, $month) {
   <?php endif; ?>
 
   <p style="font-size:11px;color:var(--muted);margin:0;max-width:70%">
-      <strong>Ordinario</strong> = lun-ven 09:00–13:00 e 14:00–18:00 (8 h/giorno).
-      Fuori da queste fasce — fine settimana, 18:01–08:59 e pausa pranzo — l'intervento è
-      <strong>fuori fascia</strong>. La <strong>reperibilità</strong> è un'altra cosa: sono le attività svolte
-      in disponibilità (dal modulo DGB), mostrate in viola. Chi opera in turni non è soggetto alla regola.
+      <strong>Ordinario</strong> = lun-ven <?=h($fasceTxt)?>.
+      Fuori da queste fasce — fine settimana, sera, notte e pausa — l'intervento è
+      <strong>fuori orario</strong>. La <strong>reperibilità</strong> sono le attività svolte
+      in disponibilità (dal modulo DGB), mostrate in viola e conteggiate per intero.
+      Stessa regola della Relazione di Servizio IT (v1.10.04), per tutti gli incaricati.
       Le ore consuntivate non vengono ricalcolate: viene ripartita la loro classificazione,
       in proporzione a quanto dell'intervento cade nella fascia ordinaria.
       <?php if ($gran === 'month'): ?>
@@ -1346,8 +1352,9 @@ $qs = function (array $over = []) use ($f, $tab, $gran, $month) {
   $nn = fn($v) => number_format((float)$v, 0, ',', '.');
   $AGG_COL = [
     ['attivita', 'Attività', $nn, 'attività distinte'], ['giornate_uomo', 'Giornate-uomo', fn($v) => number_format((float)$v, 0, ',', '.') . ' gg', 'coppie incaricato × giorno di lavoro'],
-    ['ore', 'Ore cons.', $nh, 'ore consuntivate dagli incaricati'], ['ore_ordinarie', 'Ordinarie', $nh, 'ore − straordinario, esclusa la reperibilità'],
-    ['ore_straordinario', 'Straord.', $nh, 'quota extra (compresa nelle ore), esclusa la reperibilità'], ['ore_reperibilita', 'Reperib.', $nh, 'ore degli interventi in reperibilità'],
+    ['ore', 'Ore cons.', $nh, 'ore consuntivate dagli incaricati'], ['ore_ordinarie', 'Ordinarie', $nh, 'sovrapposizione con le fasce ordinarie, esclusa la reperibilità (regola Relazione IT)'],
+    ['ore_fuori_orario', 'Fuori orario', $nh, 'ore − ordinarie, esclusa la reperibilità'], ['ore_reperibilita', 'Reperib.', $nh, 'ore degli interventi in reperibilità'],
+    ['ore_extra', 'Extra dich.', $nh, 'straordinario dichiarato sul modulo (informativo, compreso nelle ore)'],
     ['ore_viaggio', 'Viaggio', $nh, 'ore di trasferta'], ['costo', 'Costo', $ne, ''], ['ricavo', 'Ricavo', $ne, ''], ['margine', 'Margine', $ne, 'ricavo − costo'],
     ['presso_cliente', 'Presso cl.', $nn, 'interventi presso cliente'], ['da_remoto', 'Remoto', $nn, 'interventi da remoto'], ['smart_working', 'Smart', $nn, 'interventi in smart working'],
   ];

@@ -100,9 +100,26 @@ final class DgbModel
      */
     private static function ordSql(): string
     {
+        // v1.10.04 — stessa regola della Relazione di Servizio IT (ItServiceModel::oreClassi):
+        // sovrapposizione con le fasce ordinarie, senza eccezioni per profilo (turni).
         require_once __DIR__ . '/PmOrario.php';
-        return "(CASE WHEN COALESCE(pr.schedule_type,'ordinario') = 'turni' THEN COALESCE(ao.hours,0) ELSE "
-             . PmOrario::ordinarieSql('a.date_start', 'a.date_dead_line', 'ao.hours') . " END)";
+        return PmOrario::ordinarieSql('a.date_start', 'a.date_dead_line', 'COALESCE(ao.hours,0)');
+    }
+
+    /**
+     * v1.10.04 — Classi orarie disgiunte, identiche alla Relazione di Servizio IT:
+     *   rep    reperibilità (during_availability = on_call del rapportino): tutte le ore;
+     *   ord    ore ordinarie = sovrapposizione reale con le fasce (PmOrario), esclusa la reperibilità;
+     *   fuori  fuori orario = ore − ordinarie, esclusa la reperibilità.
+     * rep + ord + fuori = ore consuntivate. Le «non classificate» della Relazione IT riguardano solo
+     * le righe senza rapportino: ogni allocazione DGB ha inizio/fine propri, quindi sono sempre 0.
+     * Le ore extra dichiarate sul modulo restano una misura separata (informativa).
+     */
+    public static function classi(): array
+    {
+        $h = 'COALESCE(ao.hours,0)'; $rep = '(COALESCE(ao.during_availability,0) = 1)'; $o = self::ordSql();
+        return ['rep' => "(CASE WHEN $rep THEN $h ELSE 0 END)", 'ord' => "(CASE WHEN $rep THEN 0 ELSE $o END)",
+                'fuori' => "(CASE WHEN $rep THEN 0 ELSE $h - $o END)", 'repC' => $rep];
     }
 
     /** Join necessario alle espressioni orarie. */
@@ -444,16 +461,16 @@ final class DgbModel
         $gb = $f['gb'] ?? ['incaricato', 'contratto'];
         $sel = []; $grp = [];
         foreach ($gb as $i => $d) { $sel[] = self::dimSql($d) . " AS `$d`"; $grp[] = "`$d`"; }
-        $rep = "COALESCE(ao.during_availability,0) = 1";
-        $ext = "LEAST(COALESCE(ao.extra_hours,0), COALESCE(ao.hours,0))";
+        $c = self::classi();
         $sql = "SELECT " . ($sel ? implode(', ', $sel) . ',' : '') . "
                        COUNT(DISTINCT ao.id_activity) AS attivita,
                        COUNT(*) AS allocazioni,
                        COUNT(DISTINCT CONCAT(ao.id_operator, '|', $wd)) AS giornate_uomo,
                        ROUND(SUM(COALESCE(ao.hours,0)), 2) AS ore,
-                       ROUND(SUM(CASE WHEN $rep THEN 0 ELSE COALESCE(ao.hours,0) - $ext END), 2) AS ore_ordinarie,
-                       ROUND(SUM(CASE WHEN $rep THEN 0 ELSE $ext END), 2) AS ore_straordinario,
-                       ROUND(SUM(CASE WHEN $rep THEN COALESCE(ao.hours,0) ELSE 0 END), 2) AS ore_reperibilita,
+                       ROUND(SUM({$c['ord']}), 2) AS ore_ordinarie,
+                       ROUND(SUM({$c['fuori']}), 2) AS ore_fuori_orario,
+                       ROUND(SUM({$c['rep']}), 2) AS ore_reperibilita,
+                       ROUND(SUM(COALESCE(ao.extra_hours,0)), 2) AS ore_extra,
                        ROUND(SUM(COALESCE(ao.trip_hours,0)), 2) AS ore_viaggio,
                        ROUND(SUM(COALESCE(ao.cost,0)), 2) AS costo,
                        ROUND(SUM(COALESCE(ao.revenue,0)), 2) AS ricavo,
@@ -713,9 +730,14 @@ final class DgbModel
         //
         // `ordinary` porta quindi le ore ORDINARIE per differenza, e il totale
         // consuntivato e' esposto a parte come `total_hours`.
-        $sql = "SELECT ROUND(SUM(ao.hours - COALESCE(ao.extra_hours,0)),2) ordinary,
+        // v1.10.04 — classi della Relazione IT: ordinary / overtime (fuori orario) / oncall disgiunte,
+        // la loro somma e' total_hours. Le extra dichiarate restano in extra_declared.
+        $c = self::classi();
+        $sql = "SELECT ROUND(SUM({$c['ord']}),2) ordinary,
                        ROUND(SUM(ao.hours),2) total_hours,
-                       ROUND(SUM(ao.extra_hours),2) overtime,
+                       ROUND(SUM({$c['fuori']}),2) overtime,
+                       ROUND(SUM({$c['rep']}),2) oncall,
+                       ROUND(SUM(COALESCE(ao.extra_hours,0)),2) extra_declared,
                        ROUND(SUM(ao.trip_hours),2) trip, ROUND(SUM(ao.to_recover_hours),2) recovery,
                        ROUND(SUM(ao.cost),2) cost, ROUND(SUM(ao.revenue),2) revenue,
                        COUNT(DISTINCT ao.id_operator) operators, COUNT(DISTINCT ao.id_activity) activities,
@@ -729,8 +751,9 @@ final class DgbModel
         $r = $st->fetch(PDO::FETCH_ASSOC) ?: [];
         $ord = (float)($r['ordinary'] ?? 0); $ext = (float)($r['overtime'] ?? 0);
         $ops = (int)($r['operators'] ?? 0);
-        $r['workload'] = round($ord + $ext, 2);
-        $r['overtime_pct'] = $ord > 0 ? round($ext / $ord * 100, 1) : null;
+        $r['workload'] = round((float)($r['total_hours'] ?? 0), 2);
+        $r['overtime_pct'] = $r['workload'] > 0 ? round($ext / $r['workload'] * 100, 1) : null;
+        $r['oncall_pct'] = $r['workload'] > 0 ? round((float)($r['oncall'] ?? 0) / $r['workload'] * 100, 1) : null;
         $effFrom = $f['from'] ?: (string)($r['dmin'] ?? '');
         $effTo   = $f['to'] ?: (string)($r['dmax'] ?? '');
         $wdays = ($effFrom && $effTo) ? self::workingDaysBetween($effFrom, $effTo) : 0;
@@ -823,10 +846,10 @@ final class DgbModel
                     ROUND(SUM(COALESCE(ao.extra_hours,0)), 2)                 AS ore_extra,
                     ROUND(SUM(COALESCE(ao.trip_hours,0)), 2)                  AS ore_viaggio,
                     ROUND(SUM(COALESCE(ao.to_recover_hours,0)), 2)            AS ore_da_recuperare,
-                    ROUND(SUM(CASE WHEN ao.during_availability = 1 THEN ao.hours ELSE 0 END), 2) AS ore_reperibilita,
+                    ROUND(SUM(" . self::classi()['rep'] . "), 2)              AS ore_reperibilita,
                     ROUND(SUM(CASE WHEN ao.from_remote = 1        THEN ao.hours ELSE 0 END), 2) AS ore_remoto,
                     ROUND(SUM(CASE WHEN ao.smart_working = 1      THEN ao.hours ELSE 0 END), 2) AS ore_smart,
-                    ROUND(SUM(" . self::ordSql() . "), 2)                   AS ore_in_orario,
+                    ROUND(SUM(" . self::classi()['ord'] . "), 2)              AS ore_in_orario,
                     COUNT(DISTINCT ao.id_operator)                            AS incaricati,
                     COUNT(DISTINCT " . $wd . ")                               AS giorni_con_attivita,
                     MIN(" . $wd . ")                                          AS dal,
@@ -844,9 +867,9 @@ final class DgbModel
         $cons = (float)($r['ore_consuntivate'] ?? 0);
         $inOra = (float)($r['ore_in_orario'] ?? 0);
 
-        // il fuori orario per DIFFERENZA, cosi' le due quote sommano sempre al
-        // consuntivo (stessa regola della v1.8.53 e della v1.8.78)
-        $r['ore_fuori_orario'] = round($cons - $inOra, 2);
+        // v1.10.04 — partizione della Relazione IT: in orario + fuori orario + reperibilita'
+        // = consuntivo (il fuori orario per differenza, esclusa la reperibilita')
+        $r['ore_fuori_orario'] = round($cons - $inOra - (float)($r['ore_reperibilita'] ?? 0), 2);
 
         // giorni lavorativi del periodo: lunedi-venerdi fra gli estremi
         $dal = $r['dal'] ?? null; $al = $r['al'] ?? null;
@@ -912,6 +935,7 @@ final class DgbModel
         $sql = "WITH RECURSIVE h(n) AS (SELECT 0 UNION ALL SELECT n+1 FROM h WHERE n < 23)
                 SELECT DAY($wd) AS g, h.n AS ora,
                        CASE WHEN COALESCE(cm.has_revenue, 1) = 0 THEN 'int' ELSE 'cli' END AS natura,
+                       COALESCE(ao.during_availability, 0) AS rep,
                        ROUND(SUM(ao.hours *
                            GREATEST(0, LEAST(TIME_TO_SEC(TIME(a.date_dead_line)), (h.n+1)*3600)
                                      - GREATEST(TIME_TO_SEC(TIME(a.date_start)), h.n*3600))
@@ -932,7 +956,7 @@ final class DgbModel
                    AND a.date_start IS NOT NULL AND a.date_dead_line IS NOT NULL
                    AND DATE(a.date_start) = DATE(a.date_dead_line)
                    AND TIMESTAMPDIFF(SECOND, a.date_start, a.date_dead_line) > 0
-                 GROUP BY g, h.n, natura
+                 GROUP BY g, h.n, natura, rep
                 HAVING ore > 0";
 
         $st = $this->pdo->prepare($sql);
@@ -941,7 +965,11 @@ final class DgbModel
         $cells = []; $split = []; $byHour = array_fill(0, 24, 0.0);
         $byNature = ['int_ord' => 0.0, 'int_rep' => 0.0, 'cli_ord' => 0.0, 'cli_rep' => 0.0];
         $max = 0.0; $tot = 0.0;
-        $fasce = [9, 10, 11, 12, 14, 15, 16, 17];
+        // v1.10.04 — fasce ordinarie configurate (PmOrario), come la Relazione IT:
+        // un'ora e' ordinaria se il suo inizio cade in una fascia
+        $fasce = [];
+        foreach (PmOrario::fasce($this->pdo) as [$fa, $fb])
+            for ($o = 0; $o < 24; $o++) { $t = sprintf('%02d:00:00', $o); if ($t >= $fa && $t < $fb) $fasce[] = $o; }
 
         while (($r = $st->fetch(PDO::FETCH_ASSOC)) !== false) {
             $g = (int)$r['g']; $o = (int)$r['ora']; $v = (float)$r['ore'];
@@ -951,7 +979,8 @@ final class DgbModel
             // e' la regola della v1.8.53, e nel fine settimana anche le fasce
             // 09-13 e 14-18 sono reperibilita'
             $we  = (int)date('N', strtotime($month . '-' . sprintf('%02d', $g))) >= 6;
-            $ord = in_array($o, $fasce, true) && !$we;
+            // v1.10.04 — la reperibilita' (during_availability) non e' mai ordinaria
+            $ord = in_array($o, $fasce, true) && !$we && (int)$r['rep'] === 0;
             $nat = ((string)$r['natura']) . '_' . ($ord ? 'ord' : 'rep');
 
             $cells[$k] = ($cells[$k] ?? 0.0) + $v;
@@ -1068,13 +1097,13 @@ final class DgbModel
             // dalla sorgente ma la ripartizione secondo la regola oraria. La
             // reperibilita' si ricava per differenza, cosi' la somma delle due
             // componenti resta esattamente pari alle ore consuntivate.
-            $fo = self::ordSql(); $rep = "COALESCE(ao.during_availability,0) = 1";
+            $c = self::classi();
             // v1.9.76 — tre componenti disgiunte: la reperibilità viene dai record
             // (during_availability), non più dalle ore fuori fascia.
             $sql = "SELECT DATE($wd) k,
-                           ROUND(SUM(CASE WHEN $rep THEN 0 ELSE ($fo) END),2) ordinary,
-                           ROUND(SUM(CASE WHEN $rep THEN 0 ELSE COALESCE(ao.hours,0) - ($fo) END),2) overtime,
-                           ROUND(SUM(CASE WHEN $rep THEN COALESCE(ao.hours,0) ELSE 0 END),2) oncall,
+                           ROUND(SUM({$c['ord']}),2) ordinary,
+                           ROUND(SUM({$c['fuori']}),2) overtime,
+                           ROUND(SUM({$c['rep']}),2) oncall,
                            COUNT(DISTINCT ao.id_operator) actives
                       FROM dgb_forms_activity_operator ao JOIN dgb_forms_activity a ON a.id=ao.id_activity"
                       . self::JOIN_PROFILE . "
@@ -1120,11 +1149,11 @@ final class DgbModel
             }
             $scope = ['month' => $month, 'from' => $mFrom, 'to' => $mTo, 'median_actives' => $medianAct];
         } else {
-            $fo = self::ordSql(); $rep = "COALESCE(ao.during_availability,0) = 1";
+            $c = self::classi();
             $sql = "SELECT DATE_FORMAT($wd,'%Y-%m') k,
-                           ROUND(SUM(CASE WHEN $rep THEN 0 ELSE ($fo) END),2) ordinary,
-                           ROUND(SUM(CASE WHEN $rep THEN 0 ELSE COALESCE(ao.hours,0) - ($fo) END),2) overtime,
-                           ROUND(SUM(CASE WHEN $rep THEN COALESCE(ao.hours,0) ELSE 0 END),2) oncall
+                           ROUND(SUM({$c['ord']}),2) ordinary,
+                           ROUND(SUM({$c['fuori']}),2) overtime,
+                           ROUND(SUM({$c['rep']}),2) oncall
                       FROM dgb_forms_activity_operator ao JOIN dgb_forms_activity a ON a.id=ao.id_activity"
                       . self::JOIN_PROFILE . "
                      WHERE $w GROUP BY k";
