@@ -101,6 +101,7 @@ class MenuManager
                     ['page' => 'recruiting_posizioni',  'label' => 'Posizioni aperte',     'icon' => 'fa-briefcase'],
                     ['page' => 'recruiting_candidati',  'label' => 'Pipeline candidati',   'icon' => 'fa-users-line'],
                     ['page' => 'publish_posizione',     'label' => 'Pubblica su portali',  'icon' => 'fa-bullhorn'],
+                    ['page' => 'wp_ats_sync',           'label' => 'Sito web (WordPress)', 'icon' => 'fa-globe'],
                     ['page' => 'candidato_profilo',     'label' => 'Dossier candidati',    'icon' => 'fa-folder-tree'],
                     ['page' => 'documenti',             'label' => 'Archivio documenti',   'icon' => 'fa-folder-open'],
                     ['page' => 'manage_clients',        'label' => 'Anagrafica clienti',   'icon' => 'fa-handshake'],

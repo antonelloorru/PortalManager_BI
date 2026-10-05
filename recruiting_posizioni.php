@@ -81,6 +81,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $can_edit) {
     $action = $_POST['action'] ?? '';
     $pos_id = (int)($_POST['position_id'] ?? 0);
 
+    // v1.10.05 — sito WordPress (plugin pm-ats): le modifiche alle posizioni sono inviate subito, se abilitato.
+    // Eseguito a fine richiesta, timeout breve; esito nel registro di Recruiting › Sito web.
+    if (in_array($action, ['save', 'approve', 'pause', 'reopen', 'close', 'delete'], true)) {
+        register_shutdown_function(static function () use ($pdo, $u_id): void {
+            if (function_exists('fastcgi_finish_request')) @fastcgi_finish_request();
+            require_once __DIR__ . '/app/WpAtsSync.php';
+            WpAtsSync::pushOnChange($pdo, (int)$u_id);
+        });
+    }
+
     if ($action === 'save') {
         // Master version: usa quella corrente al momento del salvataggio
         $mv = null;

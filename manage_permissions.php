@@ -128,6 +128,7 @@ $page_map = [
         'recruiting_candidati.php'   => ['Pipeline candidati', 'ATS con soft delete'],
         'candidato_profilo.php'      => ['↳ Dossier candidato', 'Sub-route: accesso via lista Candidati'],
         'recruiting_agenzie.php'     => ['Agenzie selezione', 'Anagrafica + contatti'],
+        'wp_ats_sync.php'            => ['Sito web (WordPress)', 'Pubblicazione posizioni e prelievo candidature dal sito'],
         'recruiting_contratti.php'   => ['Contratti agenzie', 'Upload firmato + versioning'],
         'documenti.php'              => ['Archivio documenti', 'Gestione documentale con ACL'],
         'publish_posizione.php'      => ['Pubblicazione posizioni', 'Multi-channel posting'],

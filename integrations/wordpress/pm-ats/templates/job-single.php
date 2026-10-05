@@ -1,0 +1,27 @@
+<?php
+/**
+ * Dettaglio posizione (sostituisce il contenuto del post). Sovrascrivibile in <tema>/pm-ats/job-single.php
+ * Variabili: $post_id, $job (array dati PortalManager), $list_url, $form (HTML del modulo o '')
+ */
+defined('ABSPATH') || exit;
+?>
+<div class="pm-ats pm-ats-single">
+  <ul class="pm-ats-chips">
+    <?php foreach (PM_ATS_Public::chips($job) as $k => $v): ?><li class="pm-ats-chip pm-ats-chip-<?php echo esc_attr($k); ?>"><?php echo esc_html($v); ?></li><?php endforeach; ?>
+    <?php if (($job['positions_expected'] ?? 1) > 1): ?><li class="pm-ats-chip"><?php echo esc_html(sprintf(__('%d posizioni', 'pm-ats'), (int)$job['positions_expected'])); ?></li><?php endif; ?>
+  </ul>
+  <?php if ($form !== ''): ?>
+    <p><a class="pm-ats-btn" href="#pm-ats-form"><?php esc_html_e('Candidati ora', 'pm-ats'); ?></a></p>
+  <?php endif; ?>
+
+  <?php foreach (PM_ATS_Jobs::SECTIONS as $k => $h): if (($job[$k] ?? '') === '') continue; ?>
+    <section class="pm-ats-section pm-ats-section-<?php echo esc_attr($k); ?>">
+      <?php if ($h !== ''): ?><h2><?php echo esc_html($h); ?></h2><?php endif; ?>
+      <?php echo PM_ATS_Jobs::format((string)$job[$k]); // phpcs:ignore -- testo già escapato in format() ?>
+    </section>
+  <?php endforeach; ?>
+
+  <?php echo $form; // phpcs:ignore ?>
+
+  <p class="pm-ats-back"><a href="<?php echo esc_url($list_url); ?>">&larr; <?php esc_html_e('Tutte le posizioni aperte', 'pm-ats'); ?></a></p>
+</div>

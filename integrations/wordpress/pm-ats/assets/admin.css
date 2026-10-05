@@ -1,0 +1,10 @@
+.pm-ats-admin .pm-ats-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin:16px 0}
+.pm-ats-admin .pm-ats-kpi{background:#fff;border:1px solid #dcdcde;border-left:4px solid #ee7e02;border-radius:4px;padding:12px 14px}
+.pm-ats-admin .pm-ats-kpi b{display:block;font-size:22px;line-height:1.2}
+.pm-ats-admin .pm-ats-kpi span{color:#646970;font-size:12px;text-transform:uppercase}
+.pm-ats-admin code.pm-ats-secret{display:inline-block;padding:8px 10px;font-size:13px;background:#fff8e5;border:1px solid #f0c33c;user-select:all;word-break:break-all}
+.pm-ats-admin .pm-ats-st{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px;background:#f0f0f1}
+.pm-ats-admin .pm-ats-st-pending{background:#fff8e5;color:#8a6100}
+.pm-ats-admin .pm-ats-st-synced{background:#edfaef;color:#1a6f2b}
+.pm-ats-admin .pm-ats-st-error{background:#fcf0f1;color:#a00}
+.pm-ats-admin table.widefat td{vertical-align:middle}
