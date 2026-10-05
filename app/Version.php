@@ -13,7 +13,7 @@
  * Ora l'innesco è in app/bootstrap.php, che i pacchetti aggiornano.
  */
 
-if (!defined('PM_VERSION')) define('PM_VERSION', '1.9.23');
+if (!defined('PM_VERSION')) define('PM_VERSION', '1.9.99');   // v1.9.99 — riallineato a VERSION (era fermo a 1.9.23)
 
 class Version {
     public const CURRENT = PM_VERSION;

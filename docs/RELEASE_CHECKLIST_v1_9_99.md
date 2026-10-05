@@ -1,0 +1,12 @@
+# Release Checklist — v1.9.99
+- [x] VERSION = 1.9.99; `app/Version.php` PM_VERSION = 1.9.99 (riallineato da 1.9.23); migration aggiorna app_version / schema_version / release_label; `pm_migration_sql` ('1.9.99','migration_v1_9_99.sql')
+- [x] Migration idempotente (CREATE TABLE IF NOT EXISTS, INSERT IGNORE, ON DUPLICATE KEY UPDATE), seed in sezione separata, nessun `;` nei commenti
+- [x] RUN1/RUN2 con `sql_split_statements()` su Dump 19.80 (98 statement, err=0) e su DB 1.9.98 (err=0)
+- [x] `tools/verify_v1_9_99.php`: 33 OK, 0 KO (ticket 15.971, 34,7 FTE da ticket, 26,5/55,1 FTE, dotazione 1.184 €, strutturale 4 zone, canone medio 2.351,9 k€, 100 punti, 24 KPI, 235 associazioni, ent_id completi, permessi)
+- [x] FK: `sp_project_id` SET NULL verificato con DELETE reale; `cm_prj_calc_run` RESTRICT; CHECK formato `prj_code`
+- [x] `php -l`: app/Version.php, app/Router.php, manage_permissions.php, merge_employees.php, tools/verify_v1_9_99.php
+- [x] Pagine esistenti verificate con login reale (Gestione permessi con catalogo PRJ, Merge anagrafiche, Commesse, DGB): nessun warning
+- [x] Terminatori di riga preservati (manage_permissions.php misto CRLF/LF)
+- [x] Docs: CHANGELOG, DEPLOYMENT, TECHNICAL_DESIGN (con le decisioni del 05/10/2026), MANUALE (Admin e Utente), RELEASE_CHECKLIST
+- [x] `update_manifest.json` aggiornato
+- [ ] Voci di menu: rinviate a v1.9.101 e v1.9.102, insieme alle pagine

@@ -1,7 +1,7 @@
-# TECHNICAL DESIGN — Progetti PRJ e Analisi Gara & Dimensionamento (fase 1 di 6)
+# TECHNICAL DESIGN — Progetti PRJ e Analisi Gara & Dimensionamento
 
-Stato: **proposta, in attesa di conferma**. Nessun codice applicativo e nessuna migrazione in questa fase.
-Base: repository `antonelloorru/PortalManager_BI`, branch `feature/v1.9.98-dgb-filtri-relazione` (VERSION 1.9.98).
+Stato: **confermato il 05/10/2026** (risposte in §7). Fase 2 rilasciata in **v1.9.99** (schema, seed, permessi).
+Base: repository `antonelloorru/PortalManager_BI`, branch `feature/v1.9.99-prj` (VERSION 1.9.99).
 
 ---
 
@@ -222,18 +222,31 @@ Formule: quelle della specifica, §5.1–5.7, senza variazioni. `FormulaEval` va
 | Sostenibile Napoli | 2.012 / 86% | 2.016 / 86% | Δ +4 |
 | Completa Firenze | 3.389 / 144% | 3.393 / 144% | Δ +4 |
 | Completa Milano | 4.014 / 171% | 4.018 / 171% | Δ +4 |
-| Sostenibile Firenze + supporto Romania | 2.083 / 89% | da calcolare dopo Q4/Q6 | — |
-| FTE da ticket | 34,7 | **non calcolabile**: AHT assenti nei seed | Q3 |
+| Sostenibile Firenze + supporto Romania | 2.083 / 89% | 2.083 / 89% (supporto nearshore = remoto: solo dotazione; oneri 3%; indice 0,65) | ✔ |
+| FTE da ticket | 34,7 | 34,74 (55.579,5 h / 1.600 h) con AHT CTASK 12 h, INC 3 h, SCTASK 1,5 h | ✔ |
 
-Ipotesi che riproducono i valori attesi:
+Regole confermate (05/10/2026) e implementate nel seed v1.9.99:
 
 - `ral_mode = media`;
 - sostenibile = obbligatori + 6 FTE di supporto ripartiti in proporzione + governance (34,0 FTE);
 - overhead incluso;
-- **costo strutturale da ufficio per tutti gli FTE**, anche nei servizi remoti (Q6);
-- indennità H24 sugli FTE dei servizi con H24 (SER01, 02, 03, 05, 06, 12).
+- costo strutturale: **remoto = solo dotazione per gli FTE marcati remoti nello scenario** (`cm_prj_scenario_profile.remoto = 1`) e per gli FTE in nearshore; gli altri FTE hanno il costo da ufficio della zona. Negli scenari seed nessun FTE è marcato remoto, quindi i valori attesi coincidono con il costo da ufficio;
+- indennità H24 **solo sugli FTE che svolgono H24**: flag `cm_prj_profile.h24` (override per scenario `cm_prj_scenario_profile.h24`).
 
-Lo scostamento costante di +4 k€ in tutti gli scenari equivale a **1,0 FTE di indennità H24** (4 k€) che il foglio originale non conta. Va chiarito quale profilo è escluso (Q4) prima di fissare i test con tolleranza ±1 k€.
+Lo scostamento di +4 k€ si annulla con 1,0 FTE obbligatorio fuori dall'H24. Nel seed il profilo senza H24 è **P12 «Sistemista Senior Telecomunicazioni» (SER06)**: è l'unico profilo obbligatorio da 1,0 FTE di un servizio H24 compatibile con i valori attesi, insieme a P10 (SER05) e P25 (SER12, ServiceNow). La scelta tra i tre non cambia nessun valore atteso; si modifica dal flag del profilo.
+
+AHT (ore medie per ticket), stima interna confermata:
+
+| Tipo | Ticket 2025 | % ticket | Ore/ticket | Ore | % ore |
+|---|---|---|---|---|---|
+| CTASK | 2.142 | 13% | 12 | 25.704 | 46% |
+| INC | 6.088 | 38% | 3 | 18.264 | 33% |
+| SCTASK | 7.741 | 48% | 1,5 | 11.611,5 | 21% |
+| Totale | 15.971 | | | 55.579,5 | 34,7 FTE |
+
+- `cm_prj_aht` ha `service_id` (0 = tutti i servizi): si possono definire ore medie per tipo **e per servizio**, che prevalgono sul valore generale del tipo.
+- Sensibilità: ±1 h sul CTASK vale circa ±1,3 FTE. Con tempi bassi (SCTASK 1, INC 2, CTASK 8) il carico è 23,2 FTE, con tempi alti (2 / 4 / 16) circa 46 FTE.
+- Sostituzione con dati reali: ore per ticket del fornitore uscente durante il Phase In [03 §3.8.1 p.109], oppure ore medie ricavate da rapporti di intervento, timesheet e attività DGB delle commesse di Managed Service in esecuzione, abbinate ai ticket del Service Desk (fase 6).
 
 ---
 
@@ -242,7 +255,7 @@ Lo scostamento costante di +4 k€ in tutti gli scenari equivale a **1,0 FTE di 
 | Release | Fase | Contenuto |
 |---|---|---|
 | — | 1 | Questo Technical Design → conferma |
-| v1.9.99 | 2 | Migrazione di tutte le `cm_prj*` + seed globali + seed PRJ-2026-0001 (ASPI, non collegato) + menu + Router + catalogo permessi + `PM_VERSION` allineato |
+| v1.9.99 | 2 | Migrazione di tutte le `cm_prj*` + seed globali + seed PRJ-2026-0001 (ASPI, non collegato) + Router + catalogo permessi + `PM_VERSION` allineato. Le voci di menu entrano con le pagine (v1.9.101 e v1.9.102), per non pubblicare link a pagine non ancora presenti |
 | v1.9.100 | 3 | `PrjCalc`, `PrjRepo` + `tools/verify_v1_9_100.php` (test §9) |
 | v1.9.101 | 4 | `?view=prj`, `prj_dashboard` (tab Anagrafica…Scenari), collegamento con storico e suggerimenti, `prj_parameters` |
 | v1.9.102 | 5 | KPI & penali, Punteggio, `prj_history`, tab «Progetti PRJ» nella commessa, colonna PRJ nell'elenco commesse |
@@ -258,14 +271,14 @@ Ogni release contiene:
 
 ---
 
-## 7. Punti da confermare
+## 7. Decisioni (05/10/2026)
 
-| # | Domanda | Default proposto se non confermato |
+| # | Punto | Decisione |
 |---|---|---|
-| Q1 | Numerazione da v1.9.99 invece di v1.9.82 | v1.9.99 |
-| Q2 | Significato di «SP» per filtrare il selettore | Tutte le commesse `cm_projects` tranne i segnaposto `DGB-%` |
-| Q3 | AHT (ore medie per ticket) per CTASK / INC / SCTASK, eventualmente per servizio: assenti nei seed, servono per FTE da ticket = 34,7 (media implicita ≈ 3,48 h/ticket con 1.600 h/FTE) | Nessun default: richiesti i valori del foglio Excel |
-| Q4 | Indennità H24: quali profili la ricevono? Il +4 k€ indica 1 FTE in meno rispetto a «tutti gli FTE dei servizi H24» | Flag `h24` per profilo nel seed, valorizzato secondo la risposta |
-| Q5 | Assegnazione dei permessi ai ruoli (§4) | Tabella §4 |
-| Q6 | Strutturale «remoto» (solo dotazione): i valori attesi usano l'ufficio per tutti. La regola remoto si applica solo agli FTE marcati remoti nello scenario? | Ufficio per tutti; flag `remoto` per profilo-scenario, default 0 |
-| Q7 | `sp_project_id` con `ON DELETE SET NULL` invece di RESTRICT (A0.4) | SET NULL + log orfani |
+| Q1 | Numerazione | Da **v1.9.99** |
+| Q2 | «SP» | È il **codice commessa** (`cm_projects.project_code`, colonna Codice di «Commesse / Progetti»). Il selettore cerca su codice, nome, cliente e `commercial_ref`, escludendo i segnaposto `DGB-%` |
+| Q3 | AHT | CTASK 12 h, INC 3 h, SCTASK 1,5 h (generali), con possibilità di valori per servizio |
+| Q4 | Indennità H24 | Solo gli FTE che svolgono H24: flag per profilo (seed: tutti i profili dei servizi H24 tranne P12) |
+| Q5 | Permessi | Tabella §4, applicata nella migration v1.9.99 (modificabile da Gestione permessi) |
+| Q6 | Strutturale remoto | Solo dotazione per gli FTE marcati remoti nello scenario e per i nearshore; ufficio per gli altri |
+| Q7 | Collegamento | `ON DELETE SET NULL` + registro orfani |

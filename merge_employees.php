@@ -65,6 +65,8 @@ $FK_TABLES = [
     'users'                   => 'employee_id',
     // Candidati convertiti (FK è converted_to_employee_id)
     'candidates'              => 'converted_to_employee_id',
+    // v1.9.99 — candidati/assegnati ai profili dei Progetti PRJ (FK RESTRICT)
+    'cm_prj_profile_assignment' => 'employee_id',
 ];
 
 // ──────────────────────────────────────────────────────────────────────
