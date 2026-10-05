@@ -70,6 +70,14 @@ final class AlertEngine
         $st->execute($attive);
         $correnti = $st->fetchAll(PDO::FETCH_ASSOC);
         $st->closeCursor();
+        // v1.10.03 — scostamenti stimato/consuntivo dei Progetti PRJ (regole prj_scost_*), stessa forma della vista principale.
+        // La vista esiste dalla migration v1.10.03: se manca la rilevazione prosegue senza.
+        try {
+            $st = $this->pdo->prepare("SELECT * FROM `v_cm_prj_alert_da_rilevare` WHERE `rule_code` IN ($ph)");
+            $st->execute($attive);
+            $correnti = array_merge($correnti, $st->fetchAll(PDO::FETCH_ASSOC));
+            $st->closeCursor();
+        } catch (Throwable $e) { /* schema PRJ assente */ }
 
         $nuovi = 0; $noti = 0; $firme = [];
         if (!$dryRun) {

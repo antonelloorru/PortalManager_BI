@@ -1,0 +1,11 @@
+# Release Checklist — v1.10.03 (cumulativo da v1.10.00)
+- [x] VERSION = 1.10.03, PM_VERSION = 1.10.03, migration aggiorna app_version / schema_version / release_label, `pm_migration_sql` ('1.10.03','migration_v1_10_03.sql')
+- [x] Pacchetto cumulativo: file di v1.10.01, v1.10.02 e v1.10.03 + migration 1.10.01, 1.10.02, 1.10.03 (idempotenti, da eseguire in ordine)
+- [x] Migration: nessun `;` nei commenti, RUN1/RUN2 err=0 su Dump 19.80 (con 1.9.99 → 1.10.02) e su DB di test
+- [x] `php -l` su tutti i file PHP del pacchetto
+- [x] `tools/verify_v1_10_03.php` 39 OK (controllo complessivo del modulo); v1.10.00–v1.10.02 senza regressioni (falliscono solo i controlli di versione)
+- [x] Consuntivo riconciliato con i valori sincronizzati delle commesse (WTS_3016: −0,01%; ANT_3518: identico)
+- [x] Test browser Super Admin e Finance: tab Stimato vs Consuntivo, ricalcolo, export XLSX (7 fogli) e DOCX (XML valido)
+- [x] Sicurezza: costi reali solo con permesso (video ed export), cm_projects in sola lettura, regole alert create disattivate
+- [x] Documentazione completa: CHANGELOG, DEPLOYMENT (cumulativo, permessi, alert, rollback), TECHNICAL_DESIGN consolidato (scopo dei moduli, relazioni tra le viste, logiche di calcolo, ER), MANUALE UTENTE, MANUALE ADMIN, RELEASE_CHECKLIST
+- [x] `update_manifest.json` con tutti i file e le migration in ordine

@@ -20,6 +20,7 @@ require_once(__DIR__ . '/app/PrjUi.php');
 require_once(__DIR__ . '/app/EntityChangeLog.php');
 require_once(__DIR__ . '/app/RecycleBin.php');
 require_once(__DIR__ . '/app/PmCharts.php');
+require_once(__DIR__ . '/app/PrjActuals.php');
 
 $u_id = (int)$_SESSION['user_id'];
 $id   = (int)($_GET['id'] ?? 0);
@@ -35,7 +36,7 @@ $can_calc = can('edit', 'prj_dashboard_calc.php');
 $can_link = can('edit', 'prj_link.php');
 $TABS = ['anag' => 'Anagrafica', 'link' => 'Collegamento commessa', 'gara' => 'Gara', 'svc' => 'Servizi & Tecnologie',
          'vol' => 'Asset & Volumi', 'prof' => 'Profili', 'costi' => 'Costi', 'scen' => 'Scenari',
-         'kpi' => 'KPI & Penali', 'punt' => 'Punteggio', 'stor' => 'Storico'];   // v1.10.02
+         'kpi' => 'KPI & Penali', 'punt' => 'Punteggio', 'cons' => 'Stimato vs Consuntivo', 'stor' => 'Storico'];   // v1.10.02, cons v1.10.03
 $tab = isset($TABS[$_GET['tab'] ?? '']) ? $_GET['tab'] : 'anag';
 $dOk = fn($v) => preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)$v) ? $v : null;
 $iOk = fn($v) => ctype_digit((string)$v) && (int)$v > 0 ? (int)$v : null;
@@ -301,6 +302,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $_SESSION['flash_msg'] = "<div class='alert alert-success'>Simulazione del punteggio salvata (" . count($rows) . " valori).</div>";
             break;
 
+        case 'actuals_refresh':   // v1.10.03 — ricalcolo dei consuntivi e degli scostamenti
+            if (!$can_calc) { $deny(); break; }
+            $r = (new PrjActuals($pdo))->refresh($id);
+            write_log('Commesse', 'info', "PRJ {$prj['prj_code']}: consuntivi aggiornati ({$r['mesi']} mesi)", $u_id);
+            $_SESSION['flash_msg'] = "<div class='alert alert-success'>Consuntivi aggiornati: {$r['mesi']} mesi.</div>";
+            break;
+
         case 'calc_run':
             if (!$can_calc) { $deny(); break; }
             $sid = (int)($_POST['scenario_id'] ?? 0);
@@ -371,9 +379,10 @@ $scenarios = $q("SELECT s.*, z.nome AS zona, n.paese FROM cm_prj_scenario s
 $refId = (int)$prj['scenario_riferimento_id'] ?: (int)($scenarios[0]['id'] ?? 0);
 $selSc = (int)($_GET['sc'] ?? 0);
 if (!in_array($selSc, array_map(fn($s) => (int)$s['id'], $scenarios), true)) $selSc = $refId;
+$exp = in_array($_GET['export'] ?? '', ['xlsx', 'docx'], true) ? $_GET['export'] : '';   // v1.10.03
 $calc = []; $calcErr = [];
 foreach ($scenarios as $s) {
-    if (!in_array($tab, ['scen', 'costi', 'vol', 'prof'], true) && (int)$s['id'] !== $selSc) continue;
+    if (!in_array($tab, ['scen', 'costi', 'vol', 'prof'], true) && !$exp && (int)$s['id'] !== $selSc) continue;
     try { $calc[(int)$s['id']] = $repo->calc($id, (int)$s['id'], $today); }
     catch (Throwable $e) { $calcErr[(int)$s['id']] = $e->getMessage(); }
 }
@@ -431,6 +440,30 @@ if ($tab === 'punt') {
     $ecoIn = ['s1' => isset($e1['s']) ? $e1['s'] * 100 : '', 's2' => isset($e2['s']) ? $e2['s'] * 100 : '', 'w' => $e1['w'] ?? 1, 'n1' => $e1['n'] ?? 1, 'n2' => $e2['n'] ?? 1];
     $eco = PrjCalc::economicScore((float)($e1['s'] ?? 0), (float)($e2['s'] ?? 0), (float)($e1['w'] ?? 1), (float)($e1['n'] ?? 1), (float)($e2['n'] ?? 1), $k1max, $k2max);
 }
+// v1.10.03 — Stimato vs Consuntivo
+$can_real = can('view', 'prj_costs_real.php');
+$CV = null; $consAgg = null; $teamCmp = []; $slaRows = []; $kpiRef = [];
+if (($tab === 'cons' || $exp) && $sp) {
+    $pa = new PrjActuals($pdo);
+    $consAgg = $q("SELECT MAX(computed_at) m FROM cm_prj_actual WHERE prj_id = ?", [$id])[0]['m'] ?? null;
+    if (!$consAgg && $can_calc) { try { $pa->refresh($id); $consAgg = date('Y-m-d H:i:s'); } catch (Throwable $e) {} }
+    $CV = $pa->compare($id);
+    $teamCmp = $pa->team($id, (int)$sp['id']);
+    $slaRows = $pa->sla((string)$sp['project_code']);
+    $kpiRef = $q("SELECT codice, indicatore, livello_atteso FROM cm_prj_kpi WHERE prj_id = ? AND is_current = 1 AND codice IN ('KPI_05','KPI_09','KPI_12','KPI_13') ORDER BY codice", [$id]);
+}
+
+// v1.10.03 — export XLSX / DOCX della scheda (scenari, costi, carico, anni, stimato vs consuntivo)
+if ($exp) {
+    if (!can('export', 'prj_dashboard.php')) { $_SESSION['flash_msg'] = "<div class='alert alert-danger'>Export non consentito.</div>"; redirect('prj_dashboard', ['id' => $id]); }
+    require_once(__DIR__ . '/app/PrjExport.php');
+    write_log('Commesse', 'info', "PRJ {$prj['prj_code']}: export $exp", $u_id);
+    $ctxE = ['prj' => $prj, 'sp' => $sp, 'scenarios' => $scenarios, 'calc' => $calc, 'refId' => (int)$prj['scenario_riferimento_id'], 'cv' => $CV, 'can_real' => $can_real,
+             'tender' => $tender, 'gara' => $gara];
+    $exp === 'xlsx' ? PrjExport::xlsx($ctxE) : PrjExport::docx($ctxE);
+    exit;
+}
+
 if ($tab === 'stor') {
     $runs = $q("SELECT r.id, r.created_at, r.as_of, r.scenario_nome, r.app_version, sp.project_code AS sp_code,
                        COALESCE(NULLIF(TRIM(CONCAT_WS(' ', e.last_name, e.first_name)),''), u.display_name, u.email) AS utente,
@@ -489,7 +522,13 @@ $tabUrl = fn(string $t, array $x = []) => url_safe('prj_dashboard', array_merge(
       <?php if ($can_link): ?><a class="btn btn-sm" href="<?=$tabUrl('link')?>"><i class="fa-solid fa-link"></i> Collega a commessa SP</a><?php endif; ?>
     </div>
   </div>
-  <a class="btn btn-sm" href="<?=url_safe('manage_projects', ['view' => 'prj'])?>"><i class="fa-solid fa-arrow-left"></i> Progetti PRJ</a>
+  <div style="display:flex;gap:6px">
+    <?php if (can('export', 'prj_dashboard.php')): ?>
+      <a class="btn btn-success btn-sm" href="<?=url_safe('prj_dashboard', ['id' => $id, 'export' => 'xlsx'])?>" title="Scenari, costi, carico, anni, stimato vs consuntivo"><i class="fa-solid fa-file-excel"></i> XLSX</a>
+      <a class="btn btn-sm" href="<?=url_safe('prj_dashboard', ['id' => $id, 'export' => 'docx'])?>" title="Relazione di dimensionamento in Word"><i class="fa-solid fa-file-word"></i> DOCX</a>
+    <?php endif; ?>
+    <a class="btn btn-sm" href="<?=url_safe('manage_projects', ['view' => 'prj'])?>"><i class="fa-solid fa-arrow-left"></i> Progetti PRJ</a>
+  </div>
 </div>
 <?= $msg ?>
 
@@ -1114,6 +1153,86 @@ $tabUrl = fn(string $t, array $x = []) => url_safe('prj_dashboard', array_merge(
 <?php if ($can_edit): ?><button class="btn btn-primary btn-sm" style="margin-top:10px"><i class="fa-solid fa-floppy-disk"></i> Salva e ricalcola</button><?php endif; ?>
 </fieldset>
 </form>
+
+<?php elseif ($tab === 'cons'): /* ── STIMATO VS CONSUNTIVO (v1.10.03) ── */ ?>
+<?php if (!$sp): ?>
+  <div class="card"><p class="prj-sub" style="margin:0">Il confronto è attivo quando il progetto è collegato a una commessa SP (tab «Collegamento commessa»).</p></div>
+<?php elseif (!$CV): ?>
+  <div class="alert alert-warning">Confronto non disponibile.</div>
+<?php else: $ctx = $CV['context']; $TV = $CV['totali']; $sg = $CV['soglie'];
+  $col = function (?float $pct, string $k) use ($sg) { if ($pct === null) return 'inherit'; $a = abs($pct * 100); return $a >= $sg[$k][1] ? '#dc2626' : ($a >= $sg[$k][0] ? '#d97706' : '#16a34a'); }; ?>
+<div class="card" style="margin-bottom:14px">
+  <div class="card-header"><span class="card-title"><i class="fa-solid fa-scale-balanced"></i> Commessa <?=h($ctx['project_code'])?> — periodo <?=h(date('m/Y', strtotime($ctx['from'])))?> → <?=h(date('m/Y', strtotime($ctx['to'])))?></span>
+    <span style="display:flex;gap:6px;align-items:center"><span class="prj-sub">consuntivi aggiornati al <?=h($consAgg ? date('d/m/Y H:i', strtotime($consAgg)) : 'mai')?></span>
+    <?php if ($can_calc): ?><form method="post" style="margin:0"><?= csrf_field() ?><input type="hidden" name="action" value="actuals_refresh"><input type="hidden" name="tab" value="cons"><button class="btn btn-sm btn-primary"><i class="fa-solid fa-rotate"></i> Aggiorna consuntivi</button></form><?php endif; ?></span></div>
+  <div class="prj-kpi" style="margin:0">
+    <?php foreach ([
+      ['Valore commessa (sincr.)', PrjUi::eur($ctx['value_total'] !== null ? (float)$ctx['value_total'] : null, 0), '#0f172a'],
+      ['Valore a oggi', PrjUi::eur($ctx['value_todate'] !== null ? (float)$ctx['value_todate'] : null, 0), '#0f172a'],
+      ['Costo consuntivato (sincr.)', PrjUi::eur($ctx['actual_cost'] !== null ? (float)$ctx['actual_cost'] : null, 0), '#0f172a'],
+      ['Margine (sincr.)', PrjUi::eur($ctx['margin_total'] !== null ? (float)$ctx['margin_total'] : null, 0), ((float)$ctx['margin_total']) < 0 ? '#dc2626' : '#16a34a'],
+      ['Canone stimato nel periodo', PrjUi::eur($TV['canone_stimato'], 0), '#2563eb'],
+      ['Costo stimato nel periodo', PrjUi::eur($TV['costo_stimato'], 0), '#2563eb'],
+      ['Costo reale nel periodo', $can_real ? PrjUi::eur($TV['costo'], 0) : 'riservato', $can_real ? $col($TV['scost_costo'], 'costo') : '#94a3b8'],
+      ['FTE medi stimati / reali', PrjUi::n($TV['fte_stimato_medio'], 1) . ' / ' . PrjUi::n($TV['fte_medio'], 1), '#0f172a'],
+    ] as [$l, $v, $c]): ?><div class="card"><div class="l"><?=h($l)?></div><div class="v" style="color:<?=$c?>;font-size:16px"><?=$v?></div></div><?php endforeach; ?>
+  </div>
+</div>
+
+<div class="card" style="margin-bottom:14px">
+  <div class="card-header"><span class="card-title"><i class="fa-solid fa-chart-column"></i> FTE per mese: stimati vs reali</span></div>
+  <?= PmCharts::groupedBars(array_map(fn($m) => substr($m['ym'], 5) . '/' . substr($m['ym'], 2, 2), $CV['mesi']), [
+        ['label' => 'FTE stimati', 'color' => '#93c5fd', 'values' => array_map(fn($m) => (float)$m['stimato']['fte'], $CV['mesi'])],
+        ['label' => 'FTE reali', 'color' => '#2563eb', 'values' => array_map(fn($m) => (float)$m['consuntivo']['fte'], $CV['mesi'])],
+      ], ['unit' => 'FTE', 'decimals' => 1, 'height' => 200]) ?>
+</div>
+
+<div class="card" style="overflow-x:auto;margin-bottom:14px">
+  <div class="card-header"><span class="card-title"><i class="fa-solid fa-table"></i> Dettaglio mensile</span>
+    <span class="prj-sub">soglie scostamento: attenzione ≥ <?=PrjUi::n($sg['fte'][0], 0)?>% · allarme ≥ <?=PrjUi::n($sg['fte'][1], 0)?>% (FTE) — <?=PrjUi::n($sg['costo'][0], 0)?>% / <?=PrjUi::n($sg['costo'][1], 0)?>% (costo)</span></div>
+  <table class="data-table prj-tbl"><thead><tr><th>Mese</th><th class="r">Ore rapporti</th><th class="r">Ore timesheet</th><th class="r">Ore DGB</th><th class="r">Ore totali</th><th class="r">Ticket</th>
+    <th class="r">FTE stimati</th><th class="r">FTE reali</th><th class="r">Scost. FTE</th><th class="r">Costo stimato</th><th class="r">Costo reale</th><th class="r">Scost. costo</th></tr></thead><tbody>
+  <?php foreach ($CV['mesi'] as $m): ?>
+    <tr><td><?=h(date('m/Y', strtotime($m['ym'] . '-01')))?></td><td class="r"><?=PrjUi::n($m['ore_report'], 1)?></td><td class="r"><?=PrjUi::n($m['ore_timesheet'], 1)?></td><td class="r"><?=PrjUi::n($m['ore_dgb'], 1)?></td>
+      <td class="r"><strong><?=PrjUi::n($m['ore'], 1)?></strong></td><td class="r"><?=PrjUi::n($m['ticket'], 0)?></td>
+      <td class="r"><?=PrjUi::n($m['stimato']['fte'], 2)?></td><td class="r"><?=PrjUi::n($m['consuntivo']['fte'], 2)?></td>
+      <td class="r" style="color:<?=$m['ore'] > 0 ? $col($m['scost_fte'], 'fte') : 'inherit'?>"><?= $m['ore'] > 0 ? PrjUi::pct($m['scost_fte'], 0) : '—' ?></td>
+      <td class="r"><?=PrjUi::eur($m['stimato']['costo'], 0)?></td><td class="r"><?= $can_real ? PrjUi::eur($m['consuntivo']['costo'], 0) : '—' ?></td>
+      <td class="r" style="color:<?=$m['ore'] > 0 && $can_real ? $col($m['scost_costo'], 'costo') : 'inherit'?>"><?= $m['ore'] > 0 && $can_real ? PrjUi::pct($m['scost_costo'], 0) : '—' ?></td></tr>
+  <?php endforeach; ?></tbody>
+  <tfoot><tr style="font-weight:700"><td>Totale</td><td colspan="3"></td><td class="r"><?=PrjUi::n($TV['ore'], 1)?></td><td class="r"><?=PrjUi::n($TV['ticket'], 0)?></td>
+    <td class="r"><?=PrjUi::n($TV['fte_stimato_medio'], 2)?></td><td class="r"><?=PrjUi::n($TV['fte_medio'], 2)?></td><td></td>
+    <td class="r"><?=PrjUi::eur($TV['costo_stimato'], 0)?></td><td class="r"><?= $can_real ? PrjUi::eur($TV['costo'], 0) : '—' ?></td><td class="r"><?= $can_real ? PrjUi::pct($TV['scost_costo'], 0) : '—' ?></td></tr></tfoot></table>
+  <p class="prj-sub">Ore: rapporti di intervento della commessa + voci manuali di timesheet; le ore delle attività DGB contano solo nei mesi senza rapporti (i rapporti ne sono già la sincronizzazione).
+    FTE reali = ore / capacità del mese. Costo reale: dipendenti a costo orario dell'anno, professionisti al costo aziendale del rapporto o della fascia.
+    Stimato: scenario di riferimento, costo e canone dell'anno di contratto / 12.<?= $can_real ? '' : ' Costi reali riservati (permesso «Costi reali dipendenti (PRJ)»).' ?></p>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+  <div class="card" style="overflow-x:auto">
+    <div class="card-header"><span class="card-title"><i class="fa-solid fa-users"></i> Team della commessa vs assegnazioni previste</span></div>
+    <table class="data-table prj-tbl"><thead><tr><th>Persona</th><th>Team commessa</th><th>Profili PRJ previsti</th><th>Esito</th></tr></thead><tbody>
+    <?php if (!$teamCmp): ?><tr><td colspan="4" class="prj-sub" style="text-align:center;padding:12px">Nessun membro del team né assegnazione prevista.</td></tr><?php endif; ?>
+    <?php foreach ($teamCmp as $tm): ?>
+      <tr><td><?=h((string)$tm['persona'])?></td>
+        <td><?= $tm['team'] ? h(trim((string)$tm['team']['role_in_project']) ?: 'membro') . ($tm['team']['allocated_hours'] > 0 ? ' · ' . PrjUi::n((float)$tm['team']['allocated_hours'], 0, 'h') : '') : '—' ?></td>
+        <td><?= $tm['prj'] ? h(implode(', ', array_map(fn($a) => $a['codice'] . ' ' . $a['profilo'] . ' ' . PrjUi::n((float)$a['pct_allocazione'], 0) . '%', $tm['prj']))) : '—' ?></td>
+        <td><?= $tm['team'] && $tm['prj'] ? '<span style="color:#16a34a">previsto e in team</span>' : ($tm['team'] ? '<span style="color:#d97706">in team, non previsto</span>' : '<span style="color:#dc2626">previsto, non in team</span>') ?></td></tr>
+    <?php endforeach; ?></tbody></table>
+  </div>
+  <div class="card" style="overflow-x:auto">
+    <div class="card-header"><span class="card-title"><i class="fa-solid fa-stopwatch"></i> SLA reali (Service Desk) e KPI di gara</span></div>
+    <table class="data-table prj-tbl"><thead><tr><th>Ambito</th><th>Coda / livello</th><th class="r">Presa in carico</th><th class="r">Risoluzione</th></tr></thead><tbody>
+    <?php if (!$slaRows): ?><tr><td colspan="4" class="prj-sub" style="text-align:center;padding:12px">Nessuno SLA configurato per la commessa.</td></tr><?php endif; ?>
+    <?php foreach ($slaRows as $s_): ?><tr><td><?=h($s_['project_code'])?></td><td><?=h(trim($s_['queue_name'] . ' ' . $s_['label']))?></td>
+      <td class="r"><?= $s_['take_charge_min'] !== null ? PrjUi::n($s_['take_charge_min'] / 60, 1, 'h') : '—' ?></td><td class="r"><?= $s_['resolution_min'] !== null ? PrjUi::n($s_['resolution_min'] / 60, 1, 'h') : '—' ?></td></tr><?php endforeach; ?>
+    </tbody></table>
+    <p class="prj-sub" style="margin-top:8px">KPI di gara di riferimento:
+      <?php foreach ($kpiRef as $k_): ?><span style="display:block"><?=h($k_['codice'] . ' ' . $k_['indicatore'] . ': ' . $k_['livello_atteso'])?></span><?php endforeach; ?></p>
+    <p class="prj-sub">Banda volumi: ticket reali nel periodo <?=PrjUi::n($TV['ticket'], 0)?> — conguaglio annuale nella tab «KPI & Penali».</p>
+  </div>
+</div>
+<?php endif; ?>
 
 <?php elseif ($tab === 'stor'): /* ── STORICO ── */ ?>
 <div class="card" style="overflow-x:auto">
