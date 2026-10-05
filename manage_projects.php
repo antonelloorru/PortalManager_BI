@@ -21,11 +21,16 @@ require_once('access_control.php');
 require_once('functions.php');
 require_once(__DIR__ . '/app/ProjectModel.php');
 
+// v1.10.01 — scheda «Progetti PRJ» (gare e iniziative da dimensionare), stessa voce di menu.
+// La vista è in app/prj_list.php, con permessi propri (manage_projects_prj.php): accessibile anche a chi non vede le commesse SP.
+if (($_GET['view'] ?? '') === 'prj') { require __DIR__ . '/app/prj_list.php'; exit; }
 if (!can('view', 'manage_projects.php')) { redirect('dashboard'); }
 $can_create = can('create', 'manage_projects.php');
 $u_id  = (int)$_SESSION['user_id'];
 $model = new ProjectModel($pdo);
 $prefix = new PrefixResolver($pdo);
+
+$can_prj = can('view', 'manage_projects_prj.php');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     Csrf::verify();
@@ -312,6 +317,12 @@ $total_projects = (int)$pdo->query("SELECT COUNT(*) FROM cm_projects")->fetchCol
 <div class="page-header">
   <h1><i class="fa-solid fa-briefcase"></i> Commesse / Progetti</h1>
 </div>
+<?php if ($can_prj): ?>
+<div class="tabs" style="display:flex;gap:6px;margin-bottom:14px;border-bottom:1px solid var(--border)">
+  <a class="tab-btn active" href="<?=url_safe('manage_projects')?>" style="text-decoration:none">Commesse SP</a>
+  <a class="tab-btn" href="<?=url_safe('manage_projects', ['view' => 'prj'])?>" style="text-decoration:none">Progetti PRJ</a>
+</div>
+<?php endif; ?>
 <?= $msg ?>
 
 <div class="pm-toolbar">

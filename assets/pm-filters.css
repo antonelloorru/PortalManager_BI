@@ -68,3 +68,9 @@
 
 @media (max-width:700px) { .pm-grid-auto { grid-template-columns:1fr } }
 @media print { .pm-panel, .pm-toolbar, .pm-actions { display:none } }
+
+/* v1.10.01 — schede di navigazione realizzate con link (Commesse SP / Progetti PRJ, scheda progetto PRJ) */
+.tabs a.tab-btn { display:inline-block; padding:7px 13px; font-size:12px; font-weight:600; color:#475569;
+  border:1px solid #e2e8f0; border-bottom:0; border-radius:8px 8px 0 0; background:#f8fafc; margin-bottom:-1px }
+.tabs a.tab-btn:hover { background:#f1f5f9; color:#0f172a }
+.tabs a.tab-btn.active { background:#fff; color:#2563eb; border-color:#cbd5e1; box-shadow:inset 0 2px 0 #2563eb }

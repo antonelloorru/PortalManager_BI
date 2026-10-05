@@ -74,7 +74,7 @@ $current_key    = str_ends_with($current_page, '.php')
 $public_pages   = ['login.php', 'unauthorized.php', 'install.php', 'r.php', 'auth_microsoft.php', 'password_reset.php'];   // v1.9.81
 $always_allowed = [
     'index.php', 'user_profile.php', 'notifications.php', 'logout.php',
-    'api_filters.php', 'api_cert_search.php', 'api_cert_history.php', 'api_contract_docs.php', 'api_cert_codes.php',
+    'api_filters.php', 'api_cert_search.php', 'api_cert_history.php', 'api_contract_docs.php', 'api_cert_codes.php', 'api_prj.php',   // v1.10.01 — verifica can() per azione
     'doc_download.php', 'download.php',
     // NOTA v1.9.54: db_upgrade.php, schema_check_upgrade.php, health_check.php e system_update.php
     // rimossi da always_allowed per riservarli esclusivamente al Super Admin (role_id = 1).
@@ -93,7 +93,9 @@ if (!in_array($current_page, $public_pages)) {
     $u_id   = (int)$_SESSION['user_id'];
     $u_role = (int)($_SESSION['role_id'] ?? 99);
     if ($u_role !== 1 && !in_array($current_page, $always_allowed)) {
-        if (!can('view', $current_page)) {
+        // v1.10.01 — la scheda «Progetti PRJ» di Commesse / Progetti ha un permesso proprio (manage_projects_prj.php)
+        $prjView = $current_page === 'manage_projects.php' && ($_GET['view'] ?? '') === 'prj' && can('view', 'manage_projects_prj.php');
+        if (!$prjView && !can('view', $current_page)) {
             if (class_exists('Router')) {
                 header('Location: ' . Router::url('unauthorized'));
             } else {

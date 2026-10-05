@@ -252,9 +252,20 @@ final class CommesseSync
             if ($this->pdo->inTransaction()) $this->pdo->commit();
             $this->pdo->prepare("UPDATE cm_import_batches SET rows_total=?, rows_ok=?, rows_unmatched=? WHERE id=?")
                 ->execute([$total, $ins + $upd, $skip + $skipDeleted, $batchId]);
+            // v1.10.01 — Progetti PRJ: orfani (commessa SP eliminata) e collegamento da commercial_ref.
+            // Solo lettura di cm_projects; se le tabelle cm_prj non esistono il controllo si salta.
+            $prjSync = ['orfani' => 0, 'collegati' => 0];
+            if (is_file(__DIR__ . '/PrjLink.php')) {
+                try {
+                    $this->pdo->query("SELECT 1 FROM cm_prj LIMIT 1");
+                    require_once __DIR__ . '/PrjLink.php';
+                    $prjSync = (new PrjLink($this->pdo))->afterSync($userId);
+                } catch (Throwable $e) { /* schema PRJ assente: nessuna azione */ }
+            }
         }
 
         return [
+            'prj' => $prjSync ?? ['orfani' => 0, 'collegati' => 0],
             'total' => $total, 'ins' => $ins, 'upd' => $upd,
             'skip' => $skip, 'skip_deleted' => $skipDeleted,
             'absorbed' => $absorbed, 'batch' => $batchId,

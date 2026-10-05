@@ -148,6 +148,8 @@ class MenuManager
                     ['page' => 'tech_units',        'label' => 'Unità Organizzative',         'icon' => 'fa-sitemap'],
                     ['page' => 'professionals',     'label' => 'Professionisti esterni',      'icon' => 'fa-user-tie'],
                     ['page' => 'manage_rate_bands', 'label' => 'Fasce costo orario',          'icon' => 'fa-euro-sign'],
+                    // v1.10.01 — Progetti PRJ: parametri globali del dimensionamento gare
+                    ['page' => 'prj_parameters',    'label' => 'Parametri dimensionamento',   'icon' => 'fa-sliders'],
                     // v1.9.23 — ordinativi Pratix: un ordinativo, piu' commesse
                     ['page' => 'pratix_orders',     'label' => 'Ordinativi Pratix',           'icon' => 'fa-file-invoice'],
 

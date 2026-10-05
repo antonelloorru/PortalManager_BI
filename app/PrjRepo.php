@@ -1,6 +1,6 @@
 <?php
 /**
- * PortalManager — app/PrjRepo.php  (v1.10.00)
+ * PortalManager — app/PrjRepo.php  (v1.10.00, esteso in v1.10.01: creazione, clonazione, rettifica, chiusura versioni)
  *
  * Accesso ai dati dei Progetti PRJ:
  *  - lettura "as-of" delle tabelle versionate (valid_from <= d AND (valid_to IS NULL OR valid_to >= d));
@@ -226,11 +226,22 @@ final class PrjRepo
             $st->execute([$id]);
             $old = $st->fetch(PDO::FETCH_ASSOC);
             if (!$old || (int)$old['is_current'] !== 1) throw new RuntimeException('Versione vigente non trovata.');
-            if ($validFrom <= $old['valid_from']) throw new RuntimeException('La nuova versione deve decorrere dopo il ' . $old['valid_from'] . '.');
+            if ($validFrom < $old['valid_from']) throw new RuntimeException('La nuova versione non può decorrere prima del ' . $old['valid_from'] . '.');
             $cols = []; $st = $this->pdo->query("SHOW COLUMNS FROM `$table`");
             foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $c) if (stripos((string)$c['Extra'], 'GENERATED') === false && $c['Field'] !== 'id') $cols[] = $c['Field'];
             foreach (array_keys($data) as $k) if (!in_array($k, $cols, true) || in_array($k, ['ent_id', 'valid_from', 'valid_to', 'version_no', 'is_current', 'created_by', 'created_at'], true))
                 throw new InvalidArgumentException("Campo non modificabile: $k");
+            // v1.10.01 — stessa decorrenza della versione vigente: rettifica in place (nessuna nuova versione), tracciata
+            if ($validFrom === $old['valid_from']) {
+                $set = implode(', ', array_map(fn($k) => "`$k` = ?", array_keys($data)));
+                $this->pdo->prepare("UPDATE `$table` SET $set, change_note = ? WHERE id = ?")
+                    ->execute([...array_values($data), ($note !== '' ? $note : 'rettifica'), $id]);
+                require_once __DIR__ . '/EntityChangeLog.php';
+                (new EntityChangeLog($this->pdo))->diffAndLog($table, (int)($old['ent_id'] ?? $id), $old, $data + $old, 'update', $source, null, $userId,
+                    ['updated_at', 'created_at', 'updated_by', 'id', 'valid_from', 'valid_to', 'version_no', 'is_current', 'created_by', 'change_note', 'ent_id']);
+                if ($own) $this->pdo->commit();
+                return $id;
+            }
             $this->pdo->prepare("UPDATE `$table` SET valid_to = DATE_SUB(?, INTERVAL 1 DAY), is_current = 0 WHERE id = ?")->execute([$validFrom, $id]);
             $new = array_intersect_key($old, array_flip($cols));
             $new = array_merge($new, $data, ['ent_id' => $old['ent_id'] ?? $id, 'valid_from' => $validFrom, 'valid_to' => null,
@@ -250,6 +261,151 @@ final class PrjRepo
             if ($own) $this->pdo->rollBack();
             throw $e;
         }
+    }
+
+    /** Nuova riga versionata (versione 1, ent_id = id). */
+    public function insertVersioned(string $table, array $data, string $validFrom, ?int $userId, string $note = ''): int
+    {
+        if (!isset(self::VERSIONED[$table])) throw new InvalidArgumentException("Tabella non versionata: $table");
+        $data += ['valid_from' => $validFrom, 'version_no' => 1, 'is_current' => 1, 'created_by' => $userId, 'change_note' => $note !== '' ? $note : null];
+        $this->pdo->prepare("INSERT INTO `$table` (`" . implode('`,`', array_keys($data)) . "`) VALUES (" . implode(',', array_fill(0, count($data), '?')) . ")")
+            ->execute(array_values($data));
+        $id = (int)$this->pdo->lastInsertId();
+        $this->pdo->prepare("UPDATE `$table` SET ent_id = id WHERE id = ? AND ent_id IS NULL")->execute([$id]);
+        require_once __DIR__ . '/EntityChangeLog.php';
+        try { (new EntityChangeLog($this->pdo))->diffAndLog($table, $id, [], $data, 'insert', 'ui', null, $userId, ['created_at', 'created_by', 'valid_from', 'version_no', 'is_current', 'change_note']); }
+        catch (Throwable $e) { /* audit best-effort */ }
+        return $id;
+    }
+
+    /** Chiude un record versionato (nessuna nuova versione): valid_to = $validTo, is_current = 0. */
+    public function closeVersion(string $table, int $id, string $validTo, ?int $userId, string $note = ''): void
+    {
+        if (!isset(self::VERSIONED[$table])) throw new InvalidArgumentException("Tabella non versionata: $table");
+        $this->pdo->prepare("UPDATE `$table` SET valid_to = ?, is_current = 0, change_note = ? WHERE id = ? AND is_current = 1")
+            ->execute([$validTo, $note !== '' ? $note : 'chiuso', $id]);
+        require_once __DIR__ . '/EntityChangeLog.php';
+        try { (new EntityChangeLog($this->pdo))->logField($table, $id, 'valid_to', null, $validTo, 'update', 'ui', null, $userId); } catch (Throwable $e) {}
+    }
+
+    /** Tutte le versioni di un record logico (per lo storico). */
+    public function versions(string $table, int $entId): array
+    {
+        if (!isset(self::VERSIONED[$table])) return [];
+        $st = $this->pdo->prepare("SELECT * FROM `$table` WHERE ent_id = ? ORDER BY version_no DESC");
+        $st->execute([$entId]);
+        return $st->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    /**
+     * Nuovo progetto PRJ: codice atomico, dati di gara e produttività iniziali (dai parametri globali).
+     * @return int id del PRJ
+     */
+    public function createPrj(array $d, ?int $userId): int
+    {
+        $own = !$this->pdo->inTransaction();
+        if ($own) $this->pdo->beginTransaction();
+        try {
+            $code = $this->nextCode((int)date('Y'));
+            $cols = ['prj_code' => $code, 'nome' => $d['nome'], 'client_id' => $d['client_id'] ?: null, 'client_raw' => $d['client_raw'] ?: null,
+                     'exec_company_id' => $d['exec_company_id'] ?: null, 'project_type' => $d['project_type'] ?: null, 'stato' => $d['stato'] ?: 'Bozza',
+                     'responsabile_user_id' => $d['responsabile_user_id'] ?: null, 'codice_gara' => $d['codice_gara'] ?: null, 'cig' => $d['cig'] ?: null,
+                     'stazione_appaltante' => $d['stazione_appaltante'] ?: null, 'data_offerta' => $d['data_offerta'] ?: null,
+                     'start_date' => $d['start_date'] ?: null, 'end_date' => $d['end_date'] ?: null, 'note' => $d['note'] ?: null, 'created_by' => $userId];
+            $this->pdo->prepare("INSERT INTO cm_prj (`" . implode('`,`', array_keys($cols)) . "`) VALUES (" . implode(',', array_fill(0, count($cols), '?')) . ")")
+                ->execute(array_values($cols));
+            $id = (int)$this->pdo->lastInsertId();
+            $today = date('Y-m-d');
+            $gp = $this->params(0, $today);
+            $this->insertVersioned('cm_prj_productivity', ['prj_id' => $id, 'ore_utili_fte' => $gp['ore_utili_fte'] ?? 1600, 'giorni_fte' => $gp['giorni_fte'] ?? 220,
+                                   'uplift' => $gp['uplift_proattivo'] ?? 0, 'banda_volumi' => 0.20], $today, $userId, 'creazione');
+            $this->insertVersioned('cm_prj_gara', ['prj_id' => $id], $today, $userId, 'creazione');
+            require_once __DIR__ . '/EntityChangeLog.php';
+            (new EntityChangeLog($this->pdo))->diffAndLog('cm_prj', $id, [], $cols, 'insert', 'ui', null, $userId);
+            if ($own) $this->pdo->commit();
+            return $id;
+        } catch (Throwable $e) { if ($own) $this->pdo->rollBack(); throw $e; }
+    }
+
+    /**
+     * Clona un PRJ: nuovo codice, stato Bozza, nessuna commessa collegata; copia le versioni vigenti dei dati
+     * (servizi, tecnologie, asset, ticket, profili, costi, KPI, criteri, scenari) rimappando gli identificativi.
+     * Non copia calc run, consuntivi, collegamenti e assegnazioni di persone.
+     */
+    public function clonePrj(int $srcId, ?int $userId, string $nome = ''): int
+    {
+        $src = $this->rows("SELECT * FROM cm_prj WHERE id = :p", [':p' => $srcId])[0] ?? null;
+        if (!$src) throw new RuntimeException('Progetto da clonare inesistente.');
+        $own = !$this->pdo->inTransaction();
+        if ($own) $this->pdo->beginTransaction();
+        try {
+            $today = date('Y-m-d');
+            $code = $this->nextCode((int)date('Y'));
+            $p = $src; unset($p['id'], $p['created_at'], $p['updated_at']);
+            $p = array_merge($p, ['prj_code' => $code, 'nome' => $nome !== '' ? $nome : 'Copia di ' . $src['nome'], 'stato' => 'Bozza',
+                                  'sp_project_id' => null, 'sp_linked_at' => null, 'scenario_riferimento_id' => null, 'created_by' => $userId,
+                                  'note' => trim('Clonato da ' . $src['prj_code'] . '. ' . (string)$src['note'])]);
+            $this->pdo->prepare("INSERT INTO cm_prj (`" . implode('`,`', array_keys($p)) . "`) VALUES (" . implode(',', array_fill(0, count($p), '?')) . ")")
+                ->execute(array_values($p));
+            $new = (int)$this->pdo->lastInsertId();
+            $map = ['area' => [], 'service' => [], 'group' => [], 'profile' => [], 'kpi' => [], 'crit' => [], 'scen' => [], 'source' => []];
+            $copy = function (string $table, string $where, array $args, callable $fx, bool $vers) use ($new, $userId, $today): array {
+                $ids = [];
+                $st = $this->pdo->prepare("SELECT * FROM `$table` WHERE $where"); $st->execute($args);
+                $gen = [];
+                foreach ($this->pdo->query("SHOW COLUMNS FROM `$table`")->fetchAll(PDO::FETCH_ASSOC) as $c)
+                    if (stripos((string)$c['Extra'], 'GENERATED') !== false) $gen[] = $c['Field'];
+                foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) {
+                    $old = (int)$r['id']; $oldEnt = isset($r['ent_id']) ? (int)$r['ent_id'] : $old;
+                    unset($r['id']); foreach ($gen as $g) unset($r[$g]);
+                    if (array_key_exists('prj_id', $r)) $r['prj_id'] = $new;
+                    $r = $fx($r);
+                    if ($vers) $r = array_merge($r, ['ent_id' => null, 'valid_from' => $today, 'valid_to' => null, 'version_no' => 1, 'is_current' => 1,
+                                                     'created_by' => $userId, 'created_at' => date('Y-m-d H:i:s'), 'change_note' => 'clone']);
+                    $this->pdo->prepare("INSERT INTO `$table` (`" . implode('`,`', array_keys($r)) . "`) VALUES (" . implode(',', array_fill(0, count($r), '?')) . ")")
+                        ->execute(array_values($r));
+                    $nid = (int)$this->pdo->lastInsertId();
+                    if ($vers) $this->pdo->prepare("UPDATE `$table` SET ent_id = id WHERE id = ?")->execute([$nid]);
+                    $ids[$vers ? $oldEnt : $old] = $nid;
+                }
+                return $ids;
+            };
+            $cur = 'prj_id = ? AND is_current = 1';
+            $id  = fn($m, $v) => $v === null || (int)$v === 0 ? $v : ($m[(int)$v] ?? $v);
+            $map['source']  = $copy('cm_prj_source', 'prj_id = ?', [$srcId], fn($r) => $r, false);
+            $src_ = fn($r) => isset($r['source_id']) && $r['source_id'] !== null ? array_merge($r, ['source_id' => $map['source'][(int)$r['source_id']] ?? $r['source_id']]) : $r;
+            $map['area']    = $copy('cm_prj_area', 'prj_id = ?', [$srcId], fn($r) => $r, false);
+            $map['service'] = $copy('cm_prj_service', $cur, [$srcId], fn($r) => $src_(array_merge($r, ['area_id' => $id($map['area'], $r['area_id'])])), true);
+            $copy('cm_prj_service_technology', 'prj_id = ?', [$srcId], fn($r) => $src_(array_merge($r, ['service_id' => $id($map['service'], $r['service_id'])])), false);
+            foreach (['cm_prj_gara', 'cm_prj_tender_base', 'cm_prj_rate_card', 'cm_prj_productivity', 'cm_prj_param', 'cm_prj_zone', 'cm_prj_nearshore',
+                      'cm_prj_equipment', 'cm_prj_site_cost', 'cm_prj_overhead'] as $t)
+                $copy($t, $cur, [$srcId], $src_, true);
+            $copy('cm_prj_asset_metric', $cur, [$srcId], fn($r) => $src_(array_merge($r, ['service_id' => $id($map['service'], $r['service_id'])])), true);
+            $copy('cm_prj_aht', $cur, [$srcId], fn($r) => $src_(array_merge($r, ['service_id' => $id($map['service'], $r['service_id'])])), true);
+            $map['group'] = $copy('cm_prj_ticket_group', 'prj_id = ?', [$srcId], fn($r) => $r, false);
+            $copy('cm_prj_ticket_mapping', $cur, [$srcId], fn($r) => $src_(array_merge($r, ['group_id' => $map['group'][(int)$r['group_id']], 'service_id' => $id($map['service'], $r['service_id'])])), true);
+            $copy('cm_prj_ticket_volume', $cur, [$srcId], fn($r) => $src_(array_merge($r, ['group_id' => $map['group'][(int)$r['group_id']]])), true);
+            $map['profile'] = $copy('cm_prj_profile', 'prj_id = ?', [$srcId], fn($r) => $r, false);
+            $pf = fn($r) => array_merge($r, ['profile_id' => $map['profile'][(int)$r['profile_id']]]);
+            $copy('cm_prj_profile_req', $cur, [$srcId], fn($r) => $src_($pf($r)), true);
+            $copy('cm_prj_profile_cert', 'prj_id = ?', [$srcId], $pf, false);
+            $copy('cm_prj_service_profile', $cur, [$srcId], fn($r) => $src_(array_merge($pf($r), ['service_id' => $id($map['service'], $r['service_id'])])), true);
+            $copy('cm_prj_salary_band', $cur, [$srcId], fn($r) => $src_($pf($r)), true);
+            $map['kpi'] = $copy('cm_prj_kpi', $cur, [$srcId], $src_, true);
+            $copy('cm_prj_service_kpi', 'prj_id = ?', [$srcId], fn($r) => array_merge($r, ['service_id' => $id($map['service'], $r['service_id']), 'kpi_id' => $id($map['kpi'], $r['kpi_id'])]), false);
+            $map['crit'] = $copy('cm_prj_criterion', $cur, [$srcId], $src_, true);
+            $map['scen'] = $copy('cm_prj_scenario', 'prj_id = ?', [$srcId], fn($r) => array_merge($r, ['created_by' => $userId, 'cloned_from_id' => null]), false);
+            $copy('cm_prj_scenario_profile', 'prj_id = ?', [$srcId], fn($r) => array_merge($pf($r), ['scenario_id' => $map['scen'][(int)$r['scenario_id']],
+                  'service_id' => $id($map['service'], $r['service_id'])]), false);
+            $copy('cm_prj_criterion_input', 'prj_id = ?', [$srcId], fn($r) => array_merge($r, ['criterion_id' => $id($map['crit'], $r['criterion_id']),
+                  'scenario_id' => $r['scenario_id'] === null ? null : $map['scen'][(int)$r['scenario_id']]]), false);
+            if ($src['scenario_riferimento_id'] && isset($map['scen'][(int)$src['scenario_riferimento_id']]))
+                $this->pdo->prepare("UPDATE cm_prj SET scenario_riferimento_id = ? WHERE id = ?")->execute([$map['scen'][(int)$src['scenario_riferimento_id']], $new]);
+            require_once __DIR__ . '/EntityChangeLog.php';
+            (new EntityChangeLog($this->pdo))->logField('cm_prj', $new, 'clone_of', null, $src['prj_code'], 'insert', 'ui', null, $userId);
+            if ($own) $this->pdo->commit();
+            return $new;
+        } catch (Throwable $e) { if ($own) $this->pdo->rollBack(); throw $e; }
     }
 
     /** Codice PRJ-AAAA-NNNN atomico (SELECT … FOR UPDATE); il numero non viene mai riutilizzato. */
