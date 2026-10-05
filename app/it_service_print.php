@@ -38,7 +38,8 @@ $gOp  = $it->giorniOperatore($f);
 $dettCommessa = $it->dettaglioCommessa($f);
 $riepContratto = $it->riepilogoContratto($f); // [PM_V1_9_35_APPLIED]
 $gAr  = $it->giorniArea($f);
-$gRic = $it->giorniRiconcilia($f);
+// v1.9.88 — ripartizione per codice linea e area tecnologica (ore valorizzate e non)
+$gDimP = ['codice_linea' => $it->giorniPer($f, 'codice_linea'), 'area_tecnologica' => $it->giorniPer($f, 'area_tecnologica')];
 ?><!DOCTYPE html>
 <html lang="it"><head><meta charset="utf-8">
 <title>Relazione di Servizio IT<?= $isPers ? ' — ' . h($persona) : '' ?> —
@@ -214,10 +215,10 @@ $gRic = $it->giorniRiconcilia($f);
 <table>
   <thead><tr>
     <?php foreach ($f['gb'] as $g): ?><th><?=h(ItServiceModel::DIM[$g])?></th><?php endforeach; ?>
-    <th class="r">Interv.</th><th class="r">Giornate</th><th class="r">Ore</th>
+    <th class="r">Interv.</th><th class="r">Gg-uomo</th><th class="r">Ore totali</th>
+    <th class="r">Ordinarie</th><th class="r">Fuori orario</th><th class="r">Reperib. (h)</th><th class="r">N. rep.</th>
     <th class="r">Extra</th><th class="r">Viaggio</th><th class="r">Km</th>
-    <th class="r">Giorn.</th><th class="r">Mezze</th><th class="r">Cliente</th>
-    <th class="r">Remoto</th><th class="r">Smart</th><th class="r">Reper.</th><th class="r">F.orario</th>
+    <th class="r">N. cliente</th><th class="r">N. remoto</th><th class="r">N. smart</th>
   </tr></thead>
   <tbody>
   <?php foreach (array_slice($righe, 0, 300) as $r): ?>
@@ -226,16 +227,16 @@ $gRic = $it->giorniRiconcilia($f);
       <td class="r"><?=$hh($r['interventi'])?></td>
       <td class="r"><?=$hh($r['giornate_uomo'])?></td>
       <td class="r" style="font-weight:700"><?=$hh1($r['ore'])?></td>
+      <td class="r"><?=$hh1($r['ore_ordinarie'])?></td>
+      <td class="r" style="color:#b45309"><?=$hh1($r['ore_fuori_orario'])?></td>
+      <td class="r" style="color:#6d28d9"><?=$hh1($r['ore_reperibilita'])?></td>
+      <td class="r"><?=$hh($r['reperibilita'])?></td>
       <td class="r"><?=$hh1($r['ore_extra'])?></td>
-      <td class="r" style="color:#b45309"><?=$hh1($r['ore_viaggio'])?></td>
+      <td class="r"><?=$hh1($r['ore_viaggio'])?></td>
       <td class="r"><?=(float)$r['km'] > 0 ? $hh1($r['km']) : '—'?></td>
-      <td class="r"><?=$hh($r['giornate'])?></td>
-      <td class="r"><?=$hh($r['mezze_giornate'])?></td>
       <td class="r"><?=$hh($r['presso_cliente'])?></td>
       <td class="r"><?=$hh($r['da_remoto'])?></td>
       <td class="r"><?=$hh($r['smart_working'])?></td>
-      <td class="r"><?=$hh($r['reperibilita'])?></td>
-      <td class="r" style="color:#b45309"><?=$hh($r['fuori_orario'])?></td>
     </tr>
   <?php endforeach; ?>
   </tbody>
@@ -264,9 +265,9 @@ $gRic = $it->giorniRiconcilia($f);
         ['Operatori', number_format((float)($gQ['operatori'] ?? 0), 0, ',', '.'), '#0f766e'],
         ['Giorni-uomo', number_format((float)($gQ['giorni_uomo'] ?? 0), 0, ',', '.'), '#2563eb'],
         ['Ore', number_format((float)($gQ['ore'] ?? 0), 1, ',', '.'), '#334155'],
-        ['Giornate eq.', number_format((float)($gQ['giornate_equiv'] ?? 0), 1, ',', '.'), '#64748b'],
-        ['Fascia C', number_format((float)($gQ['giorni_uomo_C'] ?? 0), 0, ',', '.'), '#16a34a'],
-        ['Fascia D', number_format((float)($gQ['giorni_uomo_D'] ?? 0), 0, ',', '.'), '#f59e0b'],
+        ['Ore non valorizzate', number_format((float)($gQ['ore_non_valorizzate'] ?? 0), 1, ',', '.'), '#64748b'],
+        ['Ore fuori orario', number_format((float)($tot['ore_fuori_orario'] ?? 0), 1, ',', '.'), '#b45309'],
+        ['Ore reperibilità', number_format((float)($tot['ore_reperibilita'] ?? 0), 1, ',', '.'), '#7c3aed'],
       ] as [$lg, $vg, $cg]): ?>
         <div style="border-top-color:<?=$cg?>">
           <div class="v" style="color:<?=$cg?>"><?=$vg?></div>
@@ -276,24 +277,24 @@ $gRic = $it->giorniRiconcilia($f);
 
     <table>
       <thead><tr><th>Operatore</th><th class="r">Giorni lavorati</th>
-        <th class="r">Giornate eq.</th><th class="r">h/giorno</th>
-        <th class="r">Fascia C</th><th class="r">Fascia D</th>
-        <th class="r">Produzione teorica</th><th class="r">€/giorno</th>
-        <th class="r">Commesse</th></tr></thead>
+        <th class="r">di cui in reperib.</th>
+        <th class="r">Ore totali</th><th class="r">Ordinarie</th><th class="r">Fuori orario</th><th class="r">Reperibilità</th>
+        <th class="r">Valorizzate</th><th class="r">Non valoriz.</th>
+        <th class="r">Produzione teorica</th></tr></thead>
       <tbody>
       <?php foreach ($gOp as $x): ?>
         <tr><td><?=h($x['operatore'])?></td>
+          <?php $cl = $gCls[$x['operatore']] ?? []; $n1 = fn($v) => number_format((float)$v, 1, ',', '.'); ?>
           <td class="r" style="font-weight:700"><?=number_format((float)$x['giorni_lavorati'], 0, ',', '.')?></td>
-          <td class="r"><?=number_format((float)$x['giornate_equiv'], 1, ',', '.')?></td>
-          <td class="r"><?=$x['ore_per_giorno'] !== null
-                ? number_format((float)$x['ore_per_giorno'], 1, ',', '.') : '—'?></td>
-          <td class="r"><?=number_format((float)$x['giorni_C'], 0, ',', '.')?></td>
-          <td class="r"><?=number_format((float)$x['giorni_D'], 0, ',', '.')?></td>
-          <td class="r" style="font-weight:700"><?=$x['produzione_teorica'] !== null
-                ? number_format((float)$x['produzione_teorica'], 2, ',', '.') : '—'?></td>
-          <td class="r"><?=$x['produzione_per_giorno'] !== null
-                ? number_format((float)$x['produzione_per_giorno'], 2, ',', '.') : '—'?></td>
-          <td class="r"><?=number_format((float)$x['commesse'], 0, ',', '.')?></td></tr>
+          <td class="r"><?=(int)($cl['giorni_reperibilita'] ?? 0) ?: '—'?></td>
+          <td class="r" style="font-weight:700"><?=$n1($x['ore'])?></td>
+          <td class="r"><?=$n1($cl['ore_ordinarie'] ?? 0)?></td>
+          <td class="r"><?=$n1($cl['ore_fuori_orario'] ?? 0)?></td>
+          <td class="r"><?=$n1($cl['ore_reperibilita'] ?? 0)?></td>
+          <td class="r"><?=$n1($x['ore_valorizzate'])?></td>
+          <td class="r"><?=$n1($x['ore_non_valorizzate'])?></td>
+          <td class="r"><?=$x['produzione_teorica'] !== null
+                ? number_format((float)$x['produzione_teorica'], 2, ',', '.') : '—'?></td></tr>
       <?php endforeach; ?>
       </tbody>
     </table>
@@ -318,31 +319,46 @@ $gRic = $it->giorniRiconcilia($f);
       </table>
     <?php endif; ?>
 
-    <?php if ($gRic): ?>
-      <h3 style="font-size:9pt;margin:3mm 0 1mm">Giorni esclusi perché su commesse oggi chiuse</h3>
+    <?php foreach ($gDimP as $gd => $righeP): if (!$righeP) continue; ?>
+      <h3 style="font-size:9pt;margin:3mm 0 1mm">Giorni per <?=h(mb_strtolower(ItServiceModel::GIORNI_DIM[$gd]))?></h3>
       <table>
-        <thead><tr><th>Operatore</th><th class="r">Giorni totali</th><th class="r">Su attive</th>
-          <th class="r">Su chiuse</th><th class="r">Ore totali</th>
-          <th class="r">Ore su attive</th></tr></thead>
+        <thead><tr><th><?=h(ItServiceModel::GIORNI_DIM[$gd])?></th><th class="r">Persone</th><th class="r">Giorni-uomo</th>
+          <th class="r">Ore</th><th class="r">Valorizzate</th><th class="r">Non valorizzate</th>
+          <th class="r">Produzione teorica</th></tr></thead>
         <tbody>
-        <?php foreach ($gRic as $x): ?>
-          <tr><td><?=h($x['operatore'])?></td>
-            <td class="r"><?=number_format((float)$x['giorni_totali'], 0, ',', '.')?></td>
-            <td class="r" style="font-weight:700"><?=number_format((float)$x['giorni_attive'], 0, ',', '.')?></td>
-            <td class="r"><?=number_format((float)$x['giorni_chiuse'], 0, ',', '.')?></td>
-            <td class="r"><?=number_format((float)$x['ore_totali'], 2, ',', '.')?></td>
-            <td class="r"><?=number_format((float)$x['ore_attive'], 2, ',', '.')?></td></tr>
+        <?php foreach ($righeP as $x): ?>
+          <tr><td><?=h(ItServiceModel::etichetta((string)$x['voce']))?></td>
+            <td class="r"><?=number_format((float)$x['persone'], 0, ',', '.')?></td>
+            <td class="r" style="font-weight:700"><?=number_format((float)$x['giorni_uomo'], 0, ',', '.')?></td>
+            <td class="r"><?=number_format((float)$x['ore'], 1, ',', '.')?></td>
+            <td class="r"><?=number_format((float)$x['ore_valorizzate'], 1, ',', '.')?></td>
+            <td class="r"><?=number_format((float)$x['ore_non_valorizzate'], 1, ',', '.')?></td>
+            <td class="r"><?=$x['produzione_teorica'] !== null ? number_format((float)$x['produzione_teorica'], 2, ',', '.') : '—'?></td></tr>
         <?php endforeach; ?>
         </tbody>
       </table>
-      <p class="nota">Il filtro guarda lo stato della commessa <strong>oggi</strong>, non alla data
-        dell'intervento: questo report ristampato dopo la chiusura di una commessa darà numeri più
-        bassi senza che nulla sia cambiato nei moduli.</p>
+    <?php endforeach; ?>
+
+    <?php if (!empty($gNv)): ?>
+      <h3 style="font-size:9pt;margin:3mm 0 1mm">Ore non valorizzate (senza tariffa di listino)</h3>
+      <table>
+        <thead><tr><th>Codice linea</th><th>Commessa</th><th>Persona</th><th class="r">Giorni</th>
+          <th class="r">Ore</th><th>Motivo</th></tr></thead>
+        <tbody>
+        <?php foreach (array_slice($gNv, 0, 400) as $x): ?>
+          <tr><td><?=h((string)$x['codice_linea'])?></td><td><?=h((string)$x['commessa'])?></td>
+            <td><?=h((string)$x['operatore'])?></td>
+            <td class="r"><?=number_format((float)$x['giorni'], 0, ',', '.')?></td>
+            <td class="r"><?=number_format((float)$x['ore'], 1, ',', '.')?></td>
+            <td><?=h((string)$x['motivo'])?></td></tr>
+        <?php endforeach; ?>
+        </tbody>
+      </table>
     <?php endif; ?>
 
     <p class="nota"><strong>«Giorni lavorati» sono giorni distinti</strong>: due interventi nello
-      stesso giorno contano una volta sola. Un giorno con interventi in due fasce conta in entrambe,
-      quindi C + D può superare i giorni totali. La <strong>produzione teorica</strong> è
+      stesso giorno contano una volta sola. Ore ordinarie + fuori orario + reperibilità = ore totali
+      (stessa regola del resto della relazione). Valorizzate = con tariffa di listino. La <strong>produzione teorica</strong> è
       ore × listino: ciò che il lavoro varrebbe, non ciò che è stato fatturato.
       <?php if ((float)($gQ['fascia_letta_pct'] ?? 0) < 50): ?>
         Solo il <?=number_format((float)$gQ['fascia_letta_pct'], 1, ',', '.')?>% dei moduli ha la
@@ -480,5 +496,27 @@ $gRic = $it->giorniRiconcilia($f);
     </tbody>
   </table>
 <?php endforeach; ?>
+<?php endif; ?>
+
+<?php // v1.9.91 — Attività DGB senza modulo di intervento (stampa) ?>
+<?php if ($incOn('senzamodulo') && !empty($smDett)): ?>
+<h2 class="pr34-h2" style="margin:18px 0 6px;font-size:14px">Attività DGB senza modulo di intervento —
+  <?= number_format((float)$nSm['attivita'], 0, ',', '.') ?> attività · <?= number_format((float)$nSm['ore'], 1, ',', '.') ?> h</h2>
+<table class="pr34-tbl" style="width:100%;border-collapse:collapse">
+  <thead><tr><th>Contratto</th><th>Linea</th><th>Operatore</th><th>Motivo</th><th>Attività</th><th>Ore</th><th>Dal</th><th>Al</th></tr></thead>
+  <tbody>
+  <?php foreach (array_slice($smDett, 0, 400) as $x): ?>
+    <tr><td><?= htmlspecialchars((string)$x['contratto'], ENT_QUOTES, 'UTF-8') ?></td>
+      <td><?= htmlspecialchars((string)$x['codice_linea'], ENT_QUOTES, 'UTF-8') ?></td>
+      <td><?= htmlspecialchars((string)$x['operatore'], ENT_QUOTES, 'UTF-8') ?></td>
+      <td><?= htmlspecialchars((string)$x['motivo'], ENT_QUOTES, 'UTF-8') ?></td>
+      <td><?= (int)$x['attivita'] ?></td>
+      <td><?= number_format((float)$x['ore'], 1, ',', '.') ?></td>
+      <td><?= date('d/m/Y', strtotime((string)$x['dal'])) ?></td>
+      <td><?= date('d/m/Y', strtotime((string)$x['al'])) ?></td></tr>
+  <?php endforeach; ?>
+  </tbody>
+</table>
+<p class="nota">Escluse dai totali della relazione: attività senza modulo di intervento (assegnate non rendicontate, congelate, o eseguite non sincronizzate). Ore allocate o pianificate.</p>
 <?php endif; ?>
 </body></html>

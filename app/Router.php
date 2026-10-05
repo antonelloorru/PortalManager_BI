@@ -54,6 +54,8 @@ final class Router
         'manage_projects', 'project_dashboard', 'project_gantt', 'workload_overview', 'service_desk', 'it_service', 'dir_report', 'pratix_orders', 'pratix_import', 'sync_commesse',
         'dgb_activities', 'manage_rate_bands', 'import_commesse', 'import_commesse_db',
         'tech_registry', 'tech_units',
+        // v1.9.99 — Progetti PRJ (pagine rilasciate da v1.9.101)
+        'prj_dashboard', 'prj_parameters', 'prj_history',
         'professionals', 'import_professionals', 'import_intervention_reports',
         'import_control', 'timesheet', 'projects', 'project_clients', 'project_import',
 

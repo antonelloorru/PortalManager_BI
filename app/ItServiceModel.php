@@ -2,6 +2,17 @@
 /**
  * ItServiceModel — letture per la Relazione di Servizio IT.
  *
+ * v1.9.90 — Riepilogo per Codice Contratto e Dettaglio per commessa sul perimetro unico (moduli di
+ *           intervento filtrati dal pannello principale), non piu' su una selezione DGB propria.
+ * v1.9.89 — ore per classe (ordinarie / fuori orario / reperibilità / non classificate) uguali in ogni
+ *           tabella: dettaglio aggregato, giorni per persona, andamento. Rapportino agganciato per id
+ *           (non per codice modulo). Dettaglio delle ore non valorizzate con il motivo.
+ * v1.9.88 — perimetro = tutto l'eseguito nel periodo per data del modulo di intervento: nessuna
+ *           distinzione commesse attive / chiuse alla data, nessuna linea esclusa dai giorni lavorati;
+ *           ore non valorizzate (senza tariffa) incluse e ripartite per persona, linea, area e altre dimensioni.
+ * v1.9.87 — filtro «Stato commessa» (aperta / chiusa / sospesa / non chiusa) e perimetro unico:
+ *           costi, giorni e sezioni DGB applicano TUTTI i filtri della pagina tramite lo stesso
+ *           insieme di rapportini (perimetro()), invece di un sottoinsieme ricostruito a mano.
  * v1.9.78 — filtro contratto delegato a PmContractFilter (condiviso con SD, direzionale, DGB).
  * v1.9.77 — filtro globale Codice Contratto / PM Project (`contratti`) su tutti i dataset.
  *
@@ -48,6 +59,14 @@ final class ItServiceModel
         'anno_mese'         => 'Mese',
     ];
 
+    /**
+     * v1.9.87 — Stato commessa (cm_projects.operational_status). «Chiusa» e «Non chiusa» sono
+     * complementari e coincidono con `commessa_attiva` di v_cm_it_giorni_base:
+     * chiuse = Chiusa / Annullata / Persa.
+     */
+    public const STATI = ['aperta' => 'Aperta', 'chiusa' => 'Chiusa', 'sospesa' => 'Sospesa', 'non_chiusa' => 'Non chiusa'];
+    private const STATI_CHIUSI = "('CHIUSA','ANNULLATA','PERSA')";
+
     /** v1.9.73 — nome da interrogare per ciascuna vista: copia aggiornata se lenta, altrimenti la vista. */
     private array $v = [];
 
@@ -85,6 +104,8 @@ final class ItServiceModel
             // commessa (cm_projects.project_code) oppure 'dgb:<id_contract>'
             // v1.9.78 — filtro condiviso fra le pagine (PmContractFilter, persistente in sessione)
             'contratti' => PmContractFilter::fromRequest($q),
+            // v1.9.87 — stato della commessa (multi-selezione, elenco chiuso)
+            'stati'     => array_values(array_intersect(array_keys(self::STATI), $arr($q['stato_commessa'] ?? []))),
             'ricavo'    => in_array($q['ricavo'] ?? '', ['1', '0'], true) ? (string)$q['ricavo'] : '',
             // v1.9.8 — ricerca libera e cliente, come nel pannello di
             // Commesse/Progetti: senza, per isolare una commessa bisognava
@@ -141,6 +162,7 @@ final class ItServiceModel
         }
         if ($f['ricavo'] !== '') { $w[] = "s.`ha_ricavo` = ?"; $a[] = (int)$f['ricavo']; }
         if ($c = $this->ctrCond('s.`commessa`', $f, $a)) $w[] = $c;
+        if ($c = self::statoCond('pst.`project_code` = s.`commessa`', $f)) $w[] = $c;   // v1.9.87
 
         if ($f['q'] !== '') {
             $w[] = "(s.`commessa` LIKE ? OR s.`cliente` LIKE ? OR s.`modulo` LIKE ?)";
@@ -185,6 +207,77 @@ final class ItServiceModel
         return $cf->active() ? $cf->sql('id', $col, $a) : null;
     }
 
+    /* ── v1.9.87 — Stato commessa e perimetro unico ─────────────────────────── */
+
+    /**
+     * Condizione sullo stato della commessa; $join lega `cm_projects pst` alla riga
+     * (codice commessa o id contratto DGB). NULL se il filtro e' vuoto.
+     * Valori da elenco chiuso: nessun parametro.
+     */
+    private static function statoCond(string $join, array $f): ?string
+    {
+        if (empty($f['stati'])) return null;
+        $st = "UPPER(TRIM(COALESCE(pst.`operational_status`,'')))";
+        $or = [];
+        foreach ($f['stati'] as $k) {
+            if ($k === 'aperta')     $or[] = "$st = 'APERTA'";
+            if ($k === 'sospesa')    $or[] = "$st = 'SOSPESA'";
+            if ($k === 'chiusa')     $or[] = "$st IN " . self::STATI_CHIUSI;
+            if ($k === 'non_chiusa') $or[] = "$st NOT IN " . self::STATI_CHIUSI;
+        }
+        return $or ? "EXISTS (SELECT 1 FROM `cm_projects` pst WHERE $join AND (" . implode(' OR ', $or) . "))" : null;
+    }
+
+    /** Filtri attivi oltre al periodo (qualunque dimensione). */
+    private static function haFiltri(array $f): bool
+    {
+        foreach (['linee','codici','settori','aziende','incaricati','modalita','fasce','durate','sedi','contratti','stati'] as $k)
+            if (!empty($f[$k])) return true;
+        return ($f['ricavo'] ?? '') !== '' || ($f['q'] ?? '') !== '' || ($f['cliente'] ?? '') !== '';
+    }
+
+    private array $perim = [];
+
+    /**
+     * v1.9.88 — data di riferimento delle attività DGB: data del modulo di intervento, in mancanza
+     * l'inizio dell'attività. Mai la data di chiusura o completamento (perimetro = eseguito nel periodo).
+     */
+    private const DGB_DATA = "COALESCE(a.report_date, DATE(a.date_start))";
+
+    /**
+     * Insieme dei rapportini (report_id) che soddisfano TUTTI i filtri della pagina, con la
+     * stessa clausola di KPI, grafici e tabelle (where()). Le sezioni costruite su altre viste
+     * (costi, giorni, DGB) lo usano come perimetro: un'unica definizione, nessuna divergenza.
+     *
+     * Calcolato una volta per richiesta in una tabella temporanea; se non e' possibile crearla
+     * si ripiega su una sottoquery con i suoi parametri (aggiunti ad $a).
+     * $conPeriodo=false: senza il vincolo di data (per le sezioni DGB, che datano l'attivita').
+     *
+     * @return string espressione da usare come `col IN (<espressione>)`
+     */
+    private function perimetro(array $f, bool $conPeriodo, array &$a): string
+    {
+        $fx = $f;
+        if (!$conPeriodo) { $fx['from'] = '0001-01-01'; $fx['to'] = '9999-12-31'; }
+        [$w, $wa] = $this->where($fx);
+        $key = md5($w . '|' . json_encode($wa));
+        if (!isset($this->perim[$key])) {
+            $t = 'tmp_its_perim_' . substr($key, 0, 12);
+            try {
+                $this->pdo->exec("CREATE TEMPORARY TABLE IF NOT EXISTS `$t` (`report_id` INT NOT NULL PRIMARY KEY) ENGINE=MEMORY");
+                $this->pdo->exec("TRUNCATE TABLE `$t`");
+                $st = $this->pdo->prepare("INSERT IGNORE INTO `$t` (`report_id`)
+                                           SELECT DISTINCT s.`report_id` FROM `{$this->v['v_cm_it_servizio']}` s WHERE $w");
+                $st->execute($wa);
+                $this->perim[$key] = ['sql' => "SELECT `report_id` FROM `$t`", 'args' => []];
+            } catch (Throwable $e) {
+                $this->perim[$key] = ['sql' => "SELECT s.`report_id` FROM `{$this->v['v_cm_it_servizio']}` s WHERE $w", 'args' => $wa];
+            }
+        }
+        foreach ($this->perim[$key]['args'] as $v) $a[] = $v;
+        return $this->perim[$key]['sql'];
+    }
+
     /** Opzioni del filtro: commesse presenti nella Relazione IT + contratti DGB senza PM Project. */
     public function valoriContratti(): array
     {
@@ -202,6 +295,7 @@ final class ItServiceModel
                   ['durate','Durate']] as [$k, $l]) {
             if (!empty($f[$k])) $out[] = $l . ': ' . implode(', ', array_map([self::class, 'etichetta'], $f[$k]));
         }
+        if (!empty($f['stati'])) $out[] = 'Stato commessa: ' . implode(', ', array_map(fn($k) => self::STATI[$k] ?? $k, $f['stati']));
         if (($f['ricavo'] ?? '') !== '') $out[] = 'Natura: ' . ($f['ricavo'] === '1' ? 'a ricavo' : 'interne');
         if (($f['q'] ?? '') !== '')       $out[] = 'Ricerca: ' . $f['q'];
         if (($f['cliente'] ?? '') !== '') $out[] = 'Cliente: ' . $f['cliente'];
@@ -227,6 +321,10 @@ final class ItServiceModel
                     SUM(s.`durata` = 'mezza giornata')  AS mezze_giornate,
                     SUM({$cQ['fuori']} > 0)              AS fuori_orario,
                     ROUND(SUM({$cQ['fuori']}), 2)       AS ore_fuori_orario,
+                    ROUND(SUM({$cQ['ord']}), 2)         AS ore_ordinarie,
+                    ROUND(SUM({$cQ['rep']}), 2)         AS ore_reperibilita,
+                    SUM({$cQ['repC']})                  AS reperibilita,
+                    ROUND(SUM({$cQ['nc']}), 2)          AS ore_non_classificate,
                     ROUND(SUM(CASE WHEN s.`ha_ricavo`=1 THEN s.`ore` ELSE 0 END), 2) AS ore_ricavo,
                     COUNT(DISTINCT s.`linea_servizio`)  AS linee,
                     COUNT(DISTINCT s.`commessa`)        AS commesse,
@@ -273,9 +371,11 @@ final class ItServiceModel
                     SUM(s.`modalita` = 'da remoto')     AS da_remoto,
                     SUM(s.`modalita` = 'smart working') AS smart_working,
                     SUM({$cQ['repC']})                  AS reperibilita,
+                    ROUND(SUM({$cQ['ord']}), 2)         AS ore_ordinarie,
                     ROUND(SUM({$cQ['rep']}), 2)         AS ore_reperibilita,
                     SUM({$cQ['fuori']} > 0)              AS fuori_orario,
                     ROUND(SUM({$cQ['fuori']}), 2)       AS ore_fuori_orario,
+                    ROUND(SUM({$cQ['nc']}), 2)          AS ore_non_classificate,
                     ROUND(SUM(CASE WHEN s.`ha_ricavo`=1 THEN s.`ore` ELSE 0 END), 2) AS ore_ricavo
                FROM `{$this->v['v_cm_it_servizio']}` s {$this->irJoin()}
               WHERE $w GROUP BY $sel $ord LIMIT " . (int)$limite);
@@ -382,7 +482,9 @@ final class ItServiceModel
     private function irJoin(): string
     {
         return $this->haModulo()
-            ? " LEFT JOIN `cm_intervention_reports` ir ON ir.`id` = (SELECT MIN(x.`id`) FROM `cm_intervention_reports` x WHERE x.`report_code` = s.`modulo`) "
+            // v1.9.89 — il rapportino della riga (report_id), non il primo con lo stesso codice modulo:
+            // con piu' tecnici sullo stesso modulo si leggevano orari e reperibilita' di un altro tecnico
+            ? " LEFT JOIN `cm_intervention_reports` ir ON ir.`id` = s.`report_id` "
             : '';
     }
 
@@ -568,18 +670,10 @@ final class ItServiceModel
             if (!empty($f['from']) && !empty($f['to'])) {
                 $w = "`giorno` BETWEEN ? AND ?"; $a[] = $f['from']; $a[] = $f['to'];
             }
-            if (!empty($f['incaricati']) && is_array($f['incaricati'])) {
-                $ph = implode(',', array_fill(0, count($f['incaricati']), '?'));
-                $w .= " AND `tecnico` IN ($ph)";
-                foreach ($f['incaricati'] as $v) $a[] = $v;
-            }
-            if (!empty($f['codici']) && is_array($f['codici'])) {
-                $ph = implode(',', array_fill(0, count($f['codici']), '?'));
-                $w .= " AND `codice_linea` IN ($ph)";
-                foreach ($f['codici'] as $v) $a[] = $v;
-            }
-            if (($f['cliente'] ?? '') !== '') { $w .= " AND `cliente` LIKE ?"; $a[] = '%' . $f['cliente'] . '%'; }
-            if ($c = $this->ctrCond('`commessa`', $f, $a)) $w .= " AND $c";   // v1.9.77
+            // v1.9.87 — tutti i filtri della pagina, tramite il perimetro unico dei rapportini
+            // (prima: solo incaricati, codici linea, cliente e contratto → costi disallineati
+            // da KPI e grafici con linee, settori, modalità, fasce, durate, sedi, natura, ricerca)
+            if (self::haFiltri($f)) $w .= " AND `report_id` IN (" . $this->perimetro($f, true, $a) . ")";
             $st = $this->pdo->prepare("$select FROM `{$this->v['v_cm_sd_costi_valorizzati']}` WHERE $w $coda");
             $st->execute($a);
             $out = $st->fetchAll(PDO::FETCH_ASSOC);
@@ -616,6 +710,10 @@ final class ItServiceModel
                     COUNT(DISTINCT `area_tecnologica`)          AS aree,
                     COUNT(DISTINCT `commessa`)                  AS commesse,
                     COUNT(DISTINCT `cliente`)                   AS clienti,
+                    COUNT(DISTINCT `codice_linea`)              AS linee,
+                    ROUND(SUM(CASE WHEN `valorizzata`=1 THEN `ore` ELSE 0 END), 2) AS ore_valorizzate,
+                    ROUND(SUM(CASE WHEN `valorizzata`=0 THEN `ore` ELSE 0 END), 2) AS ore_non_valorizzate,
+                    COUNT(DISTINCT CASE WHEN `valorizzata`=0 THEN `giorno` END)   AS giorni_non_valorizzati,
                     ROUND(SUM(`produzione_teorica`), 2)         AS produzione_teorica,
                     ROUND(SUM(`valore_addebitato`), 2)          AS valore_addebitato,
                     SUM(`produzione_teorica` IS NULL)           AS righe_senza_tariffa,
@@ -663,6 +761,11 @@ final class ItServiceModel
                     COUNT(DISTINCT `area_tecnologica`) AS aree,
                     COUNT(DISTINCT `commessa`) AS commesse,
                     COUNT(DISTINCT `codice_linea`) AS linee,
+                    ROUND(SUM(CASE WHEN `valorizzata`=1 THEN `ore` ELSE 0 END), 2) AS ore_valorizzate,
+                    ROUND(SUM(CASE WHEN `valorizzata`=0 THEN `ore` ELSE 0 END), 2) AS ore_non_valorizzate,
+                    SUM(`valorizzata`=0) AS interventi_non_valorizzati,
+                    COUNT(DISTINCT CASE WHEN `valorizzata`=0 THEN CONCAT(`operatore`,'|',`giorno`) END)
+                                                        AS giorni_uomo_non_valorizzati,
                     ROUND(SUM(`produzione_teorica`), 2) AS produzione_teorica,
                     ROUND(SUM(`valore_addebitato`), 2) AS valore_addebitato,
                     SUM(`produzione_teorica` IS NULL) AS righe_senza_tariffa,
@@ -677,63 +780,112 @@ final class ItServiceModel
     }
 
     /**
-     * Riconciliazione: gli stessi giorni con e senza il filtro sulle attive.
-     *
-     * Serve a rispondere a "perche' il totale e' cambiato": una commessa chiusa
-     * dopo la stampa fa scendere i giorni senza che nulla sia cambiato nei
-     * moduli.
+     * v1.9.89 — Ore per classe e giorni per persona, con la STESSA regola di dettaglio, andamento e
+     * KPI (oreClassi): ordinarie + fuori orario + reperibilità + non classificate = ore.
+     * Chiave = nome dell'incaricato (= `operatore` della sezione giorni: stesso campo del rapportino).
+     * @return array<string,array>
      */
-    public function giorniRiconcilia(array $f): array
+    public function classiPerPersona(array $f): array
+    {
+        [$w, $a] = $this->where($f);
+        $c = $this->oreClassi();
+        $st = $this->pdo->prepare(
+            "SELECT s.`incaricato` AS persona,
+                    ROUND(SUM({$c['ord']}), 2)   AS ore_ordinarie,
+                    ROUND(SUM({$c['fuori']}), 2) AS ore_fuori_orario,
+                    ROUND(SUM({$c['rep']}), 2)   AS ore_reperibilita,
+                    ROUND(SUM({$c['nc']}), 2)    AS ore_non_classificate,
+                    SUM({$c['repC']})            AS interventi_reperibilita,
+                    COUNT(DISTINCT CASE WHEN {$c['repC']} THEN s.`giorno` END)        AS giorni_reperibilita,
+                    COUNT(DISTINCT CASE WHEN {$c['fuori']} > 0 THEN s.`giorno` END)  AS giorni_fuori_orario,
+                    COUNT(DISTINCT CASE WHEN {$c['ord']} > 0 THEN s.`giorno` END)    AS giorni_ordinari
+               FROM `{$this->v['v_cm_it_servizio']}` s {$this->irJoin()} WHERE $w
+              GROUP BY s.`incaricato`");
+        $st->execute($a);
+        $out = [];
+        foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) $out[(string)$r['persona']] = $r;
+        $st->closeCursor();
+        return $out;
+    }
+
+    /**
+     * v1.9.89 — Dettaglio delle ore non valorizzate (moduli senza tariffa di listino), per codice linea,
+     * commessa e persona, con il motivo: commessa senza listino oppure combinazione fascia/unità non prevista.
+     */
+    public function nonValorizzate(array $f, int $limite = 2000): array
+    {
+        return $this->giorniQuery($f,
+            "SELECT `codice_linea`, `contratto`, `commessa`, `cliente`, `operatore`, `ordina`,
+                    CASE WHEN EXISTS (SELECT 1 FROM `cm_contract_rates` crx
+                                       WHERE crx.`project_code` = `commessa` AND crx.`rate_nature` = 'R'
+                                         AND crx.`rate_value` > 0)
+                         THEN 'Tariffa mancante per fascia/unità' ELSE 'Commessa senza listino' END AS motivo,
+                    GROUP_CONCAT(DISTINCT CONCAT('Fascia ', `fascia`, ' · ',
+                                 CASE `um` WHEN 'D' THEN 'giornata' WHEN 'HD' THEN 'mezza giornata' ELSE 'ora' END)
+                                 ORDER BY `fascia`, `um` SEPARATOR ', ') AS combinazioni,
+                    COUNT(*) AS interventi,
+                    COUNT(DISTINCT `giorno`) AS giorni,
+                    ROUND(SUM(`ore`), 2) AS ore,
+                    MIN(`giorno`) AS dal, MAX(`giorno`) AS al",
+            "AND `valorizzata` = 0
+             GROUP BY `codice_linea`, `contratto`, `commessa`, `cliente`, `operatore`, `ordina`
+             ORDER BY `codice_linea`, `commessa`, `ordina` LIMIT " . (int)$limite);
+    }
+
+    /** Dimensioni della ripartizione dei giorni lavorati (elenco chiuso). */
+    public const GIORNI_DIM = [
+        'codice_linea'     => 'Codice linea',
+        'area_tecnologica' => 'Area tecnologica',
+        'contratto'        => 'Linea di servizio',
+        'cliente'          => 'Cliente',
+        'commessa'         => 'Commessa',
+        'anno_mese'        => 'Mese',
+        'fascia'           => 'Fascia',
+        'stato_commessa'   => 'Stato commessa',
+    ];
+
+    /**
+     * v1.9.88 — Giorni lavorati ripartiti su una dimensione, ore valorizzate e non valorizzate
+     * distinte. Stesso perimetro e stessi filtri del resto della sezione.
+     */
+    public function giorniPer(array $f, string $dim, int $limite = 1000): array
+    {
+        if (!isset(self::GIORNI_DIM[$dim])) return [];
+        $col = $dim === 'stato_commessa' ? "COALESCE(NULLIF(`stato_commessa`,''),'(n.d.)')" : "`$dim`";
+        $ord = $dim === 'anno_mese' ? 'voce' : 'ore DESC';
+        // v1.9.92 — per commessa: cliente e descrizione come in «Commesse / Progetti» (export XLSX)
+        $extra = $dim === 'commessa'
+            ? "MAX(`cliente`) AS cliente,
+                    (SELECT pd.`description` FROM `cm_projects` pd WHERE pd.`project_code` = `commessa` LIMIT 1) AS descrizione,"
+            : '';
+        return $this->giorniQuery($f,
+            "SELECT $col AS voce, $extra
+                    COUNT(DISTINCT `operatore`) AS persone,
+                    COUNT(DISTINCT CONCAT(`operatore`,'|',`giorno`)) AS giorni_uomo,
+                    COUNT(DISTINCT CASE WHEN `valorizzata`=0 THEN CONCAT(`operatore`,'|',`giorno`) END) AS giorni_uomo_non_val,
+                    COUNT(*) AS interventi,
+                    ROUND(SUM(`ore`), 2) AS ore,
+                    ROUND(SUM(CASE WHEN `valorizzata`=1 THEN `ore` ELSE 0 END), 2) AS ore_valorizzate,
+                    ROUND(SUM(CASE WHEN `valorizzata`=0 THEN `ore` ELSE 0 END), 2) AS ore_non_valorizzate,
+                    ROUND(SUM(`ore`) / 8, 1) AS giornate_equiv,
+                    COUNT(DISTINCT `commessa`) AS commesse,
+                    ROUND(SUM(`produzione_teorica`), 2) AS produzione_teorica",
+            "GROUP BY voce ORDER BY $ord LIMIT " . (int)$limite);
+    }
+
+    /**
+     * Il corpo comune: periodo (data del modulo) + perimetro unico dei filtri.
+     * v1.9.88 — tutto l'eseguito: nessun vincolo sullo stato della commessa (salvo il filtro
+     * «Stato commessa» scelto dall'utente, gia' nel perimetro) e nessuna linea esclusa.
+     */
+    private function giorniQuery(array $f, string $select, string $coda): array
     {
         try {
             $w = "1=1"; $a = [];
             if (!empty($f['from']) && !empty($f['to'])) {
-                $w = "`giorno` BETWEEN ? AND ?"; $a[] = $f['from']; $a[] = $f['to'];
-            }
-            if (!empty($f['incaricati']) && is_array($f['incaricati'])) {
-                $ph = implode(',', array_fill(0, count($f['incaricati']), '?'));
-                $w .= " AND `operatore` IN ($ph)";
-                foreach ($f['incaricati'] as $v) $a[] = $v;
-            }
-            if ($c = $this->ctrCond('`commessa`', $f, $a)) $w .= " AND $c";   // v1.9.77
-            $st = $this->pdo->prepare(
-                "SELECT `operatore`, `ordina`,
-                        COUNT(DISTINCT `giorno`) AS giorni_totali,
-                        COUNT(DISTINCT CASE WHEN `commessa_attiva`=1 THEN `giorno` END) AS giorni_attive,
-                        COUNT(DISTINCT CASE WHEN `commessa_attiva`=0 THEN `giorno` END) AS giorni_chiuse,
-                        ROUND(SUM(`ore`), 2) AS ore_totali,
-                        ROUND(SUM(CASE WHEN `commessa_attiva`=1 THEN `ore` ELSE 0 END), 2) AS ore_attive
-                   FROM `{$this->v['v_cm_it_giorni_base']}` WHERE $w
-                  GROUP BY `operatore`, `ordina`
-                 HAVING `giorni_chiuse` > 0
-                  ORDER BY `ordina`");
-            $st->execute($a);
-            $out = $st->fetchAll(PDO::FETCH_ASSOC);
-            $st->closeCursor();
-            return $out;
-        } catch (Throwable $e) { return []; }
-    }
-
-    /** Il corpo comune: filtro di periodo e incaricati, sulle sole attive. */
-    private function giorniQuery(array $f, string $select, string $coda): array
-    {
-        try {
-            $w = "`commessa_attiva` = 1"; $a = [];
-            if (!empty($f['from']) && !empty($f['to'])) {
                 $w .= " AND `giorno` BETWEEN ? AND ?"; $a[] = $f['from']; $a[] = $f['to'];
             }
-            if (!empty($f['incaricati']) && is_array($f['incaricati'])) {
-                $ph = implode(',', array_fill(0, count($f['incaricati']), '?'));
-                $w .= " AND `operatore` IN ($ph)";
-                foreach ($f['incaricati'] as $v) $a[] = $v;
-            }
-            if (!empty($f['codici']) && is_array($f['codici'])) {
-                $ph = implode(',', array_fill(0, count($f['codici']), '?'));
-                $w .= " AND `codice_linea` IN ($ph)";
-                foreach ($f['codici'] as $v) $a[] = $v;
-            }
-            if (($f['cliente'] ?? '') !== '') { $w .= " AND `cliente` LIKE ?"; $a[] = '%' . $f['cliente'] . '%'; }
-            if ($c = $this->ctrCond('`commessa`', $f, $a)) $w .= " AND $c";   // v1.9.77
+            if (self::haFiltri($f)) $w .= " AND `report_id` IN (" . $this->perimetro($f, true, $a) . ")";
             $st = $this->pdo->prepare("$select FROM `{$this->v['v_cm_it_giorni_base']}` WHERE $w $coda");
             $st->execute($a);
             $out = $st->fetchAll(PDO::FETCH_ASSOC);
@@ -744,21 +896,151 @@ final class ItServiceModel
 
 
         
-    /* [PM_V1_9_36_APPLIED] Espressione data effettiva e filtri condivisi */
-    private function rsiWhere(array $f, array &$b): string {
-        $DT = "COALESCE(a.report_date, DATE(a.date_start), DATE(a.completed_at), DATE(a.closed_at))";
-        $w = ['COALESCE(a.deleted,0) <> 1'];
-        if (!empty($f['from']) && !empty($f['to'])) { $w[] = "$DT BETWEEN ? AND ?"; $b[]=$f['from']; $b[]=$f['to']; }
-        if (!empty($f['incaricati']) && is_array($f['incaricati'])) {
+    /**
+     * v1.9.90 — Sorgente unica delle sezioni «Riepilogo per Codice Contratto» e «Dettaglio per commessa».
+     *
+     * Prima (rsiWhere) le due sezioni leggevano le attività DGB con una propria selezione — data
+     * dell'attività, incaricato per nome dell'operatore DGB, cliente dall'anagrafica DGB — e quindi non
+     * recepivano gli stessi parametri del pannello: a settembre 2026 9.505 h su 197 contratti contro
+     * 7.891,5 h su 189 commesse dei KPI; il filtro «Cliente» le azzerava; l'incaricato contava anche
+     * attività di altri tecnici.
+     *
+     * Ora la riga è il MODULO DI INTERVENTO del perimetro unico (perimetro(): stessi filtri di KPI,
+     * grafici, tabelle, costi e giorni), agganciato alla sua allocazione DGB (dgb_source_id =
+     * dgb_forms_activity_operator.id) e all'attività/contratto. Ore e data sono quelle del modulo.
+     * Le attività DGB senza modulo di intervento non entrano (contate a parte da attivitaSenzaModulo()).
+     */
+    private function rsiFrom(array $f, array &$b): string
+    {
+        $perim = $this->perimetro($f, true, $b);
+        return "
+          FROM `cm_intervention_reports` ir
+          JOIN dgb_forms_activity a ON a.id = ir.`dgb_activity_id`
+          LEFT JOIN dgb_forms_activity_operator ao ON ao.id = ir.`dgb_source_id`
+          LEFT JOIN dgb_operator op ON op.id = COALESCE(ao.id_operator, a.id_operator)
+          LEFT JOIN dgb_forms_contract c ON c.id = a.id_contract
+          LEFT JOIN clients cli ON cli.id = COALESCE(c.id_customer_comp, a.id_customer_comp)
+          LEFT JOIN (SELECT dgb_contract_id, MIN(project_code) AS project_code
+                       FROM cm_projects GROUP BY dgb_contract_id) p
+                 ON p.dgb_contract_id = a.id_contract
+          LEFT JOIN cm_rate_bands rbb ON rbb.band_name = COALESCE(op.type,'Default')
+          LEFT JOIN cm_rate_band_rates rb_ord ON rb_ord.band_id=rbb.id AND rb_ord.cost_type='Aziendale' AND rb_ord.regime='Ordinario'
+          LEFT JOIN cm_rate_band_rates rb_rep ON rb_rep.band_id=rbb.id AND rb_rep.cost_type='Aziendale' AND rb_rep.regime='Reperibilità'
+          WHERE ir.`id` IN ($perim) AND COALESCE(a.deleted,0) <> 1";
+    }
+
+    /** Espressioni comuni (riga = modulo di intervento). */
+    private const RSI_ORE   = "ROUND(COALESCE(ir.`quantity_hours`, 0), 2)";
+    private const RSI_REP   = "(COALESCE(ao.during_availability,0) = 1 OR COALESCE(ir.`on_call`,0) = 1)";
+    private const RSI_EXTRA = "LEAST(COALESCE(ao.extra_hours, ir.`extra_hours`, 0), COALESCE(ir.`quantity_hours`, 0))";
+    private const RSI_COST  = "COALESCE(ao.cost, a.human_resource_cost, a.total_cost, 0)";
+
+    /* ── v1.9.91 — Attività DGB senza modulo di intervento ─────────────────────
+     *
+     * Restano fuori dal perimetro (non hanno un rapportino). Nella pagina hanno una sezione propria.
+     * Filtri applicabili senza rapportino: periodo (data dell'attività), contratto/PM project,
+     * stato commessa, incaricato (operatore DGB), cliente, linea e codice linea (commessa collegata),
+     * ricerca libera. Le dimensioni esistenti solo sui rapportini (settore, modalità, fascia, durata,
+     * sede, natura, azienda) non si applicano e sono dichiarate in pagina.
+     */
+    private const SM_MOTIVO = "CASE
+            WHEN a.status IN ('assigned','new','planned','scheduled') THEN 'Assegnata, non ancora rendicontata'
+            WHEN a.status = 'in_progress' THEN 'In corso, non ancora rendicontata'
+            WHEN a.status LIKE 'frozen%' THEN 'Congelata / sospesa'
+            WHEN a.status IN ('completed','closed','approved') THEN 'Eseguita ma senza modulo (da sincronizzare)'
+            WHEN a.status = 'aborted' THEN 'Annullata'
+            ELSE CONCAT('Altro stato: ', COALESCE(a.status,'(vuoto)')) END";
+
+    private function smFrom(array $f, array &$b): string
+    {
+        $w = ['COALESCE(a.deleted,0) <> 1',
+              'NOT EXISTS (SELECT 1 FROM `cm_intervention_reports` x WHERE x.`dgb_activity_id` = a.id)',
+              self::DGB_DATA . ' BETWEEN ? AND ?'];
+        $b[] = $f['from']; $b[] = $f['to'];
+        if ($c = $this->ctrCondDgb('a.id_contract', $f, $b)) $w[] = $c;
+        if ($c = self::statoCond('pst.`dgb_contract_id` = a.id_contract', $f)) $w[] = $c;
+        if (!empty($f['incaricati'])) {
             $ph = implode(',', array_fill(0, count($f['incaricati']), '?'));
-            $w[] = "(TRIM(CONCAT_WS(' ', op.first_name, op.second_name)) IN ($ph)
-                   OR TRIM(CONCAT_WS(' ', op.second_name, op.first_name)) IN ($ph))";
-            foreach ($f['incaricati'] as $v) $b[]=$v;
-            foreach ($f['incaricati'] as $v) $b[]=$v;
+            $w[] = "(TRIM(CONCAT_WS(' ', op.first_name, op.second_name)) IN ($ph) OR TRIM(CONCAT_WS(' ', op.second_name, op.first_name)) IN ($ph))";
+            foreach ($f['incaricati'] as $v) $b[] = $v;
+            foreach ($f['incaricati'] as $v) $b[] = $v;
         }
-        if (!empty($f['cliente'])) { $w[] = "cli.name LIKE ?"; $b[]='%'.$f['cliente'].'%'; }
-        if ($c = $this->ctrCondDgb('a.id_contract', $f, $b)) $w[] = $c;   // v1.9.77
-        return 'WHERE ' . implode(' AND ', $w);
+        if (($f['cliente'] ?? '') !== '') { $w[] = "COALESCE(cli.name, p.client_raw) LIKE ?"; $b[] = '%' . $f['cliente'] . '%'; }
+        if (!empty($f['codici'])) {
+            $w[] = "p.service_line IN (" . implode(',', array_fill(0, count($f['codici']), '?')) . ")";
+            foreach ($f['codici'] as $v) $b[] = $v;
+        }
+        if (!empty($f['linee'])) {
+            $w[] = "COALESCE(cm.label, p.service_line) IN (" . implode(',', array_fill(0, count($f['linee']), '?')) . ")";
+            foreach ($f['linee'] as $v) $b[] = $v;
+        }
+        if (($f['q'] ?? '') !== '') {
+            $w[] = "(a.code LIKE ? OR c.code LIKE ? OR p.project_code LIKE ? OR cli.name LIKE ? OR a.ticket LIKE ?)";
+            $lk = '%' . $f['q'] . '%'; array_push($b, $lk, $lk, $lk, $lk, $lk);
+        }
+        return "
+          FROM dgb_forms_activity a
+          LEFT JOIN dgb_forms_activity_operator ao ON ao.id_activity = a.id AND ao.id_operator = a.id_operator
+          LEFT JOIN dgb_operator op ON op.id = a.id_operator
+          LEFT JOIN dgb_forms_contract c ON c.id = a.id_contract
+          LEFT JOIN (SELECT dgb_contract_id, MIN(id) AS id FROM cm_projects GROUP BY dgb_contract_id) px ON px.dgb_contract_id = a.id_contract
+          LEFT JOIN cm_projects p ON p.id = px.id
+          LEFT JOIN cm_contract_models cm ON cm.service_line = p.service_line
+          LEFT JOIN clients cli ON cli.id = COALESCE(c.id_customer_comp, a.id_customer_comp)
+          WHERE " . implode(' AND ', $w);
+    }
+
+    /** Filtri della pagina che non si applicano alle attività senza modulo. */
+    public static function filtriNonApplicabiliSenzaModulo(array $f): array
+    {
+        $out = [];
+        foreach (['settori' => 'settore', 'aziende' => 'azienda', 'modalita' => 'modalità', 'fasce' => 'fascia',
+                  'durate' => 'durata', 'sedi' => 'sede'] as $k => $l) if (!empty($f[$k])) $out[] = $l;
+        if (($f['ricavo'] ?? '') !== '') $out[] = 'natura';
+        return $out;
+    }
+
+    /** v1.9.91 — Totali per motivo. */
+    public function attivitaSenzaModulo(array $f): array
+    {
+        $b = [];
+        try {
+            $st = $this->pdo->prepare(
+                "SELECT " . self::SM_MOTIVO . " AS motivo, COUNT(*) AS attivita,
+                        ROUND(SUM(COALESCE(ao.hours, a.human_resource_hours, a.planned_hours, 0)), 2) AS ore,
+                        COUNT(DISTINCT a.id_contract) AS contratti, COUNT(DISTINCT a.id_operator) AS operatori
+                 " . $this->smFrom($f, $b) . " GROUP BY motivo ORDER BY attivita DESC");
+            $st->execute($b);
+            $per = $st->fetchAll(PDO::FETCH_ASSOC);
+        } catch (Throwable $e) { $per = []; }
+        return ['attivita' => array_sum(array_column($per, 'attivita')),
+                'ore'      => round(array_sum(array_map(fn($r) => (float)$r['ore'], $per)), 2),
+                'motivi'   => $per];
+    }
+
+    /** v1.9.91 — Dettaglio per contratto × operatore × motivo (con $perAttivita: una riga per attività, per l'export). */
+    public function attivitaSenzaModuloDettaglio(array $f, bool $perAttivita = false, int $limite = 1000): array
+    {
+        $b = [];
+        $contr = "COALESCE(NULLIF(c.code,''), p.project_code, CONCAT('Contratto #', a.id_contract))";
+        $oper  = "COALESCE(NULLIF(TRIM(CONCAT_WS(' ', op.second_name, op.first_name)),''), CONCAT('Operatore #', a.id_operator))";
+        $ore   = "COALESCE(ao.hours, a.human_resource_hours, a.planned_hours, 0)";
+        $sql = $perAttivita
+            ? "SELECT a.id AS attivita_id, a.code AS codice, a.ticket, a.status AS stato, " . self::SM_MOTIVO . " AS motivo,
+                      " . self::DGB_DATA . " AS data, $contr AS contratto, p.project_code AS pm_project, p.service_line AS codice_linea,
+                      COALESCE(cli.name, p.client_raw) AS cliente, $oper AS operatore,
+                      ROUND($ore, 2) AS ore, (ao.id IS NOT NULL) AS allocata, a.date_dead_line AS scadenza
+               " . $this->smFrom($f, $b) . " ORDER BY data, contratto LIMIT " . (int)$limite
+            : "SELECT a.id_contract AS contract_id, MAX($contr) AS contratto, MAX(p.project_code) AS pm_project,
+                      MAX(p.service_line) AS codice_linea, MAX(COALESCE(cli.name, p.client_raw)) AS cliente,
+                      $oper AS operatore, " . self::SM_MOTIVO . " AS motivo,
+                      COUNT(*) AS attivita, ROUND(SUM($ore), 2) AS ore,
+                      MIN(" . self::DGB_DATA . ") AS dal, MAX(" . self::DGB_DATA . ") AS al
+               " . $this->smFrom($f, $b) . "
+               GROUP BY a.id_contract, operatore, motivo
+               ORDER BY motivo, contratto, operatore LIMIT " . (int)$limite;
+        try { $st = $this->pdo->prepare($sql); $st->execute($b); return $st->fetchAll(PDO::FETCH_ASSOC); }
+        catch (Throwable $e) { return []; }
     }
 
     /* [PM_V1_9_36_APPLIED] Dettaglio per Commessa (sorgente dgb_forms_activity diretta) */
@@ -796,61 +1078,39 @@ final class ItServiceModel
         catch (Throwable $e) { return []; }
     }
 
-    /** Query del dettaglio per commessa, senza ORDER BY (riusata da dettaglio e sintesi). */
+    /** Query del dettaglio per commessa, senza ORDER BY (riusata da dettaglio e sintesi). v1.9.90: perimetro unico. */
     private function dettaglioSql(array $f, array &$b, ?int $contractId): string
     {
-        $DT = "COALESCE(a.report_date, DATE(a.date_start), DATE(a.completed_at), DATE(a.closed_at))";
-        $where = $this->rsiWhere($f, $b);
-        if ($contractId !== null) {
-            $where .= (stripos($where, 'WHERE') === false ? ' WHERE ' : ' AND ') . 'a.id_contract = ?';
-            $b[] = $contractId;
-        }
-        $ORE  = "COALESCE(ao.hours, a.human_resource_hours, 0)";
-        $COST = "COALESCE(ao.cost, a.human_resource_cost, a.total_cost, 0)";
-        $sql = "
+        $from = $this->rsiFrom($f, $b);
+        if ($contractId !== null) { $from .= ' AND a.id_contract = ?'; $b[] = $contractId; }
+        $ORE = self::RSI_ORE; $REP = self::RSI_REP; $EXT = self::RSI_EXTRA; $COST = self::RSI_COST;
+        return "
           SELECT a.id_contract AS contract_id,
                  COALESCE(NULLIF(c.code,''), p.project_code, CONCAT('Contratto #', a.id_contract)) AS contract_code,
                  c.code_x_installation,
                  cli.name AS customer_name, c.description AS contract_description,
                  p.project_code AS pm_project_code,
-                 DATE_FORMAT($DT, '%d/%m/%Y') AS report_date, $DT AS report_iso,
+                 DATE_FORMAT(ir.`report_date`, '%d/%m/%Y') AS report_date, ir.`report_date` AS report_iso,
                  a.id AS activity_id,
                  a.ticket,
-                 TRIM(CONCAT_WS(' ', op.second_name, op.first_name)) AS operator_name,
+                 COALESCE(NULLIF(TRIM(CONCAT_WS(' ', op.second_name, op.first_name)), ''), ir.`technician_raw`) AS operator_name,
                  COALESCE(rbb.band_name, op.type, 'Default') AS fascia,
-                 CASE WHEN COALESCE(ao.during_availability,0)=1 THEN 'Reperibilità'
-                      WHEN COALESCE(ao.extra_hours,0) >= $ORE AND $ORE > 0 THEN 'Straordinario'
-                      WHEN COALESCE(ao.extra_hours,0) > 0
-                           THEN CONCAT('Ordinario + straordinario (', REPLACE(FORMAT(ao.extra_hours,1),'.',','), ' h)')
+                 CASE WHEN $REP THEN 'Reperibilità'
+                      WHEN $EXT >= $ORE AND $ORE > 0 THEN 'Straordinario'
+                      WHEN $EXT > 0 THEN CONCAT('Ordinario + straordinario (', REPLACE(FORMAT($EXT,1),'.',','), ' h)')
                       ELSE 'Ordinario' END AS regime,
-                 ROUND($ORE,2) AS ore,
+                 $ORE AS ore,
                  ROUND($COST,2) AS costo_contratto,
-                 ROUND(CASE WHEN COALESCE(ao.during_availability,0)=1
-                            THEN COALESCE(rb_rep.rate_hour, op.hourly_cost, 0)*$ORE
+                 ROUND(CASE WHEN $REP THEN COALESCE(rb_rep.rate_hour, op.hourly_cost, 0)*$ORE
                             ELSE COALESCE(rb_ord.rate_hour, op.hourly_cost, 0)*$ORE END, 2) AS tot_costo_tab
-          FROM dgb_forms_activity a
-          LEFT JOIN dgb_operator op ON op.id = a.id_operator
-          LEFT JOIN dgb_forms_contract c ON c.id = a.id_contract
-          LEFT JOIN dgb_forms_activity_operator ao ON ao.id_activity = a.id AND ao.id_operator = a.id_operator
-          LEFT JOIN clients cli ON cli.id = COALESCE(c.id_customer_comp, a.id_customer_comp)
-          LEFT JOIN (SELECT dgb_contract_id, MIN(project_code) AS project_code
-                       FROM cm_projects GROUP BY dgb_contract_id) p
-                 ON p.dgb_contract_id = a.id_contract
-          LEFT JOIN cm_rate_bands rbb ON rbb.band_name = COALESCE(op.type,'Default')
-          LEFT JOIN cm_rate_band_rates rb_ord ON rb_ord.band_id=rbb.id AND rb_ord.cost_type='Aziendale' AND rb_ord.regime='Ordinario'
-          LEFT JOIN cm_rate_band_rates rb_rep ON rb_rep.band_id=rbb.id AND rb_rep.cost_type='Aziendale' AND rb_rep.regime='Reperibilità'
-          $where
-        ";
-        return $sql;
+          $from";
     }
 
-    /* [PM_V1_9_36_APPLIED] Riepilogo aggregato per Codice Contratto */
+    /* [PM_V1_9_36_APPLIED] Riepilogo aggregato per Codice Contratto — v1.9.90: perimetro unico */
     public function riepilogoContratto(array $f): array
     {
-        $DT = "COALESCE(a.report_date, DATE(a.date_start), DATE(a.completed_at), DATE(a.closed_at))";
-        $b = []; $where = $this->rsiWhere($f, $b);
-        $ORE  = "COALESCE(ao.hours, a.human_resource_hours, 0)";
-        $COST = "COALESCE(ao.cost, a.human_resource_cost, a.total_cost, 0)";
+        $b = []; $from = $this->rsiFrom($f, $b);
+        $ORE = self::RSI_ORE; $REP = self::RSI_REP; $EXT = self::RSI_EXTRA; $COST = self::RSI_COST;
         $sql = "
           SELECT a.id_contract AS contract_id,
                  COALESCE(
@@ -860,27 +1120,16 @@ final class ItServiceModel
                    CONCAT('Contratto #', a.id_contract)
                  ) AS codice_contratto,
                  MAX(p.project_code) AS pm_project_code,
-                 ROUND(SUM(CASE WHEN COALESCE(ao.during_availability,0)=0
-                                THEN GREATEST(0, $ORE - COALESCE(ao.extra_hours,0)) ELSE 0 END),2) AS ore_ordinarie,
-                 ROUND(SUM(COALESCE(ao.extra_hours,0)),2) AS ore_straordinario,
-                 ROUND(SUM(CASE WHEN COALESCE(ao.during_availability,0)=1 THEN $ORE ELSE 0 END),2) AS ore_reperibilita,
-                 COUNT(DISTINCT CONCAT($DT,'#',a.id_operator)) AS giorni_uomo,
+                 ROUND(SUM(CASE WHEN $REP THEN 0 ELSE $ORE - $EXT END),2) AS ore_ordinarie,
+                 ROUND(SUM(CASE WHEN $REP THEN 0 ELSE $EXT END),2) AS ore_straordinario,
+                 ROUND(SUM(CASE WHEN $REP THEN $ORE ELSE 0 END),2) AS ore_reperibilita,
+                 ROUND(SUM($ORE),2) AS ore,
+                 COUNT(*) AS moduli,
+                 COUNT(DISTINCT CONCAT(ir.`report_date`,'#',ir.`technician_raw`)) AS giorni_uomo,
                  ROUND(SUM($COST),2) AS costo_contratto,
-                 ROUND(SUM(CASE WHEN COALESCE(ao.during_availability,0)=1
-                                THEN COALESCE(rb_rep.rate_hour, op.hourly_cost,0)*$ORE
+                 ROUND(SUM(CASE WHEN $REP THEN COALESCE(rb_rep.rate_hour, op.hourly_cost,0)*$ORE
                                 ELSE COALESCE(rb_ord.rate_hour, op.hourly_cost,0)*$ORE END),2) AS tot_costo_tab
-          FROM dgb_forms_activity a
-          LEFT JOIN dgb_operator op ON op.id = a.id_operator
-          LEFT JOIN dgb_forms_contract c ON c.id = a.id_contract
-          LEFT JOIN dgb_forms_activity_operator ao ON ao.id_activity = a.id AND ao.id_operator = a.id_operator
-          LEFT JOIN clients cli ON cli.id = COALESCE(c.id_customer_comp, a.id_customer_comp)
-          LEFT JOIN (SELECT dgb_contract_id, MIN(project_code) AS project_code
-                       FROM cm_projects GROUP BY dgb_contract_id) p
-                 ON p.dgb_contract_id = a.id_contract
-          LEFT JOIN cm_rate_bands rbb ON rbb.band_name = COALESCE(op.type,'Default')
-          LEFT JOIN cm_rate_band_rates rb_ord ON rb_ord.band_id=rbb.id AND rb_ord.cost_type='Aziendale' AND rb_ord.regime='Ordinario'
-          LEFT JOIN cm_rate_band_rates rb_rep ON rb_rep.band_id=rbb.id AND rb_rep.cost_type='Aziendale' AND rb_rep.regime='Reperibilità'
-          $where
+          $from
           GROUP BY a.id_contract
           ORDER BY SUM($ORE) DESC
         ";

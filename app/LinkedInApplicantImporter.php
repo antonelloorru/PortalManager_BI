@@ -353,15 +353,20 @@ final class LinkedInApplicantImporter
         $codes = [];
         foreach ($rows as $r) { $c = self::jobCode($r['li_job_id'] ?? null); if ($c !== null) $codes[$c] = true; }
         if (!$codes) return [];
-        $codes = array_keys($codes);
-        $ph = implode(',', array_fill(0, count($codes), '?'));
-        $st = $this->pdo->prepare(
-            "SELECT id, title, linkedin_code FROM job_positions WHERE linkedin_code IN ($ph)"
+        // v1.9.85 — confronto sulla forma canonica di ENTRAMBI i lati: i codici salvati sulle
+        // posizioni in formati non puliti («4427193793E9», URL, «.0») prima non corrispondevano.
+        $st = $this->pdo->query(
+            "SELECT id, title, linkedin_code, status FROM job_positions
+              WHERE linkedin_code IS NOT NULL AND linkedin_code <> '' ORDER BY id"
         );
-        $st->execute($codes);
         $map = [];
         foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $p) {
-            $map[(string)$p['linkedin_code']] = ['id' => (int)$p['id'], 'title' => $p['title']];
+            $k = self::normalizeJobCode($p['linkedin_code']);
+            if ($k === null || !isset($codes[$k])) continue;
+            // codice su più posizioni: prevale quella aperta, poi la più recente (id maggiore)
+            $open = (($p['status'] ?? '') === 'open');
+            if (isset($map[$k]) && $map[$k]['open'] && !$open) continue;
+            $map[$k] = ['id' => (int)$p['id'], 'title' => $p['title'], 'open' => $open];
         }
         $st->closeCursor();
         return $map;
@@ -398,10 +403,33 @@ final class LinkedInApplicantImporter
 
     private static function jobCode($v): ?string
     {
+        return self::normalizeJobCode($v);
+    }
+
+    /**
+     * v1.9.85 — Forma canonica dell'ID offerta LinkedIn (solo cifre), usata sia
+     * dall'import sia dal salvataggio della posizione (`job_positions.linkedin_code`).
+     *  - «4.412730757E9» (cella numerica in notazione scientifica)  → 4412730757
+     *  - «4412730757E9»  (stessa cella con il punto perso)          → 4412730757
+     *  - «4412730757.0», « 4412730757 », URL …/jobs/view/4412730757 → 4412730757
+     * '0' / vuoto / N/A → null. Valori non riconducibili a un ID restano trim-mati.
+     */
+    public static function normalizeJobCode($v): ?string
+    {
         $v = self::clean(is_string($v) ? $v : (string)$v);
         if ($v === null) return null;
-        $v = preg_replace('/\.0$/', '', $v); // 4427193793.0 → 4427193793
-        if ($v === '' || $v === '0') return null;
+        if (preg_match('~/jobs/view/(?:[^/?#]*?-)?(\d{5,})~i', $v, $m)) return $m[1];
+        if (preg_match('/^(\d+)(?:\.(\d*))?[eE]\+?(\d+)$/', $v, $m)) {
+            $int = $m[1]; $frac = $m[2] ?? ''; $exp = (int)$m[3];
+            if ($frac === '' && strlen($int) === $exp + 1 && $exp >= 6) {
+                $v = $int;                                   // punto decimale perso: «4412730757E9»
+            } else {
+                $v = XlsxReader::plainNumber($v);            // notazione scientifica valida
+            }
+        }
+        $v = preg_replace('/\.0+$/', '', $v);               // 4427193793.0 → 4427193793
+        $v = ltrim($v, '+');
+        if ($v === '' || trim($v, '0') === '') return null;
         return $v;
     }
 
