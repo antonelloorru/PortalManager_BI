@@ -1214,14 +1214,13 @@ if ($pronto && ($_GET['print'] ?? '') === '1') {
     exit;
 }
 
+// v1.9.91 — un solo blocco filtri (pannello della pagina, server-side): niente barra automatica di
+// footer.php (ListFilter::renderAuto), che filtrava solo le righe a video di una tabella senza
+// aggiornare totali, grafici, stampa ed export e non era sincronizzata con i filtri della pagina.
+$GLOBALS['PM_NO_AUTOFILTER'] = true;
 require_once('header.php');
-// [PM_V1_9_34_APPLIED] pm-ui-boost
-if (!isset($GLOBALS['__pm_boost_v1934'])) {
-    $GLOBALS['__pm_boost_v1934'] = true;
-    echo '<link rel="stylesheet" href="assets/css/pm-ui-boost.css">' . "\n";
-    echo '<script src="assets/js/pm-ui-boost.js" defer></script>' . "\n";
-    echo '<meta name="pm-ui-boost" content=\'form select\'>' . "\n";
-}
+// v1.9.91 — rimosso pm-ui-boost (patch v1.9.34): le 4 select del pannello sono già gestite da
+// pm-multiselect (header.php); un secondo motore sulle stesse select non condivideva lo stato.
 
 
 $qs = function (array $over = []) use ($f, $tec) {

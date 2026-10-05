@@ -4,6 +4,9 @@
  * Gestione Commesse: analisi gerarchica pianificazione -> attività -> incaricati,
  * KPI (SLA innesco, consuntivo vs pianificato), distribuzione carico sede/remoto,
  * data quality e import batch dei modelli DogoBit con report differenziale.
+ * v1.9.98 — pannello filtri allineato alla Relazione di Servizio IT (stato commessa, cliente,
+ *           linea/codice, settore, azienda, sede, modalità, fascia, durata, natura, raggruppa per)
+ *           e dettaglio aggregato sulle entità DGB (allocazioni incaricato × attività).
  */
 require_once('access_control.php');
 require_once('functions.php');
@@ -25,9 +28,23 @@ $dgbFiltriSheet = function () use ($f, $vCtr): array {
     $r = [['Parametro', 'Valore']];
     if ($f['from'] !== '' || $f['to'] !== '') $r[] = ['Periodo (data lavoro)', ($f['from'] ?: '…') . ' – ' . ($f['to'] ?: '…')];
     if ($f['contratti']) $r[] = ['Contratto / PM Project', implode(', ', array_map(fn($v) => PmContractFilter::label($v, $vCtr), $f['contratti']))];
-    foreach (['q' => 'Codice/ticket', 'operator' => 'Incaricato (id)', 'status' => 'Stato', 'report_type' => 'Tipo report',
-              'mode' => 'Modalità', 'schedule' => 'Orario', 'oncall' => 'Reperibilità'] as $k => $l)
-        if (($f[$k] ?? '') !== '' && ($f[$k] ?? 0) !== 0) $r[] = [$l, (string)$f[$k]];
+    // v1.9.97 — filtri multi-valore
+    // v1.9.98 — stessi campi della Relazione di Servizio IT
+    $lab = ['stati' => ['aperta' => 'Aperta', 'chiusa' => 'Chiusa', 'sospesa' => 'Sospesa', 'non_chiusa' => 'Non chiusa'],
+            'modes' => DgbModel::MODALITA];
+    foreach (['stati' => 'Stato commessa', 'operators' => 'Incaricato (id)', 'statuses' => 'Stato attività', 'report_types' => 'Tipo report',
+              'modes' => 'Modalità', 'schedules' => 'Orario', 'clienti' => 'Cliente (id)', 'linee' => 'Linea di servizio',
+              'codici' => 'Codice linea', 'settori' => 'Settore tecnologico', 'aziende' => 'Azienda esecutrice', 'sedi' => 'Sede di riferimento',
+              'fasce' => 'Fascia oraria', 'durate' => 'Durata', 'tipi' => 'Tipo attività (id)'] as $k => $l)
+        if (!empty($f[$k])) $r[] = [$l, implode(', ', array_map(fn($v) => $lab[$k][$v] ?? $v, $f[$k]))];
+    $r[] = ['Raggruppa per', implode(' › ', array_map(fn($d) => DgbModel::DIM[$d], $f['gb']))];
+    if (($f['cliente'] ?? '') !== '') $r[] = ['Cliente (testo)', $f['cliente']];
+    if (($f['ricavo'] ?? '') !== '') $r[] = ['Natura', $f['ricavo'] === '1' ? 'Commesse a ricavo' : 'Commesse interne'];
+    $sn = ['1' => 'sì', '0' => 'no'];
+    foreach (['q' => 'Cerca (codice/ticket)', 'oncall' => 'Incaricato reperibile (profilo)', 'rep' => 'Intervento in reperibilità',
+              'extra' => 'Con straordinario', 'ticket' => 'Ticket presente', 'modulo' => 'Modulo di intervento collegato',
+              'sforo' => 'Consuntivo oltre il pianificato'] as $k => $l)
+        if (($f[$k] ?? '') !== '') $r[] = [$l, $k === 'q' ? (string)$f[$k] : $sn[$f[$k]]];
     $r[] = ['Generato il', date('d/m/Y H:i')];
     return $r;
 };
@@ -436,6 +453,31 @@ if ($tab === 'anomalie') {
     }
 }
 
+// v1.9.98 — export XLSX del dettaglio aggregato (stesso perimetro e raggruppamento della pagina)
+if (strtolower((string)($_GET['export'] ?? '')) === 'aggxlsx') {
+    $agg = $model->aggrega($f, 50000); $tot = $model->aggregaTotale($f);
+    $met = ['attivita' => 'Attività', 'allocazioni' => 'Allocazioni', 'giornate_uomo' => 'Giornate-uomo (gg)', 'ore' => 'Ore consuntivate (h)',
+            'ore_ordinarie' => 'Ordinarie (h)', 'ore_straordinario' => 'Straordinario (h)', 'ore_reperibilita' => 'Reperibilità (h)',
+            'ore_viaggio' => 'Viaggio (h)', 'costo' => 'Costo (€)', 'ricavo' => 'Ricavo (€)', 'margine' => 'Margine (€)',
+            'presso_cliente' => 'Presso cliente (n.)', 'da_remoto' => 'Da remoto (n.)', 'smart_working' => 'Smart working (n.)'];
+    $data = [array_merge(array_map(fn($d) => DgbModel::DIM[$d], $f['gb']), array_values($met))];
+    foreach ($agg as $r) {
+        $row = []; foreach ($f['gb'] as $d) $row[] = DgbModel::etichetta($d, (string)$r[$d]);
+        foreach (array_keys($met) as $k) $row[] = (float)$r[$k];
+        $data[] = $row;
+    }
+    if ($tot) {
+        $tot['margine'] = round((float)$tot['ricavo'] - (float)$tot['costo'], 2);
+        $row = array_merge(['TOTALE'], array_fill(0, count($f['gb']) - 1, ''));
+        foreach (array_keys($met) as $k) $row[] = (float)$tot[$k];
+        $data[] = $row;
+    }
+    require_once(__DIR__ . '/XlsxWriter.php');
+    write_log('DGB', 'info', 'Export XLSX dettaglio aggregato (' . implode(',', $f['gb']) . '): ' . count($agg) . ' righe', $u_id);
+    $w = new XlsxWriter(); $w->addSheet('Dettaglio aggregato', $data); $w->addSheet('Filtri', $dgbFiltriSheet());
+    $w->download('dgb_dettaglio_aggregato_' . date('Ymd_Hi') . '.xlsx'); exit;
+}
+
 // dati analisi
 $kpi   = $model->kpi($f);
 $hb    = $model->hoursBreakdown($f);
@@ -496,6 +538,20 @@ $load  = $model->loadDistribution($f, 15);
 $anom  = $model->anomalies($f, 15);
 $operators = $model->operators();
 $statuses  = $model->statuses();
+// v1.9.97 — opzioni dei nuovi filtri
+$optClienti = $model->clientiOptions();
+$optLinee   = $model->lineeOptions();
+$optTipi    = $model->tipiOptions();
+// v1.9.98 — opzioni dei campi della Relazione di Servizio IT (valori delle entità DGB, con conteggi)
+$optLabel   = $model->valori('linea_label');
+$optCodici  = $model->valori('linea_servizio');
+$optSettori = $model->valori('settore');
+$optAziende = $model->valori('azienda');
+$optSedi    = $model->valori('sede');
+$AGG_LIM    = 1000;
+$agg        = $tab === 'analisi' ? $model->aggrega($f, $AGG_LIM) : [];
+$aggTot     = $tab === 'analisi' ? $model->aggregaTotale($f) : [];
+$aggN       = (count($agg) >= $AGG_LIM) ? $model->aggregaGruppi($f) : count($agg);
 // v1.8.11: contratti DGB collegati a una commessa (per filtro ed etichette)
 $clabels = $model->contractLabels(); // dgb_contract_id => project_code
 $cinst = $pdo->query("SELECT dgb_contract_id, name FROM cm_projects WHERE dgb_contract_id IS NOT NULL")->fetchAll(PDO::FETCH_KEY_PAIR); // dgb_contract_id => code_x_installation (name)
@@ -509,15 +565,16 @@ $recent    = $imp->recentBatches(8);
 
 $msg = '';
 if (!empty($_SESSION['flash_msg'])) { $msg = $_SESSION['flash_msg']; unset($_SESSION['flash_msg']); }
+// v1.9.91 — un solo blocco filtri (pannello della pagina, server-side): niente barra automatica di
+// footer.php (ListFilter::renderAuto), che filtrava solo le righe a video di una tabella senza
+// aggiornare totali, grafici, stampa ed export e non era sincronizzata con i filtri della pagina.
+$GLOBALS['PM_NO_AUTOFILTER'] = true;
 require_once('header.php');
 
 $eur = fn($v) => $v !== null ? number_format((float)$v, 2, ',', '.') : '—';
 $qs = function (array $over = []) use ($f, $tab, $gran, $month) {
-    $p = array_filter(['from'=>$f['from'],'to'=>$f['to'],'operator'=>$f['operator'],'status'=>$f['status'],
-                       'contratti'=>implode(',', $f['contratti']),'q'=>$f['q'],
-                       'report_type'=>$f['report_type'],'mode'=>$f['mode'],'stdh'=>$f['stdh']!=8.0?$f['stdh']:'',
-                       'schedule'=>$f['schedule'],'oncall'=>$f['oncall'],
-                       'gran'=>$gran!=='month'?$gran:'','month'=>$month,'tab'=>$tab!=='analisi'?$tab:''], fn($v)=>$v!=='' && $v!==0);
+    // v1.9.97 — tutti i filtri (multi-valore compresi) da un'unica funzione
+    $p = array_merge(DgbModel::query($f), array_filter(['gran'=>$gran!=='month'?$gran:'','month'=>$month,'tab'=>$tab!=='analisi'?$tab:''], fn($v)=>$v!==''));
     return url_safe('dgb_activities', array_merge($p, $over));
 };
 ?>
@@ -534,7 +591,7 @@ $qs = function (array $over = []) use ($f, $tab, $gran, $month) {
 <?= $msg ?>
 
 <div class="tab-bar" style="display:flex;gap:6px;border-bottom:1px solid #e2e8f0;margin-bottom:14px">
-  <a class="btn btn-sm <?=$tab==='analisi'?'btn-primary':''?>" href="<?=url_safe('dgb_activities',array_filter(['from'=>$f['from'],'to'=>$f['to'],'operator'=>$f['operator'],'status'=>$f['status']]))?>">Analisi &amp; KPI</a>
+  <a class="btn btn-sm <?=$tab==='analisi'?'btn-primary':''?>" href="<?=url_safe('dgb_activities', DgbModel::query($f))?>">Analisi &amp; KPI</a>
   <a class="btn btn-sm <?=$tab==='import'?'btn-primary':''?>" href="<?=url_safe('dgb_activities',['tab'=>'import'])?>">Import &amp; Diff</a>
   <a class="btn btn-sm <?=$tab==='incaricati'?'btn-primary':''?>" href="<?=url_safe('dgb_activities',['tab'=>'incaricati'])?>">Incaricati (orario/reperibilità)</a>
   <?php
@@ -747,43 +804,111 @@ $qs = function (array $over = []) use ($f, $tab, $gran, $month) {
 
 <?php if ($tab === 'analisi'): ?>
 
-<div class="card" style="margin-bottom:14px">
-  <div class="card-header"><span class="card-title"><i class="fa-solid fa-filter"></i> Filtri</span></div>
-  <form method="get" style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;align-items:end">
+<?php
+  // v1.9.97 — pannello filtri uniformato alla Relazione di Servizio IT (multi-select con ricerca)
+  $attivi = DgbModel::activeCount($f);
+  $ms = function (string $name, string $lbl, array $opts, array $sel): string {
+      if (!$opts) return '';
+      $sel = array_map('strval', $sel);
+      $h = '<div class="form-group"><label>' . h($lbl) . ' <span class="pm-multi">(multipla)</span></label>'
+         . '<select name="' . h($name) . '[]" multiple size="3" class="pm-ms" data-placeholder="Tutti">';
+      foreach ($opts as $v => $l) $h .= '<option value="' . h((string)$v) . '"' . (in_array((string)$v, $sel, true) ? ' selected' : '') . '>' . h((string)$l) . '</option>';
+      return $h . '</select></div>';
+  };
+  $sn = function (string $name, string $lbl, string $si, string $no) use ($f): string {
+      return '<div class="form-group"><label>' . h($lbl) . '</label><select name="' . h($name) . '" class="pm-ms">'
+           . '<option value="">— tutti —</option>'
+           . '<option value="1"' . ($f[$name] === '1' ? ' selected' : '') . '>' . h($si) . '</option>'
+           . '<option value="0"' . ($f[$name] === '0' ? ' selected' : '') . '>' . h($no) . '</option></select></div>';
+  };
+  $optOp = []; foreach ($operators as $o) $optOp[(string)(int)$o['id']] = trim((string)$o['name']) ?: (string)$o['username'];
+  $optSt = []; foreach ($statuses as $st) $optSt[(string)$st['status']] = $st['status'] . ' (' . number_format((int)$st['n'], 0, ',', '.') . ')';
+?>
+<details class="pm-panel" <?= $attivi > 0 ? 'open' : '' ?>>
+  <summary>
+    <i class="fa-solid fa-chevron-right pm-chev"></i> Filtri
+    <?php if ($attivi > 0): ?><span class="pm-badge"><?=$attivi?></span><?php endif; ?>
+    <span class="pm-hint"><?=number_format((int)($kpi['activities'] ?? 0), 0, ',', '.')?> attività nel perimetro</span>
+  </summary>
+  <div class="pm-panel-body">
+    <form method="get">
       <?= route_slug_field() ?>
-    <input type="hidden" name="gran" value="<?=h($gran)?>"><input type="hidden" name="month" value="<?=h($month)?>">
-    <div class="form-group" style="margin:0"><label>Codice attività o ticket</label>
-      <input type="text" name="q" value="<?=h($f['q'] ?? '')?>" placeholder="Es. MAMT_23_000790"></div>
-    <div class="form-group" style="margin:0"><label>Dal (data lavoro)</label><input type="date" name="from" value="<?=h($f['from'])?>"></div>
-    <div class="form-group" style="margin:0"><label>Al (data lavoro)</label><input type="date" name="to" value="<?=h($f['to'])?>"></div>
-    <div class="form-group" style="margin:0"><label>Incaricato</label>
-      <select name="operator"><option value="">tutti</option>
-        <?php foreach($operators as $o):?><option value="<?=(int)$o['id']?>" <?=$f['operator']===(int)$o['id']?'selected':''?>><?=h(trim($o['name']) ?: $o['username'])?></option><?php endforeach;?></select></div>
-    <div class="form-group" style="margin:0"><label>Stato</label>
-      <select name="status"><option value="">tutti</option>
-        <?php foreach($statuses as $s):?><option value="<?=h($s['status'])?>" <?=$f['status']===$s['status']?'selected':''?>><?=h($s['status'])?> (<?=$s['n']?>)</option><?php endforeach;?></select></div>
-    <div class="form-group" style="margin:0"><label>Tipo report</label>
-      <select name="report_type"><option value="">tutti</option>
-        <?php foreach(['STD','R_ANTEA'] as $rt):?><option value="<?=$rt?>" <?=$f['report_type']===$rt?'selected':''?>><?=$rt?></option><?php endforeach;?></select></div>
-    <div class="form-group" style="margin:0"><label>Modalità</label>
-      <select name="mode"><option value="">tutte</option>
-        <option value="sede" <?=$f['mode']==='sede'?'selected':''?>>sede</option>
-        <option value="remoto" <?=$f['mode']==='remoto'?'selected':''?>>remoto</option></select></div>
-    <?php // v1.9.78 — la scelta singola "Commessa" diventa il filtro globale multi-contratto ?>
-    <div style="grid-column:1/-1;display:grid"><?= PmContractFilter::field($vCtr, $f['contratti'], 'vale anche per Relazione IT, Service Desk, Report direzionale') ?></div>
-    <div class="form-group" style="margin:0"><label>Orario</label>
-      <select name="schedule"><option value="">tutti</option>
-        <option value="ordinario" <?=$f['schedule']==='ordinario'?'selected':''?>>ordinario</option>
-        <option value="turni" <?=$f['schedule']==='turni'?'selected':''?>>turni</option></select></div>
-    <div class="form-group" style="margin:0"><label>Reperibilità</label>
-      <select name="oncall"><option value="">tutti</option>
-        <option value="1" <?=$f['oncall']==='1'?'selected':''?>>solo reperibili</option>
-        <option value="0" <?=$f['oncall']==='0'?'selected':''?>>non reperibili</option></select></div>
-    <div class="form-group" style="margin:0"><label>Ore ordinarie/giorno</label><input type="number" name="stdh" step="0.5" min="1" max="24" value="<?=h((string)$f['stdh'])?>"></div>
-    <div style="display:flex;gap:8px"><button class="btn btn-primary"><i class="fa-solid fa-filter"></i> Applica</button>
-      <a class="btn" href="<?=url_safe('dgb_activities', ['contratti_set' => 1])?>">Azzera</a></div>
-  </form>
-</div>
+      <input type="hidden" name="gran" value="<?=h($gran)?>"><input type="hidden" name="month" value="<?=h($month)?>">
+
+      <?php // v1.9.98 — stessi gruppi, campi e logica di selezione della Relazione di Servizio IT ?>
+      <div class="pm-group">
+        <h4>Contratto e stato commessa <span class="pm-multi">(filtro globale: KPI, grafici, dettaglio, tabelle, export)</span></h4>
+        <div class="pm-grid-auto">
+          <?= PmContractFilter::field($vCtr, $f['contratti'], 'vale anche per Relazione IT, Service Desk, Report direzionale') ?>
+          <?= $ms('stato_commessa', 'Stato commessa', ['aperta' => 'Aperta', 'chiusa' => 'Chiusa', 'sospesa' => 'Sospesa', 'non_chiusa' => 'Non chiusa'], $f['stati']) ?>
+        </div>
+      </div>
+
+      <div class="pm-group">
+        <h4>Periodo e ricerca</h4>
+        <div class="pm-grid-auto">
+          <div class="form-group"><label>Dal (data lavoro)</label><input type="date" name="from" value="<?=h($f['from'])?>"></div>
+          <div class="form-group"><label>Al (data lavoro)</label><input type="date" name="to" value="<?=h($f['to'])?>"></div>
+          <div class="form-group"><label>Cerca ovunque</label>
+            <input type="text" name="q" value="<?=h($f['q'] ?? '')?>" placeholder="attività, ticket, commessa, cliente"></div>
+          <div class="form-group"><label>Cliente</label>
+            <input type="text" name="cliente" value="<?=h($f['cliente'])?>" placeholder="parte della ragione sociale"></div>
+          <div class="form-group"><label>Ore ordinarie/giorno</label>
+            <input type="number" name="stdh" step="0.5" min="1" max="24" value="<?=h((string)$f['stdh'])?>"></div>
+        </div>
+      </div>
+
+      <div class="pm-group">
+        <h4>Servizio</h4>
+        <div class="pm-grid-auto">
+          <?= $ms('linee', 'Linea di servizio', $optLabel, $f['linee']) ?>
+          <?= $ms('codici', 'Codice linea', $optCodici, $f['codici']) ?>
+          <?= $ms('settori', 'Settore tecnologico', $optSettori, $f['settori']) ?>
+          <?= $ms('aziende', 'Azienda esecutrice', $optAziende, $f['aziende']) ?>
+          <div class="form-group"><label>Natura</label>
+            <select name="ricavo" class="pm-ms"><option value="">— tutte —</option>
+              <option value="1" <?=$f['ricavo']==='1'?'selected':''?>>Commesse a ricavo</option>
+              <option value="0" <?=$f['ricavo']==='0'?'selected':''?>>Commesse interne</option>
+            </select></div>
+        </div>
+      </div>
+
+      <div class="pm-group">
+        <h4>Erogazione</h4>
+        <div class="pm-grid-auto">
+          <?= $ms('operator', 'Incaricato', $optOp, $f['operators']) ?>
+          <?= $ms('sedi', 'Sede di riferimento', $optSedi, $f['sedi']) ?>
+          <?= $ms('mode', 'Modalità', DgbModel::MODALITA, $f['modes']) ?>
+          <?= $ms('fasce', 'Fascia oraria', ['in orario' => 'In orario', 'fuori orario' => 'Fuori orario', 'non rilevata' => 'Non rilevata'], $f['fasce']) ?>
+          <?= $ms('durate', 'Durata', ['giornata' => 'Giornata (≥ 4 h)', 'mezza giornata' => 'Mezza giornata (< 4 h)', 'non rilevata' => 'Non rilevata'], $f['durate']) ?>
+          <?= $ms('gb', 'Raggruppa per', DgbModel::DIM, $f['gb']) ?>
+        </div>
+      </div>
+
+      <div class="pm-group">
+        <h4>Attività DGB <span class="pm-multi">(campi propri del modello DogoBit)</span></h4>
+        <div class="pm-grid-auto">
+          <?= $ms('status', 'Stato attività', $optSt, $f['statuses']) ?>
+          <?= $ms('tipi', 'Tipo attività (fascia)', $optTipi, $f['tipi']) ?>
+          <?= $ms('clienti', 'Cliente (anagrafica)', $optClienti, $f['clienti']) ?>
+          <?= $ms('report_type', 'Tipo report', ['STD' => 'STD', 'R_ANTEA' => 'R_ANTEA'], $f['report_types']) ?>
+          <?= $ms('schedule', 'Orario incaricato', ['ordinario' => 'Ordinario', 'turni' => 'Turni'], $f['schedules']) ?>
+          <?= $sn('ticket', 'Ticket', 'Presente', 'Assente') ?>
+          <?= $sn('modulo', 'Modulo di intervento', 'Collegato', 'Non collegato') ?>
+          <?= $sn('sforo', 'Consuntivo vs pianificato', 'Oltre il pianificato', 'Entro il pianificato') ?>
+          <?= $sn('oncall', 'Incaricato reperibile (profilo)', 'Solo reperibili', 'Non reperibili') ?>
+          <?= $sn('rep', 'Intervento in reperibilità', 'Sì', 'No') ?>
+          <?= $sn('extra', 'Straordinario', 'Con ore di straordinario', 'Senza straordinario') ?>
+        </div>
+      </div>
+
+      <div class="pm-actions">
+        <button class="btn btn-primary btn-sm"><i class="fa-solid fa-filter"></i> Applica</button>
+        <a class="btn btn-sm" href="<?=url_safe('dgb_activities', ['contratti_set' => 1])?>">Azzera</a>
+      </div>
+    </form>
+  </div>
+</details>
 
 <!-- KPI cards -->
 <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:14px">
@@ -1003,8 +1128,7 @@ $qs = function (array $over = []) use ($f, $tab, $gran, $month) {
       <a class="btn btn-sm" title="Mese precedente" href="<?=$qs(['gran'=>'day','month'=>$prevM])?>"><i class="fa-solid fa-chevron-left"></i></a>
       <form method="get" style="display:inline-flex;gap:4px;align-items:center;margin:0">
       <?= route_slug_field() ?>
-        <?php foreach(['from','to','operator','status','report_type','mode','stdh','q','schedule','oncall'] as $k): if($f[$k]!=='' && $f[$k]!==0): ?><input type="hidden" name="<?=$k?>" value="<?=h((string)$f[$k])?>"><?php endif; endforeach; ?>
-        <?php if ($f['contratti']): ?><input type="hidden" name="contratti" value="<?=h(implode(',', $f['contratti']))?>"><?php endif; ?>
+        <?php foreach (DgbModel::query($f) as $k => $v): ?><input type="hidden" name="<?=h($k)?>" value="<?=h((string)$v)?>"><?php endforeach; ?>
         <input type="hidden" name="gran" value="day">
         <input type="month" name="month" value="<?=h($curM)?>" onchange="this.form.submit()">
       </form>
@@ -1213,6 +1337,50 @@ $qs = function (array $over = []) use ($f, $tab, $gran, $month) {
       <a class="btn btn-sm" href="<?=$qs(['export'=>'distsvg'])?>"><i class="fa-solid fa-image"></i> Grafico (SVG)</a>
     </div>
   </div>
+</div>
+
+<!-- v1.9.98 — Dettaglio aggregato (Raggruppa per), metriche del dominio DGB -->
+<?php
+  $nh = fn($v) => number_format((float)$v, 2, ',', '.') . ' h';
+  $ne = fn($v) => number_format((float)$v, 2, ',', '.') . ' €';
+  $nn = fn($v) => number_format((float)$v, 0, ',', '.');
+  $AGG_COL = [
+    ['attivita', 'Attività', $nn, 'attività distinte'], ['giornate_uomo', 'Giornate-uomo', fn($v) => number_format((float)$v, 0, ',', '.') . ' gg', 'coppie incaricato × giorno di lavoro'],
+    ['ore', 'Ore cons.', $nh, 'ore consuntivate dagli incaricati'], ['ore_ordinarie', 'Ordinarie', $nh, 'ore − straordinario, esclusa la reperibilità'],
+    ['ore_straordinario', 'Straord.', $nh, 'quota extra (compresa nelle ore), esclusa la reperibilità'], ['ore_reperibilita', 'Reperib.', $nh, 'ore degli interventi in reperibilità'],
+    ['ore_viaggio', 'Viaggio', $nh, 'ore di trasferta'], ['costo', 'Costo', $ne, ''], ['ricavo', 'Ricavo', $ne, ''], ['margine', 'Margine', $ne, 'ricavo − costo'],
+    ['presso_cliente', 'Presso cl.', $nn, 'interventi presso cliente'], ['da_remoto', 'Remoto', $nn, 'interventi da remoto'], ['smart_working', 'Smart', $nn, 'interventi in smart working'],
+  ];
+  if ($aggTot) $aggTot['margine'] = round((float)$aggTot['ricavo'] - (float)$aggTot['costo'], 2);
+?>
+<div class="card" style="margin-bottom:14px;overflow-x:auto">
+  <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+    <span class="card-title"><i class="fa-solid fa-layer-group"></i> Dettaglio — <?=h(implode(' › ', array_map(fn($d) => DgbModel::DIM[$d], $f['gb'])))?></span>
+    <span style="font-size:12px;color:var(--muted)"><strong><?=$nn($aggN)?></strong> gruppi<?= $aggN > count($agg) ? ' · primi ' . $nn(count($agg)) . ' a video (export completo)' : '' ?>
+      <a class="btn btn-success btn-sm" style="margin-left:8px" href="<?=$qs(['export' => 'aggxlsx'])?>"><i class="fa-solid fa-file-excel"></i> XLSX</a></span>
+  </div>
+  <p style="font-size:11px;color:var(--muted);margin:0 0 8px">Base: allocazioni incaricato × attività nel perimetro dei filtri, per data di lavoro; stesse ore del Quadro del periodo. Le attività senza incaricati non entrano nel dettaglio.</p>
+  <table class="data-table" style="width:100%;font-size:12px;white-space:nowrap">
+    <thead><tr>
+      <?php foreach ($f['gb'] as $d): ?><th><?=h(DgbModel::DIM[$d])?></th><?php endforeach; ?>
+      <?php foreach ($AGG_COL as [$k, $l, , $t]): ?><th style="text-align:right" title="<?=h($t)?>"><?=h($l)?></th><?php endforeach; ?>
+    </tr></thead>
+    <tbody>
+    <?php if (!$agg): ?><tr><td colspan="<?=count($f['gb']) + count($AGG_COL)?>" style="text-align:center;color:var(--muted);padding:18px">Nessun dato per i filtri impostati.</td></tr>
+    <?php else: foreach ($agg as $r): ?>
+      <tr>
+        <?php foreach ($f['gb'] as $d): ?><td><?=h(DgbModel::etichetta($d, (string)$r[$d]))?></td><?php endforeach; ?>
+        <?php foreach ($AGG_COL as [$k, , $fn]): ?><td style="text-align:right<?= $k === 'margine' && (float)$r[$k] < 0 ? ';color:#dc2626' : '' ?>"><?=$fn($r[$k])?></td><?php endforeach; ?>
+      </tr>
+    <?php endforeach; endif; ?>
+    </tbody>
+    <?php if ($aggTot && $agg): ?>
+    <tfoot><tr style="font-weight:700;border-top:2px solid var(--border)">
+      <td colspan="<?=count($f['gb'])?>">Totale</td>
+      <?php foreach ($AGG_COL as [$k, , $fn]): ?><td style="text-align:right"><?=$fn($aggTot[$k])?></td><?php endforeach; ?>
+    </tr></tfoot>
+    <?php endif; ?>
+  </table>
 </div>
 
 <!-- Data quality -->

@@ -36,6 +36,7 @@ try {
     $vSta  = $dm->valori('stato');
     $vLin  = $dm->valori('linea_servizio');
     $vCtr  = $dm->valoriContratti();   // v1.9.78 — filtro globale contratto
+    $comp  = $dm->competenza($f);      // v1.9.94 — ordini cliente per competenza (pro-rata mensile)
     // v1.8.95 — stato dell'alerting, mostrato solo nella vista direzionale:
     // e' configurazione di sistema, non informazione operativa per l'agente
     $alert = $ag === '' ? (new AlertEngine($pdo))->stato() : [];
@@ -43,6 +44,7 @@ try {
     $pronto = false; $errore = $e->getMessage();
     $q = $per = []; $att = $cmm = $trend = $gMod = $gLin = $gSta = $agenti = [];
     $vAg = $vSta = $vLin = []; $alert = []; $vCtr = [];
+    $comp = ['periodo' => ['da' => null, 'a' => null], 'anni' => [], 'commesse' => [], 'totale' => 0];
 }
 
 $COL = ['#2563eb','#16a34a','#f59e0b','#dc2626','#7c3aed','#0891b2','#db2777','#65a30d',
@@ -51,7 +53,27 @@ $colPrio = [1 => '#dc2626', 2 => '#ea580c', 3 => '#f59e0b', 4 => '#0891b2', 5 =>
 
 $n  = fn($v) => number_format((float)$v, 0, ',', '.');
 $n1 = fn($v) => $v === null ? '—' : number_format((float)$v, 1, ',', '.');
-$eur = fn($v) => number_format((float)$v, 0, ',', '.') . ' €';
+// v1.9.94 — unità sempre esplicite: € importi, h ore, gg giornate
+$eur  = fn($v) => number_format((float)$v, 0, ',', '.') . ' €';
+$eur2 = fn($v) => number_format((float)$v, 2, ',', '.') . ' €';
+$hrs  = fn($v) => $v === null ? '—' : number_format((float)$v, 0, ',', '.') . ' h';
+$gg   = fn($v) => $v === null ? '—' : number_format((float)$v, 0, ',', '.') . ' gg';
+$fidoBadge = function (array $r): string {
+    if (empty($r['fido'])) return '<span style="color:#cbd5e1" title="nessun fido">—</span>';
+    $t = 'Fido' . ((float)($r['fido_valore'] ?? 0) != 0 ? ' su valore: ' . number_format((float)$r['fido_valore'], 0, ',', '.') . ' €' : '')
+       . ((float)($r['fido_costi'] ?? 0) != 0 ? ' · su costi: ' . number_format((float)$r['fido_costi'], 0, ',', '.') . ' €' : '');
+    return '<span title="' . htmlspecialchars($t, ENT_QUOTES, 'UTF-8') . '" style="background:#fef3c7;color:#92400e;border-radius:6px;padding:1px 6px;font-size:10px;font-weight:700">FIDO</span>';
+};
+// v1.9.95 — Link SP e Scheda Progetto, come in Commesse / Progetti
+$linkSp = fn(array $r): string => !empty($r['external_link'])
+    ? '<a href="' . htmlspecialchars((string)$r['external_link'], ENT_QUOTES, 'UTF-8') . '" target="_blank" rel="noopener" title="Apri sul gestionale (SharePoint)" style="white-space:nowrap;font-size:10px;font-weight:700"><i class="fa-solid fa-arrow-up-right-from-square"></i> SP</a>'
+    : '<span style="color:#cbd5e1">—</span>';
+$schedaPrj = fn(array $r): string => !empty($r['project_id'])
+    ? '<a class="btn btn-sm btn-blue" style="white-space:nowrap;font-size:10px;padding:2px 7px" href="' . url_safe('project_dashboard', ['id' => (int)$r['project_id']]) . '" title="Apri la scheda del progetto"><i class="fa-solid fa-chart-line"></i> Scheda Progetto</a>'
+    : '<span style="color:#cbd5e1">—</span>';
+$periodoTxt = ($f['from'] !== '' || $f['to'] !== '')
+    ? 'dal ' . ($f['from'] !== '' ? date('d/m/Y', strtotime($f['from'])) : 'inizio') . ' al ' . ($f['to'] !== '' ? date('d/m/Y', strtotime($f['to'])) : 'fine')
+    : 'intera durata delle commesse';
 
 // ── export XLSX ─────────────────────────────────────────────────────────────
 if ($pronto && ($_GET['export'] ?? '') === 'xlsx') {
@@ -60,13 +82,38 @@ if ($pronto && ($_GET['export'] ?? '') === 'xlsx') {
 
     $r1 = [['Commessa','Denominazione','Cliente','Agente','Stato','Modello','Linea',
             'Valore','Costo','Margine','Margine %','Ore','Consumo %','Avanzamento %',
-            'Divergenza %','Giorni a scadenza','Giorni senza movimenti']];
+            'Divergenza %','Giorni a scadenza','Giorni senza movimenti','Fido','Fido su valore €','Fido su costi €']];
     foreach ($cmm as $c) $r1[] = [$c['commessa'], $c['denominazione'], $c['cliente'],
         $c['agente'], $c['stato'], $c['modello_label'], $c['linea_servizio'],
         $c['valore'], $c['costo'], $c['margine'], $c['margine_pct'], $c['ore'],
         $c['consumo_valore_pct'], $c['avanzamento_pct'], $c['divergenza_pct'],
-        $c['giorni_a_scadenza'], $c['giorni_senza_movimenti']];
+        $c['giorni_a_scadenza'], $c['giorni_senza_movimenti'], (int)($c['fido'] ?? 0) ? 'sì' : 'no',
+        $c['fido_valore'] ?? null, $c['fido_costi'] ?? null];
     $w->addSheet('Commesse', $r1);
+
+    // v1.9.94 — competenza pro-rata mensile degli ordini cliente
+    $rc1 = [['Anno', 'Valore di competenza €', 'Commesse']];
+    foreach ($comp['anni'] as $y => $x) $rc1[] = [(int)$y, $x['valore'], (int)$x['commesse']];
+    $rc1[] = ['Totale periodo', $comp['totale'], count($comp['commesse'])];
+    $w->addSheet('Competenza per anno', $rc1);
+    $anniC = array_keys($comp['anni']);
+    $hdr = ['Commessa','Denominazione','Cliente','Agente','Stato','Fido','Inizio','Fine','Importo ordini €'];
+    foreach ($anniC as $y) { $hdr[] = "$y mesi"; $hdr[] = "$y €"; }
+    $hdr[] = 'Valore nel periodo €';
+    $rc2 = [$hdr];
+    foreach ($comp['commesse'] as $c) {
+        $row = [$c['commessa'], $c['denominazione'], $c['cliente'], $c['agente'], $c['stato'], $c['fido'] ? 'sì' : 'no',
+                $c['inizio'], $c['fine'], round($c['importo'], 2)];
+        foreach ($anniC as $y) { $row[] = (int)($c['anni'][$y]['mesi'] ?? 0); $row[] = round((float)($c['anni'][$y]['valore'] ?? 0), 2); }
+        $row[] = round($c['valore_periodo'], 2);
+        $rc2[] = $row;
+    }
+    $w->addSheet('Competenza per commessa', $rc2);
+    $rc3 = [['Commessa','Fonte','Ordine','Data ordine','Importo €','Inizio competenza','Fine competenza','Mesi totali','Quota mensile €','Anno','Mesi nell\'anno','Dal','Al','Valore €']];
+    foreach ($comp['commesse'] as $c) foreach ($c['ordini'] as $o) foreach ($o['anni'] as $y => $x)
+        $rc3[] = [$c['commessa'], $o['fonte'], $o['codice'], $o['data'], $o['importo'], substr($o['inizio'], 0, 7), substr($o['fine'], 0, 7),
+                  $o['mesi_totali'], $o['quota_mensile'], (int)$y, $x['mesi'], $x['da'], $x['a'], $x['valore']];
+    $w->addSheet('Competenza per ordine', $rc3);
 
     $r2 = [['Priorità','Motivo','Commessa','Cliente','Agente','Valore',
             'Consumo %','Avanzamento %','Divergenza %','Margine %','Giorni a scadenza']];
@@ -96,6 +143,7 @@ if ($pronto && ($_GET['export'] ?? '') === 'xlsx') {
     foreach (['stato' => 'Stato', 'linee' => 'Linee', 'aziende' => 'Aziende'] as $k => $l) if ($f[$k]) $rf[] = [$l, implode(', ', $f[$k])];
     if ($f['q'] !== '')       $rf[] = ['Ricerca', $f['q']];
     if ($f['cliente'] !== '') $rf[] = ['Cliente', $f['cliente']];
+    $rf[] = ['Periodo', $periodoTxt];
     $rf[] = ['Generato il', date('d/m/Y H:i')];
     $w->addSheet('Filtri', $rf);
 
@@ -121,7 +169,7 @@ $barre = function (array $dati, string $campo, array $colori, int $w = 460) use 
             . '" height="12" fill="' . $c . '" rx="2"><title>' . htmlspecialchars((string)$d['voce'])
             . ': ' . $n($d[$campo]) . ' €</title></rect>'
             . '<text x="' . ($lw + $l + 5) . '" y="' . ($y + 12) . '" font-size="9" fill="#64748b">'
-            . $n($d[$campo]) . '</text>';
+            . $n($d[$campo]) . ' €</text>';
     }
     return $o . '</svg>';
 };
@@ -133,11 +181,15 @@ if ($pronto && ($_GET['print'] ?? '') === '1') {
     exit;
 }
 
+// v1.9.91 — un solo blocco filtri (pannello della pagina, server-side): niente barra automatica di
+// footer.php (ListFilter::renderAuto), che filtrava solo le righe a video di una tabella senza
+// aggiornare totali, grafici, stampa ed export e non era sincronizzata con i filtri della pagina.
+$GLOBALS['PM_NO_AUTOFILTER'] = true;
 require_once('header.php');
 
 $qs = function (array $over = []) use ($f) {
     $p = ['agente' => $f['agente'], 'solo' => $f['solo'],
-          'q' => $f['q'], 'cliente' => $f['cliente']];
+          'q' => $f['q'], 'cliente' => $f['cliente'], 'from' => $f['from'], 'to' => $f['to']];
     foreach (['stato','linee','aziende','contratti'] as $k) if (!empty($f[$k])) $p[$k] = implode(',', $f[$k]);
     return url_safe('dir_report', array_merge(array_filter($p, fn($v) => $v !== '' && $v !== []), $over));
 };
@@ -180,7 +232,8 @@ $qs = function (array $over = []) use ($f) {
 <?php
   $attivi = ($ag !== '') + ($f['q'] !== '') + ($f['cliente'] !== '')
           + (count($f['stato']) > 0) + (count($f['linee']) > 0)
-          + (count($f['aziende']) > 0) + ($f['solo'] !== 'aperte') + (count($f['contratti']) > 0);
+          + (count($f['aziende']) > 0) + ($f['solo'] !== 'aperte') + (count($f['contratti']) > 0)
+          + ($f['from'] !== '' || $f['to'] !== '');
 ?>
 <details class="pm-panel" <?= $attivi > 0 ? 'open' : '' ?>>
   <summary>
@@ -196,6 +249,16 @@ $qs = function (array $over = []) use ($f) {
         <h4>Contratto</h4>
         <div class="pm-grid-auto">
           <?= PmContractFilter::field($vCtr, $f['contratti'], 'vale anche per Relazione IT, Service Desk, DGB') ?>
+        </div>
+      </div>
+
+      <div class="pm-group">
+        <h4>Periodo <span class="pm-multi">(commesse attive nel periodo · andamento · competenza)</span></h4>
+        <div class="pm-grid-auto">
+          <div class="form-group"><label>Data Inizio</label>
+            <input type="date" name="from" value="<?=h($f['from'])?>"></div>
+          <div class="form-group"><label>Data Fine</label>
+            <input type="date" name="to" value="<?=h($f['to'])?>"></div>
         </div>
       </div>
 
@@ -328,12 +391,12 @@ $qs = function (array $over = []) use ($f) {
 <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px">
   <?php foreach ([
     ['Commesse', $n($q['commesse']), '#334155',
-     $n($q['aperte']).' aperte · '.$n($q['a_ricavo']).' a ricavo'],
+     $n($q['aperte']).' aperte · '.$n($q['a_ricavo']).' a ricavo · '.$n($q['con_fido'] ?? 0).' con fido'],
     ['Valore contrattato', $eur($q['valore']), '#2563eb', $n($q['clienti']).' clienti'],
     ['Margine', $eur($q['margine']), ((float)($q['margine_pct'] ?? 0)) < 20 ? '#dc2626' : '#16a34a',
      $q['margine_pct'] !== null ? $n1($q['margine_pct']).'% sul contrattato' : ''],
     ['Costo del lavoro', $eur($q['costo']), '#7c3aed',
-     $q['costo_orario'] !== null ? $n1($q['costo_orario']).' €/h su '.$n($q['ore']).' ore' : ''],
+     $q['costo_orario'] !== null ? $n1($q['costo_orario']).' €/h su '.$hrs($q['ore']) : ''],
   ] as [$l,$v,$c,$s]): ?>
     <div class="card" style="text-align:center;padding:13px;border-top:3px solid <?=$c?>">
       <div style="font-size:20px;font-weight:800;color:<?=$c?>"><?=$v?></div>
@@ -391,11 +454,11 @@ $qs = function (array $over = []) use ($f) {
         <td style="text-align:right"><?=$n($a['commesse'])?></td>
         <td style="text-align:right"><?=$n($a['aperte'])?></td>
         <td style="text-align:right"><?=$n($a['clienti'])?></td>
-        <td style="text-align:right;font-weight:700"><?=$n($a['valore'])?></td>
-        <td style="text-align:right;color:#16a34a"><?=$n($a['margine'])?></td>
+        <td style="text-align:right;font-weight:700"><?=$eur($a['valore'])?></td>
+        <td style="text-align:right;color:#16a34a"><?=$eur($a['margine'])?></td>
         <td style="text-align:right;color:<?=((float)$a['margine_pct'])<20?'#dc2626':'#334155'?>">
           <?=$n1($a['margine_pct'])?>%</td>
-        <td style="text-align:right;color:var(--muted)"><?=$n($a['ore'])?></td>
+        <td style="text-align:right;color:var(--muted)"><?=$hrs($a['ore'])?></td>
         <td style="text-align:right;color:<?=(int)$a['sforate']>0?'#dc2626':'var(--muted)'?>"><?=$n($a['sforate'])?></td>
         <td style="text-align:right;color:<?=(int)$a['divergenti']>0?'#f59e0b':'var(--muted)'?>"><?=$n($a['divergenti'])?></td>
         <td style="text-align:right"><?=$n($a['in_scadenza'])?></td>
@@ -423,11 +486,11 @@ $qs = function (array $over = []) use ($f) {
   <?php else: ?>
     <div style="overflow-x:auto">
     <table class="data-table" style="width:100%;font-size:11px">
-      <thead><tr><th>Motivo</th><th>Commessa</th><th>Cliente</th>
+      <thead><tr><th>Motivo</th><th>Commessa</th><th>Link SP</th><th>Scheda Progetto</th><th>Cliente</th>
         <?php if ($ag === ''): ?><th>Agente</th><?php endif; ?>
         <th style="text-align:right">Valore</th><th style="text-align:right">Consumo</th>
         <th style="text-align:right">Avanz.</th><th style="text-align:right">Divergenza</th>
-        <th style="text-align:right">Marg.%</th><th style="text-align:right">Scad.</th></tr></thead>
+        <th style="text-align:right">Marg.%</th><th style="text-align:right">Scad.</th><th>Fido</th></tr></thead>
       <tbody>
       <?php foreach (array_slice($att, 0, 60) as $x): ?>
         <tr>
@@ -435,9 +498,11 @@ $qs = function (array $over = []) use ($f) {
                 background:<?=$colPrio[(int)$x['priorita']] ?? '#94a3b8'?>;margin-right:5px"></span>
             <?=h($x['motivo'])?></td>
           <td style="font-family:monospace;font-size:10px"><?=h($x['commessa'])?></td>
+          <td style="text-align:center"><?=$linkSp($x)?></td>
+          <td><?=$schedaPrj($x)?></td>
           <td><?=h(mb_strimwidth((string)$x['cliente'], 0, 24, '…'))?></td>
           <?php if ($ag === ''): ?><td style="font-size:10px"><?=h($x['agente'])?></td><?php endif; ?>
-          <td style="text-align:right"><?=$n($x['valore'])?></td>
+          <td style="text-align:right"><?=$eur($x['valore'])?></td>
           <td style="text-align:right;font-weight:<?=((float)$x['consumo_valore_pct'])>=100?'700':'400'?>;
                 color:<?=((float)$x['consumo_valore_pct'])>=100?'#dc2626':'#334155'?>">
             <?=$n1($x['consumo_valore_pct'])?>%</td>
@@ -446,7 +511,8 @@ $qs = function (array $over = []) use ($f) {
                 color:<?=((float)$x['divergenza_pct'])>=20?'#dc2626':'#334155'?>">
             <?=$n1($x['divergenza_pct'])?></td>
           <td style="text-align:right"><?=$n1($x['margine_pct'])?>%</td>
-          <td style="text-align:right"><?=$x['giorni_a_scadenza'] !== null ? $n($x['giorni_a_scadenza']).'g' : '—'?></td>
+          <td style="text-align:right"><?=$x['giorni_a_scadenza'] !== null ? $gg($x['giorni_a_scadenza']) : '—'?></td>
+          <td><?=$fidoBadge($x)?></td>
         </tr>
       <?php endforeach; ?>
       </tbody>
@@ -462,7 +528,7 @@ $qs = function (array $over = []) use ($f) {
 
 <?php if (count($trend) > 1): ?>
 <div class="card">
-  <div class="card-header"><span class="card-title">Andamento — ultimi <?=count($trend)?> mesi</span></div>
+  <div class="card-header"><span class="card-title">Andamento — <?= ($f['from'] !== '' || $f['to'] !== '') ? h($periodoTxt) : 'ultimi ' . count($trend) . ' mesi' ?></span></div>
   <?php
     $mx = 0.01; foreach ($trend as $t) $mx = max($mx, (float)$t['ore']);
     $W=900; $H=180; $pL=52; $pR=12; $pT=10; $pB=24;
@@ -472,7 +538,7 @@ $qs = function (array $over = []) use ($f) {
     <?php for($g=0;$g<=4;$g++): $y=$pT+$ph-$g*$ph/4; ?>
       <line x1="<?=$pL?>" y1="<?=round($y,1)?>" x2="<?=$W-$pR?>" y2="<?=round($y,1)?>" stroke="#e2e8f0"/>
       <text x="<?=$pL-5?>" y="<?=round($y+3,1)?>" text-anchor="end" font-size="9" fill="#94a3b8">
-        <?=$n(round($mx*$g/4))?></text>
+        <?=$n(round($mx*$g/4))?> h</text>
     <?php endfor; ?>
     <?php foreach($trend as $i=>$t): $h2=(float)$t['ore']/$mx*$ph;
       $x=$pL+$i*$bw+$bw*0.15; $bx=max(2,$bw*0.7); ?>
@@ -486,6 +552,72 @@ $qs = function (array $over = []) use ($f) {
     <?php endforeach; ?>
   </svg>
   <div style="font-size:11px;color:var(--muted)">Ore consuntivate per mese sul perimetro selezionato.</div>
+</div>
+<?php endif; ?>
+
+<?php // ── v1.9.94 — ordini cliente per competenza (pro-rata temporis mensile) ──────── ?>
+<?php if ($comp['commesse']): $anniC = array_keys($comp['anni']); ?>
+<div class="card" style="margin-top:14px;border-left:4px solid #2563eb">
+  <div class="card-header">
+    <span class="card-title"><i class="fa-solid fa-calendar-days"></i> Valore ordini per competenza</span>
+    <span style="font-size:11px;color:var(--muted);margin-left:8px">pro-rata mensile · <?=h($periodoTxt)?> ·
+      <?=$n(count($comp['commesse']))?> commesse a ricavo</span>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:10px">
+    <?php foreach ($comp['anni'] as $y => $x): ?>
+      <div style="text-align:center;padding:10px;background:#f8fafc;border-radius:8px;border-top:3px solid #2563eb">
+        <div style="font-size:17px;font-weight:800;color:#1d4ed8"><?=$eur2($x['valore'])?></div>
+        <div style="font-size:11px;font-weight:700"><?=(int)$y?></div>
+        <div style="font-size:10px;color:var(--muted)"><?=$n($x['commesse'])?> commesse</div>
+      </div>
+    <?php endforeach; ?>
+    <div style="text-align:center;padding:10px;background:#eff6ff;border-radius:8px;border-top:3px solid #334155">
+      <div style="font-size:17px;font-weight:800"><?=$eur2($comp['totale'])?></div>
+      <div style="font-size:11px;font-weight:700">Totale nel periodo</div>
+    </div>
+  </div>
+  <div style="max-height:520px;overflow:auto">
+  <table class="data-table" style="width:100%;font-size:11px">
+    <thead><tr><th>Commessa</th><th>Link SP</th><th>Scheda Progetto</th><th>Cliente</th><?php if ($ag === ''): ?><th>Agente</th><?php endif; ?><th>Fido</th>
+      <th>Durata</th><th style="text-align:right">Importo ordini</th>
+      <?php foreach ($anniC as $y): ?><th style="text-align:right"><?=(int)$y?></th><?php endforeach; ?>
+      <th style="text-align:right">Nel periodo</th></tr></thead>
+    <tbody>
+    <?php foreach (array_slice($comp['commesse'], 0, 300) as $c): ?>
+      <tr>
+        <td><details><summary style="cursor:pointer;font-family:monospace;font-size:10px"><?=h($c['commessa'])?></summary>
+          <div style="font-size:10px;color:var(--muted);white-space:normal;max-width:520px;margin-top:4px">
+            <?php foreach ($c['ordini'] as $o): ?>
+              <div><strong><?=h($o['fonte'])?></strong><?= $o['codice'] ? ' ' . h((string)$o['codice']) : '' ?>
+                del <?=h(date('d/m/Y', strtotime((string)$o['data'])))?>: <?=$eur2($o['importo'])?> /
+                <?=$n($o['mesi_totali'])?> mesi (<?=h(substr($o['inizio'], 5, 2) . '/' . substr($o['inizio'], 0, 4))?>–<?=h(substr($o['fine'], 5, 2) . '/' . substr($o['fine'], 0, 4))?>)
+                = <?=$eur2($o['quota_mensile'])?>/mese<?php foreach ($o['anni'] as $y => $x): ?> · <?=(int)$y?>: <?=$n($x['mesi'])?> mesi = <?=$eur2($x['valore'])?><?php endforeach; ?></div>
+            <?php endforeach; ?>
+          </div></details></td>
+        <td style="text-align:center"><?=$linkSp($c)?></td>
+        <td><?=$schedaPrj($c)?></td>
+        <td><?=h(mb_strimwidth((string)$c['cliente'], 0, 28, '…'))?></td>
+        <?php if ($ag === ''): ?><td style="font-size:10px"><?=h((string)$c['agente'])?></td><?php endif; ?>
+        <td><?=$fidoBadge($c)?></td>
+        <td style="font-size:10px;color:var(--muted)"><?=h(date('m/Y', strtotime((string)$c['inizio'])))?>–<?=h(date('m/Y', strtotime((string)$c['fine'])))?></td>
+        <td style="text-align:right"><?=$eur2($c['importo'])?></td>
+        <?php foreach ($anniC as $y): $x = $c['anni'][$y] ?? null; ?>
+          <td style="text-align:right"><?php if ($x): ?><?=$eur2($x['valore'])?><br><span style="font-size:9px;color:var(--muted)"><?=$n($x['mesi'])?> mesi</span><?php else: ?>—<?php endif; ?></td>
+        <?php endforeach; ?>
+        <td style="text-align:right;font-weight:700"><?=$eur2($c['valore_periodo'])?></td>
+      </tr>
+    <?php endforeach; ?>
+    </tbody>
+  </table>
+  </div>
+  <p style="font-size:11px;color:var(--muted);margin-top:8px">
+    <strong>Pro-rata temporis mensile</strong>: ogni ordine cliente (o riporto da contratto precedente; in mancanza di ordini il valore
+    della commessa) è diviso per i <strong>mesi di calendario</strong> della durata della commessa, a partire dalla <strong>data
+    dell'ordine se successiva all'inizio</strong>. La quota mensile × i mesi che cadono nel periodo dà il valore di competenza, raggruppato
+    per anno. Es. 100.000 € su 28 mesi (06/2024–09/2026): 2024 = 7 mesi = 25.000,00 € · 2025 = 12 mesi = 42.857,14 € ·
+    2026 = 9 mesi = 32.142,86 €. Apri il codice commessa per il calcolo di ciascun ordine.
+    <?php if (count($comp['commesse']) > 300): ?>Mostrate le prime 300 di <?=$n(count($comp['commesse']))?>: l'export XLSX le contiene tutte.<?php endif; ?>
+  </p>
 </div>
 <?php endif; ?>
 

@@ -160,6 +160,14 @@ $page_map = [
         'workload_overview.php'      => ['Carico & Sovrapposizioni', 'Impegno persone per commessa, contemporaneità, sovraccarichi, contesa risorse'],
         'dgb_activities.php'         => ['Attività & Rendicontazione DGB', 'Gerarchia pianificazione/attività/incaricati DogoBit, KPI SLA e consuntivo, distribuzione carico, data quality, import batch con diff'],
         'dgb_api.php'                => ['↳ API attività DGB', 'Sub-route: endpoint JSON parametrizzato (tabella, KPI, grafici, anomalie)'],
+        // v1.9.99 — Progetti PRJ e Analisi Gara & Dimensionamento
+        'manage_projects_prj.php'    => ['Progetti PRJ (elenco)', 'Permesso virtuale: vista ?view=prj di Commesse / Progetti (consultazione, creazione, export)'],
+        'prj_dashboard.php'          => ['↳ Scheda progetto PRJ', 'Sub-route: anagrafica, gara, servizi, asset e volumi, profili, costi, scenari, KPI, punteggio, storico'],
+        'prj_dashboard_calc.php'     => ['↳ Calcolo scenari PRJ', 'Permesso virtuale: esecuzione dei calc run'],
+        'prj_link.php'               => ['↳ Collegamento PRJ - commessa SP', 'Permesso virtuale: collega, scollega, sostituisce la commessa SP (separato da edit)'],
+        'prj_costs_real.php'         => ['↳ Costi reali dipendenti (PRJ)', 'Permesso virtuale: costi reali nei confronti stimato/consuntivo (stesso perimetro della Compensation)'],
+        'prj_parameters.php'         => ['Parametri dimensionamento', 'Parametri globali versionati: oneri, H24, produttività, zone, nearshore, dotazioni, sede, overhead'],
+        'prj_history.php'            => ['Scenari & confronti progetti', 'Calc run multi-progetto per periodo, scenario, zona, stato, commessa SP'],
     ],
     'Dispositivi & Asset' => [
         'device_manager.php'         => ['Gestione dispositivi', 'CRUD asset assegnati'],

@@ -88,6 +88,16 @@ if ($current_config === null) {
 // ── Voglio mostrare TUTTE le voci che l'utente potrebbe vedere (anche se attualmente nascoste) ──
 // Quindi filtro per permessi RBAC ma NON per il flag visible (che è quello che modifichiamo).
 $role_for_filter = ($scope_type === 'role') ? $scope_id : $u_role;
+// v1.9.82 — menu di un ALTRO utente (solo Super Admin): filtro sul ruolo di quell'utente, non su
+// quello dell'amministratore (che vede tutto e renderebbe configurabili voci che l'utente non ha)
+if ($scope_type === 'user' && $scope_id !== $u_id) {
+    try {
+        $st_r = $pdo->prepare("SELECT role_id FROM users WHERE id = ?");
+        $st_r->execute([$scope_id]);
+        $rf = $st_r->fetchColumn();
+        if ($rf !== false) $role_for_filter = (int)$rf;
+    } catch (Throwable $e) {}
+}
 $default_full = MenuManager::defaultMenu();
 
 // Costruisco la lista finale: prendo il current_config (che include flag visible) e
@@ -172,17 +182,12 @@ foreach ($default_full as $base_sec) {
 }
 
 function user_role_can_see(PDO $pdo, string $page, int $check_role, int $session_role): bool {
-    // Se stiamo controllando per il Super Admin (ruolo 1), vede tutto
-    if ($check_role === 1) return true;
-    try {
-        $page_name = $page . '.php';
-        $s = $pdo->prepare("SELECT can_view FROM role_permissions WHERE role_id=? AND (page_name=? OR page_name=?) LIMIT 1");
-        $s->execute([$check_role, $page_name, $page]);
-        $v = $s->fetchColumn();
-        return ($v !== false && (int)$v === 1);
-    } catch (Throwable $e) {
-        return false;
-    }
+    // v1.9.82 — stessa regola del menu (MenuManager::canSee): prima l'elenco ignorava gli override
+    // utente e i gate codificati, e mostrava voci che l'utente non puo' aprire.
+    // Scope utente: override dell'utente configurato; scope ruolo: solo ruolo.
+    global $scope_type, $scope_id;
+    $uid = ($scope_type ?? 'user') === 'user' ? (int)$scope_id : 0;
+    return (new MenuManager($pdo))->canSee($page, $check_role, $uid);
 }
 
 require_once('header.php');

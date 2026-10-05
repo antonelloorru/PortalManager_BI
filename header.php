@@ -66,6 +66,15 @@ $role_label = match($u_role) {
     1 => 'Super Admin', 2 => 'HR Director', 3 => 'Brand Manager',
     4 => 'Team Leader', 5 => 'Recruiter',   6 => 'Dipendente', default => 'Utente'
 };
+// v1.9.82 — nome del ruolo dall'anagrafica ruoli: i ruoli oltre il 6 (Responsabile Commerciale,
+// Direttore IT, Finance...) comparivano come «Utente»
+try {
+    $st_rl = $pdo->prepare("SELECT name FROM roles WHERE id = ?");
+    $st_rl->execute([$u_role]);
+    $rl = $st_rl->fetchColumn();
+    $st_rl->closeCursor();
+    if (is_string($rl) && $rl !== '') $role_label = $rl;
+} catch (Throwable $e) { /* etichetta di ripiego */ }
 
 $notif_count = unread_notifications();
 

@@ -229,6 +229,10 @@ $msg = ''; $reopen_new = false;
 if (!empty($_SESSION['flash_msg']))  { $msg = $_SESSION['flash_msg']; unset($_SESSION['flash_msg']); }
 if (!empty($_SESSION['reopen_new'])) { $reopen_new = true; unset($_SESSION['reopen_new']); }
 
+// v1.9.93 — un solo blocco filtri: il pannello «Filtri di ricerca» (server-side, ogni colonna filtrabile,
+// rispettato da XLSX/CSV). Niente barra automatica di footer.php (ListFilter::renderAuto), che filtrava
+// solo le righe a video, non il conteggio né gli export, e non era sincronizzata con il pannello.
+$GLOBALS['PM_NO_AUTOFILTER'] = true;
 require_once('header.php');
 
 $eur = fn($v) => $v === null || $v === '' ? '—' : number_format((float)$v, 2, ',', '.') . ' €';
@@ -573,7 +577,8 @@ $total_projects = (int)$pdo->query("SELECT COUNT(*) FROM cm_projects")->fetchCol
     <thead><tr>
       <th title="Sigla del commerciale">abbr</th>
       <th title="Commerciale di riferimento">commerciale</th>
-      <th title="Collegamento al gestionale">link</th>
+      <th title="Collegamento al gestionale (SharePoint)">Link SP</th>
+      <th>Scheda Progetto</th>
       <th title="Linea di servizio">tipo</th>
       <th>codice_commessa</th>
       <th title="Denominazione della commessa">commessa</th>
@@ -601,7 +606,6 @@ $total_projects = (int)$pdo->query("SELECT COUNT(*) FROM cm_projects")->fetchCol
       <th style="text-align:right" title="Frequenza di fatturazione in mesi">Fatt. freq. (mesi)</th>
       <th title="Data della prima fattura">Prima fatt.</th>
       <th title="Attività e ore consuntivate sul gestionale">DGB att/ore</th>
-      <th></th>
     </tr></thead>
     <tbody>
     <?php if(!$rows): ?>
@@ -620,6 +624,7 @@ $total_projects = (int)$pdo->query("SELECT COUNT(*) FROM cm_projects")->fetchCol
         <td style="font-weight:600"><?=h($r['abbr'] ?? '')?></td>
         <td><?=h($r['commercial_ref'] ?? '')?></td>
         <td><?php if(!empty($r['external_link'])): ?><a href="<?=h($r['external_link'])?>" target="_blank" rel="noopener" title="Apri sul gestionale"><i class="fa-solid fa-arrow-up-right-from-square"></i></a><?php else: ?>—<?php endif; ?></td>
+        <td><a class="btn btn-sm btn-blue" href="<?=url_safe('project_dashboard', ['id'=>(int)$r['id']])?>" title="Apri la scheda del progetto"><i class="fa-solid fa-chart-line"></i> Scheda Progetto</a></td>
         <td><?=h($r['service_line'] ?? '—')?></td>
         <td style="font-weight:600"><?=h($r['project_code'])?></td>
         <td title="<?=h((string)$r['name'])?>"><?=h(mb_strimwidth((string)$r['name'],0,42,'…'))?></td>
@@ -647,7 +652,6 @@ $total_projects = (int)$pdo->query("SELECT COUNT(*) FROM cm_projects")->fetchCol
         <td style="text-align:right"><?= ($r['billing_freq_months'] ?? '') !== '' ? (int)$r['billing_freq_months'] : '—' ?></td>
         <td><?= $r['first_billing_date'] ? date('d/m/Y', strtotime($r['first_billing_date'])) : '—' ?></td>
         <td style="text-align:right"><?php if(isset($dgb_roll[(int)$r['id']])): $dr=$dgb_roll[(int)$r['id']]; ?><span style="color:#0891b2;font-weight:600" title="Attività DGB / ore consuntivate"><?=number_format((int)$dr['activities'],0,',','.')?> / <?=number_format((float)$dr['actual_hours'],0,',','.')?>h</span><?php else: ?><span style="color:var(--muted)">—</span><?php endif; ?></td>
-        <td><a class="btn btn-sm btn-blue" href="<?=url_safe('project_dashboard', ['id'=>(int)$r['id']])?>" title="Apri la scheda della commessa"><i class="fa-solid fa-chart-line"></i></a></td>
       </tr>
     <?php endforeach; endif; ?>
     </tbody>

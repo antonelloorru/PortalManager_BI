@@ -5,6 +5,7 @@
  */
 require_once('access_control.php');
 require_once('functions.php');
+require_once __DIR__ . '/app/PositionFilter.php';   // v1.9.86 filtri condivisi con gli export
 require_once __DIR__ . '/app/PositionHistory.php';
 require_once __DIR__ . '/app/TemplateVersioning.php';
 
@@ -337,17 +338,12 @@ require_once('header.php');
 $msg = '';
 if (!empty($_SESSION['flash_msg'])) { $msg = $_SESSION['flash_msg']; unset($_SESSION['flash_msg']); }
 
-// Filtri
-$f_status = $_GET['f_st'] ?? '';
-$f_prio   = $_GET['f_pr'] ?? '';
-$f_brand  = (int)($_GET['f_br'] ?? 0);
-
-$where = ["1=1"]; $params = [];
-if ($f_status) { $where[] = "jp.status=?";   $params[] = $f_status; }
-if ($f_prio)   { $where[] = "jp.priority=?"; $params[] = $f_prio; }
-if ($f_brand)  { $where[] = "jp.brand_id=?"; $params[] = $f_brand; }
-if ($u_role === 4) { $where[] = "jp.team_leader_id=?"; $params[] = $u_id; }
-if ($u_role === 5) { $where[] = "jp.status IN('open','paused')"; }
+// Filtri (v1.9.86 — pannello come Relazione di Servizio IT, condiviso con gli export)
+$F      = PositionFilter::parse();
+$params = [];
+$scope  = PositionFilter::scope($u_role, (int)$u_id, 'jp');
+$where  = array_merge(['1=1'], $scope, PositionFilter::where($F, $params, 'jp'));
+$O      = PositionFilter::options($pdo, $scope);
 
 $pos_q = $pdo->prepare(
     "SELECT jp.*, b.name brand_name, etl.first_name tl_fn, etl.last_name tl_ln,
@@ -418,11 +414,7 @@ $prio_style = ['Bassa'=>['#e0f2fe','#0369a1'],'Media'=>['#dbeafe','#1d4ed8'],'Al
     <button onclick="document.getElementById('mTemplates').style.display='flex'" class="btn btn-sm" style="background:#ede9fe;color:#5b21b6;border-color:#c4b5fd"><i class="fa-solid fa-layer-group"></i> Template</button>
     <?php
     // Costruisce la query string con i filtri attivi per passarli agli export
-    $export_qs = http_build_query(array_filter([
-        'f_st' => $_GET['f_st'] ?? null,
-        'f_br' => $_GET['f_br'] ?? null,
-        'f_pr' => $_GET['f_pr'] ?? null,
-    ], fn($v) => $v !== null && $v !== ''));
+    $export_qs = PositionFilter::query($F);
     $qsep = $export_qs ? '?' . $export_qs : '';
     ?>
     <a href="export_positions_xlsx.php<?= $qsep ?>" class="btn btn-sm" style="background:#d1fae5;color:#065f46;border-color:#10b981" title="Esporta in Excel: indice + dettaglio per ogni posizione">
@@ -437,24 +429,97 @@ $prio_style = ['Bassa'=>['#e0f2fe','#0369a1'],'Media'=>['#dbeafe','#1d4ed8'],'Al
 
 <?=$msg?>
 
-<form method="GET" class="filter-bar no-print">
-  <?= route_slug_field() ?>
-  <div class="fg"><label>Stato</label>
-    <select name="f_st"><option value="">Tutti</option>
-    <?php foreach(['draft'=>'Bozze','open'=>'Aperte','paused'=>'In pausa','closed'=>'Chiuse'] as $v=>$l): ?>
-      <option value="<?=$v?>" <?=$f_status===$v?'selected':''?>><?=$l?></option>
-    <?php endforeach; ?>
-    </select>
+<?php
+  // v1.9.86 — pannello filtri uniformato alla Relazione di Servizio IT (multi-select con ricerca)
+  $attivi = PositionFilter::activeCount($F);
+  $ms = function (string $k, string $lbl) use ($O, $F): string {
+      if (empty($O[$k])) return '';                       // nessun valore disponibile: campo nascosto
+      $sel = array_map('strval', $F[$k]);
+      $h = '<div class="form-group"><label>' . h($lbl) . ' <span class="pm-multi">(multipla)</span></label>'
+         . '<select name="' . $k . '[]" multiple size="3" class="pm-ms" data-placeholder="Tutti">';
+      foreach ($O[$k] ?? [] as $v => $l) {
+          $h .= '<option value="' . h((string)$v) . '"' . (in_array((string)$v, $sel, true) ? ' selected' : '') . '>' . h((string)$l) . '</option>';
+      }
+      return $h . '</select></div>';
+  };
+  $sn = function (string $k, string $lbl, string $si, string $no) use ($F): string {
+      return '<div class="form-group"><label>' . h($lbl) . '</label><select name="' . $k . '" class="pm-ms">'
+           . '<option value="">— tutte —</option>'
+           . '<option value="1"' . ($F[$k] === '1' ? ' selected' : '') . '>' . h($si) . '</option>'
+           . '<option value="0"' . ($F[$k] === '0' ? ' selected' : '') . '>' . h($no) . '</option></select></div>';
+  };
+  $dt = fn(string $k, string $lbl): string => '<div class="form-group"><label>' . h($lbl) . '</label><input type="date" name="' . $k . '" value="' . h((string)$F[$k]) . '"></div>';
+?>
+<details class="pm-panel no-print" <?= $attivi > 0 ? 'open' : '' ?>>
+  <summary>
+    <i class="fa-solid fa-chevron-right pm-chev"></i> Filtri
+    <?php if ($attivi > 0): ?><span class="pm-badge"><?=$attivi?></span><?php endif; ?>
+    <span class="pm-hint"><?=count($pos_list)?> posizioni · <?=array_sum(array_map(fn($p) => (int)$p['pip'], $pos_list))?> candidature</span>
+  </summary>
+  <div class="pm-panel-body">
+    <form method="get">
+      <?= function_exists('route_slug_field') ? route_slug_field() : (!empty($_GET['r']) ? '<input type="hidden" name="r" value="' . h((string)$_GET['r']) . '">' : '') ?>
+
+      <div class="pm-group">
+        <h4>Ricerca e date</h4>
+        <div class="pm-grid-auto">
+          <div class="form-group"><label>Cerca ovunque</label>
+            <input type="text" name="q" value="<?=h($F['q'])?>" placeholder="titolo, reparto, sede, skill, cliente, codice LinkedIn"></div>
+          <?= $dt('op_from', 'Aperta dal') ?>
+          <?= $dt('op_to', 'Aperta al') ?>
+          <?= $dt('tg_from', 'Target dal') ?>
+          <?= $dt('tg_to', 'Target al') ?>
+          <?= $dt('cl_from', 'Chiusa dal') ?>
+          <?= $dt('cl_to', 'Chiusa al') ?>
+          <div class="form-group"><label>Aperta da almeno</label>
+            <select name="age_min" class="pm-ms"><option value="">— qualsiasi —</option>
+              <?php foreach ([15, 30, 60, 90, 180] as $g): ?>
+                <option value="<?=$g?>" <?=$F['age_min'] === $g ? 'selected' : ''?>><?=$g?> giorni</option>
+              <?php endforeach; ?></select></div>
+        </div>
+      </div>
+
+      <div class="pm-group">
+        <h4>Posizione</h4>
+        <div class="pm-grid-auto">
+          <?= $ms('f_st', 'Stato') ?>
+          <?= $ms('f_pr', 'Priorità') ?>
+          <?= $ms('f_br', 'Brand') ?>
+          <?= $ms('f_dep', 'Reparto') ?>
+          <?= $ms('f_loc', 'Sede di lavoro') ?>
+          <?= $ms('f_ct', 'Tipo contratto') ?>
+          <?= $ms('f_rem', 'Modalità di lavoro') ?>
+          <?= $ms('f_cli', 'Cliente') ?>
+        </div>
+      </div>
+
+      <div class="pm-group">
+        <h4>Responsabili</h4>
+        <div class="pm-grid-auto">
+          <?php if ($u_role !== 4): ?><?= $ms('f_tl', 'Team Leader') ?><?php endif; ?>
+          <?= $ms('f_rq', 'Richiesta da') ?>
+        </div>
+      </div>
+
+      <div class="pm-group">
+        <h4>Pipeline ed evidenze</h4>
+        <div class="pm-grid-auto">
+          <?= $ms('f_stage', 'Candidati in fase') ?>
+          <?= $sn('f_cand', 'Candidature', 'Con candidati', 'Senza candidati') ?>
+          <?= $sn('f_fill', 'Copertura', 'Completata (assunti ≥ attesi)', 'Da coprire') ?>
+          <?= $sn('f_late', 'Data target', 'Superata (posizione attiva)', 'Nei tempi / non impostata') ?>
+          <?= $sn('f_li', 'Codice LinkedIn', 'Presente', 'Mancante') ?>
+          <?= $sn('f_ral', 'RAL', 'Indicata', 'Non indicata') ?>
+        </div>
+      </div>
+
+      <div class="pm-actions">
+        <button class="btn btn-primary btn-sm"><i class="fa-solid fa-filter"></i> Applica</button>
+        <a class="btn btn-sm" href="<?=url_safe('recruiting_posizioni')?>">Azzera</a>
+      </div>
+    </form>
   </div>
-  <div class="fg"><label>Priorità</label><select name="f_pr"><option value="">Tutte</option>
-    <?php foreach(['Urgente','Alta','Media','Bassa'] as $p): ?><option value="<?=$p?>" <?=$f_prio===$p?'selected':''?>><?=$p?></option><?php endforeach; ?>
-  </select></div>
-  <div class="fg"><label>Brand</label><select name="f_br"><option value="0">Tutti</option>
-    <?php foreach($brands as $b): ?><option value="<?=$b['id']?>" <?=$f_brand==$b['id']?'selected':''?>><?=h($b['name'])?></option><?php endforeach; ?>
-  </select></div>
-  <button type="submit" class="btn btn-primary">Filtra</button>
-  <a href="recruiting_posizioni.php" class="btn">Reset</a>
-</form>
+</details>
 
 <?php if(empty($pos_list)): ?>
 <div style="text-align:center;padding:60px;background:#fff;border-radius:12px;border:1px dashed var(--border);color:var(--muted)">

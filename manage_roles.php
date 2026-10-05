@@ -26,6 +26,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     // Integrità referenziale: inizializza mappatura in role_permissions
                     $pdo->prepare("INSERT IGNORE INTO role_permissions (role_id, page_name, can_view, can_create, can_edit, can_delete, can_export) VALUES (?, 'menu_customizer.php', 0, 0, 0, 0, 0)")
                         ->execute([$newRoleId]);
+                    // v1.9.83 — ruolo modello: copia la matrice di un ruolo esistente (facoltativo)
+                    $tpl = (int)($_POST['template_role_id'] ?? 0);
+                    if ($tpl > 1) {
+                        require_once __DIR__ . '/app/RbacSync.php';
+                        $nCopy = RbacSync::cloneRole($pdo, $tpl, $newRoleId);
+                        write_log('Roles', 'info', "Ruolo $name: permessi copiati dal ruolo #$tpl ($nCopy righe)", $u_id);
+                    }
+                    $rbacAfter = true;
                 }
                 $msg = "<div class='alert alert-success'>Ruolo '{$name}' creato.</div>";
                 write_log('Roles','success',"Nuovo ruolo: $name",$u_id);
@@ -51,8 +59,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $pdo->prepare("DELETE FROM role_permissions WHERE role_id=?")->execute([$rid]);
             $pdo->prepare("DELETE FROM roles WHERE id=?")->execute([$rid]);
             $msg = "<div class='alert alert-success'>Ruolo eliminato.</div>";
+            $rbacAfter = true;
         }
         $pdo->commit();
+        // v1.9.83 — matrice esplicita per il nuovo ruolo (tutto negato dove non copiato) e pulizia orfani
+        if (!empty($rbacAfter)) {
+            require_once __DIR__ . '/app/RbacSync.php';
+            RbacSync::run($pdo, true, 'ruoli', $u_id);
+        }
     } catch (Exception $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
         $msg = "<div class='alert alert-danger'>" . h($e->getMessage()) . "</div>";
@@ -102,6 +116,14 @@ $roles = $pdo->query(
       <input type="hidden" name="action" value="add">
       <div class="form-group"><label>Nome ruolo *</label><input type="text" name="role_name" required placeholder="Es. Tecnico Esterno"></div>
       <div class="form-group"><label>Descrizione</label><textarea name="description" rows="2" placeholder="Breve descrizione..."></textarea></div>
+      <?php // v1.9.83 — ruolo modello ?>
+      <div class="form-group"><label>Permessi iniziali</label>
+        <select name="template_role_id">
+          <option value="0">Nessuno — tutto negato, da assegnare in Permessi</option>
+          <?php foreach ($pdo->query("SELECT id, name FROM roles WHERE id > 1 ORDER BY name")->fetchAll() as $tr): ?>
+            <option value="<?= (int)$tr['id'] ?>">Copia da «<?= h($tr['name']) ?>»</option>
+          <?php endforeach; ?>
+        </select></div>
       <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:11px"><i class="fa-solid fa-plus"></i> Crea ruolo</button>
     </form>
     <div style="margin-top:12px;font-size:11px;color:#0369a1"><i class="fa-solid fa-circle-info"></i> Dopo la creazione assegna le pagine da Gestione Permessi.</div>
