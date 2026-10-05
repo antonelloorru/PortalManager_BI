@@ -1,0 +1,824 @@
+From 6045ef88194c3734a60d2f78de2e0926d932aab1 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 28 Sep 2026 16:21:11 +0200
+Subject: [PATCH] =?UTF-8?q?v1.9.81=20=E2=80=94=20Reimpostazione=20password?=
+ =?UTF-8?q?=20self-service=20(link=20monouso=20via=20email)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RQUHXksxjPNMEAjkNMibLW
+---
+ VERSION                                |   2 +-
+ access_control.php                     |   2 +-
+ app/PasswordReset.php                  | 232 +++++++++++++++++++++++++
+ app/Router.php                         |   2 +-
+ app/Session.php                        |  17 +-
+ docs/CHANGELOG_v1_9_81.md              |  54 ++++++
+ docs/DEPLOYMENT_v1_9_81.md             |  10 ++
+ docs/MANUALE_PASSWORD_RESET_v1_9_81.md |  19 ++
+ docs/RELEASE_CHECKLIST_v1_9_81.md      |   8 +
+ docs/TECHNICAL_DESIGN_v1_9_81.md       |  27 +++
+ login.php                              |   8 +
+ password_reset.php                     | 219 +++++++++++++++++++++++
+ r.php                                  |   2 +-
+ sql/migration_v1_9_81.sql              |  47 +++++
+ 14 files changed, 642 insertions(+), 7 deletions(-)
+ create mode 100644 app/PasswordReset.php
+ create mode 100644 docs/CHANGELOG_v1_9_81.md
+ create mode 100644 docs/DEPLOYMENT_v1_9_81.md
+ create mode 100644 docs/MANUALE_PASSWORD_RESET_v1_9_81.md
+ create mode 100644 docs/RELEASE_CHECKLIST_v1_9_81.md
+ create mode 100644 docs/TECHNICAL_DESIGN_v1_9_81.md
+ create mode 100644 password_reset.php
+ create mode 100644 sql/migration_v1_9_81.sql
+
+diff --git a/VERSION b/VERSION
+index 3eb6bc1..75311ea 100644
+--- a/VERSION
++++ b/VERSION
+@@ -1 +1 @@
+-1.9.80
++1.9.81
+diff --git a/access_control.php b/access_control.php
+index a4c6455..52d6845 100644
+--- a/access_control.php
++++ b/access_control.php
+@@ -64,7 +64,7 @@ $current_key    = str_ends_with($current_page, '.php')
+                 ? substr($current_page, 0, -4)
+                 : $current_page;
+ 
+-$public_pages   = ['login.php', 'unauthorized.php', 'install.php', 'r.php', 'auth_microsoft.php'];
++$public_pages   = ['login.php', 'unauthorized.php', 'install.php', 'r.php', 'auth_microsoft.php', 'password_reset.php'];   // v1.9.81
+ $always_allowed = [
+     'index.php', 'user_profile.php', 'notifications.php', 'logout.php',
+     'api_filters.php', 'api_cert_search.php', 'api_cert_history.php', 'api_contract_docs.php', 'api_cert_codes.php',
+diff --git a/app/PasswordReset.php b/app/PasswordReset.php
+new file mode 100644
+index 0000000..ffbf186
+--- /dev/null
++++ b/app/PasswordReset.php
+@@ -0,0 +1,232 @@
++<?php
++/**
++ * PortalManager — app/PasswordReset.php (v1.9.81)
++ *
++ * Reimpostazione password self-service: richiesta via email → link monouso → nuova password.
++ *
++ * Sicurezza:
++ *  - token 256 bit (random_bytes), inviato solo per email; a DB SOLO l'hash SHA-256
++ *    (`password_resets.token`): una copia del database non consente di usare i link;
++ *  - monouso, scadenza configurabile (`pwd_reset_ttl_min`, default 60), una nuova
++ *    richiesta invalida le precedenti; invalidati tutti a reimpostazione avvenuta;
++ *  - risposta identica per email esistenti e non (nessuna enumerazione degli utenti),
++ *    con tempo di risposta uniformato;
++ *  - rate limit per IP e per email sulla richiesta, per IP sulla verifica del token;
++ *  - link costruito da `app_public_url` (impostazione) e non dall'header Host della
++ *    richiesta: impedisce l'avvelenamento del link (host header injection);
++ *  - policy password (`pwd_min_length`, default 12; 3 classi di caratteri su 4; niente
++ *    parti dell'email; diversa dall'attuale; max 72 byte, limite di bcrypt);
++ *  - a reimpostazione avvenuta `users.password_changed_at` chiude le altre sessioni
++ *    (Session::syncRole) e l'utente riceve una notifica; la 2FA resta richiesta al login.
++ */
++
++declare(strict_types=1);
++
++final class PasswordReset
++{
++    public const MAX_BYTES = 72;
++
++    /* ── impostazioni ─────────────────────────────────────────────────── */
++
++    public static function setting(PDO $pdo, string $key, string $default = ''): string
++    {
++        try {
++            $st = $pdo->prepare("SELECT `setting_value` FROM `app_settings` WHERE `setting_key` = ?");
++            $st->execute([$key]);
++            $v = $st->fetchColumn();
++            $st->closeCursor();
++            return ($v === false || $v === null || $v === '') ? $default : (string)$v;
++        } catch (Throwable $e) { return $default; }
++    }
++
++    public static function enabled(PDO $pdo): bool { return self::setting($pdo, 'pwd_reset_enabled', '1') === '1'; }
++
++    public static function ttlMinutes(PDO $pdo): int
++    {
++        return max(10, min(1440, (int)self::setting($pdo, 'pwd_reset_ttl_min', '60')));
++    }
++
++    public static function minLength(PDO $pdo): int
++    {
++        return max(8, min(64, (int)self::setting($pdo, 'pwd_min_length', '12')));
++    }
++
++    /**
++     * URL assoluto del portale. `app_public_url` se impostato; altrimenti schema +
++     * SERVER_NAME (nome configurato in Apache, non l'header Host del client) + base.
++     */
++    public static function baseUrl(PDO $pdo): string
++    {
++        $u = rtrim(self::setting($pdo, 'app_public_url', ''), '/');
++        if ($u !== '' && preg_match('~^https?://[^\s/?#]+(/[^\s?#]*)?$~i', $u)) return $u;
++        $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || (int)($_SERVER['SERVER_PORT'] ?? 0) === 443;
++        $host  = preg_replace('~[^A-Za-z0-9.\-]~', '', (string)($_SERVER['SERVER_NAME'] ?? 'localhost'));
++        $port  = (int)($_SERVER['SERVER_PORT'] ?? 0);
++        $hp    = $host . (($port && $port !== 80 && $port !== 443) ? ':' . $port : '');
++        return ($https ? 'https' : 'http') . '://' . $hp . (class_exists('Router') ? Router::base() : '');
++    }
++
++    /* ── richiesta ────────────────────────────────────────────────────── */
++
++    /**
++     * Crea il token e invia l'email, se l'utente esiste ed è attivo.
++     * Il chiamante mostra SEMPRE lo stesso messaggio, qualunque sia l'esito.
++     * @return string esito interno per il log: sent | unknown | inactive | mail_failed | error
++     */
++    public static function request(PDO $pdo, string $email, string $ip, string $ua): string
++    {
++        $email = mb_strtolower(trim($email));
++        try {
++            // nome: dall'anagrafica (display_name e' valorizzato solo per gli account di servizio)
++            $st = $pdo->prepare("SELECT u.id, u.email, COALESCE(NULLIF(TRIM(CONCAT_WS(' ', e.first_name, e.last_name)), ''), u.display_name) AS display_name, u.status
++                                   FROM users u LEFT JOIN employees e ON e.id = u.employee_id
++                                  WHERE LOWER(u.email) = ? LIMIT 1");
++            $st->execute([$email]);
++            $u = $st->fetch(PDO::FETCH_ASSOC);
++            $st->closeCursor();
++            if (!$u) return 'unknown';
++            if (($u['status'] ?? '') !== 'active') return 'inactive';
++
++            $token = bin2hex(random_bytes(32));
++            $ttl   = self::ttlMinutes($pdo);
++
++            $pdo->beginTransaction();
++            // una sola richiesta valida per utente: le precedenti non servono piu'
++            $pdo->prepare("UPDATE password_resets SET used = 1, used_at = NOW()
++                            WHERE used = 0 AND (user_id = ? OR email = ?)")->execute([(int)$u['id'], $u['email']]);
++            $pdo->prepare("INSERT INTO password_resets (email, user_id, token, expires_at, used, request_ip, user_agent)
++                           VALUES (?, ?, ?, DATE_ADD(NOW(), INTERVAL ? MINUTE), 0, ?, ?)")
++                ->execute([$u['email'], (int)$u['id'], hash('sha256', $token), $ttl,
++                           mb_substr($ip, 0, 45), mb_substr($ua, 0, 255)]);
++            // pulizia: richieste chiuse o scadute da oltre 30 giorni
++            $pdo->exec("DELETE FROM password_resets WHERE created_at < DATE_SUB(NOW(), INTERVAL 30 DAY)");
++            $pdo->commit();
++
++            $link = self::baseUrl($pdo) . '/' . ltrim(Router::url('password_reset', ['t' => $token]), '/');
++            $ok = self::sendMail($pdo, (string)$u['email'], (string)($u['display_name'] ?: $u['email']), $link, $ttl, $ip);
++            return $ok ? 'sent' : 'mail_failed';
++        } catch (Throwable $e) {
++            if ($pdo->inTransaction()) { try { $pdo->rollBack(); } catch (Throwable $i) {} }
++            error_log('[PasswordReset] ' . $e->getMessage());
++            return 'error';
++        }
++    }
++
++    /* ── verifica e reimpostazione ────────────────────────────────────── */
++
++    /** Richiesta valida per il token (non usata, non scaduta), altrimenti null. */
++    public static function find(PDO $pdo, string $token): ?array
++    {
++        if (!preg_match('/^[a-f0-9]{64}$/', $token)) return null;
++        try {
++            $st = $pdo->prepare(
++                "SELECT pr.id, pr.user_id, u.email, u.password_hash, u.status,
++                        COALESCE(NULLIF(TRIM(CONCAT_WS(' ', e.first_name, e.last_name)), ''), u.display_name) AS display_name
++                   FROM password_resets pr JOIN users u ON u.id = pr.user_id
++                   LEFT JOIN employees e ON e.id = u.employee_id
++                  WHERE pr.token = ? AND pr.used = 0 AND pr.expires_at > NOW() LIMIT 1");
++            $st->execute([hash('sha256', $token)]);
++            $r = $st->fetch(PDO::FETCH_ASSOC);
++            $st->closeCursor();
++            return ($r && $r['status'] === 'active') ? $r : null;
++        } catch (Throwable $e) { return null; }
++    }
++
++    /** Errori di policy (vuoto = password valida). */
++    public static function validate(PDO $pdo, string $pwd, string $confirm, string $email, string $currentHash): array
++    {
++        $err = [];
++        $min = self::minLength($pdo);
++        if ($pwd !== $confirm)               $err[] = 'Le due password non coincidono.';
++        if (mb_strlen($pwd) < $min)          $err[] = "La password deve contenere almeno $min caratteri.";
++        if (strlen($pwd) > self::MAX_BYTES)  $err[] = 'La password non può superare ' . self::MAX_BYTES . ' byte.';
++        $classi = (int)preg_match('/[a-z]/', $pwd) + (int)preg_match('/[A-Z]/', $pwd)
++                + (int)preg_match('/\d/', $pwd) + (int)preg_match('/[^A-Za-z0-9]/', $pwd);
++        if ($classi < 3)                     $err[] = 'Usa almeno tre tipi di caratteri fra minuscole, maiuscole, numeri e simboli.';
++        $local = mb_strtolower((string)strstr($email, '@', true));
++        if (mb_strlen($local) >= 4 && str_contains(mb_strtolower($pwd), $local)) $err[] = 'La password non può contenere il nome dell\'account.';
++        if ($currentHash !== '' && password_verify($pwd, $currentHash)) $err[] = 'La nuova password deve essere diversa da quella attuale.';
++        return $err;
++    }
++
++    /** Aggiorna la password e chiude tutte le richieste dell'utente. */
++    public static function complete(PDO $pdo, array $req, string $pwd, string $ip): bool
++    {
++        try {
++            $hash = class_exists('Security') ? Security::hashPassword($pwd) : password_hash($pwd, PASSWORD_BCRYPT, ['cost' => 12]);
++            $pdo->beginTransaction();
++            // il token si consuma per primo: due invii concorrenti non possono usarlo entrambi
++            $st = $pdo->prepare("UPDATE password_resets SET used = 1, used_at = NOW() WHERE id = ? AND used = 0 AND expires_at > NOW()");
++            $st->execute([(int)$req['id']]);
++            if ($st->rowCount() !== 1) { $pdo->rollBack(); return false; }
++            // ora di PHP, non del DB: Session::syncRole la confronta con l'avvio della sessione (time())
++            $pdo->prepare("UPDATE users SET password_hash = ?, password_changed_at = ? WHERE id = ? AND status = 'active'")
++                ->execute([$hash, date('Y-m-d H:i:s'), (int)$req['user_id']]);
++            $pdo->prepare("UPDATE password_resets SET used = 1, used_at = NOW() WHERE user_id = ? AND used = 0")
++                ->execute([(int)$req['user_id']]);
++            $pdo->commit();
++            self::notifyChanged($pdo, (string)$req['email'], (string)($req['display_name'] ?: $req['email']), $ip);
++            return true;
++        } catch (Throwable $e) {
++            if ($pdo->inTransaction()) { try { $pdo->rollBack(); } catch (Throwable $i) {} }
++            error_log('[PasswordReset] ' . $e->getMessage());
++            return false;
++        }
++    }
++
++    /* ── email ────────────────────────────────────────────────────────── */
++
++    private static function appName(PDO $pdo): string { return self::setting($pdo, 'app_name', 'PortalManager'); }
++
++    private static function mail(PDO $pdo, string $to, string $subject, string $text, string $html): bool
++    {
++        // SmtpMailer.php esiste in root e in app/ con le stesse dichiarazioni: se ne carica uno solo
++        if (!function_exists('send_certv_email') && !class_exists('SmtpMailer', false)) {
++            foreach ([APP_BASE . '/SmtpMailer.php', APP_BASE . '/app/SmtpMailer.php'] as $f) {
++                if (is_file($f)) { require_once $f; break; }
++            }
++        }
++        if (!function_exists('send_certv_email')) return false;
++        return send_certv_email($to, $subject, $text, $html, [], 'password_reset');
++    }
++
++    private static function sendMail(PDO $pdo, string $to, string $name, string $link, int $ttl, string $ip): bool
++    {
++        $app = self::appName($pdo);
++        $e = fn(string $s) => htmlspecialchars($s, ENT_QUOTES, 'UTF-8');
++        $text = "Ciao $name,\n\nè stata richiesta la reimpostazione della password del tuo account $app.\n\n"
++              . "Apri questo link per scegliere una nuova password (valido $ttl minuti, utilizzabile una sola volta):\n$link\n\n"
++              . "Se non sei stato tu, ignora questa email: la password attuale resta valida.\n"
++              . "Richiesta da IP $ip il " . date('d/m/Y H:i') . ".\n\n-- \n$app";
++        $html = '<!DOCTYPE html><html><body style="font-family:Arial,sans-serif;background:#f1f5f9;padding:32px;color:#1e293b">'
++              . '<div style="max-width:520px;margin:0 auto;background:#fff;padding:32px;border-radius:12px">'
++              . '<h2 style="margin:0 0 14px;color:#0ea5e9">Reimpostazione password</h2>'
++              . '<p>Ciao <strong>' . $e($name) . '</strong>,</p>'
++              . '<p>è stata richiesta la reimpostazione della password del tuo account <strong>' . $e($app) . '</strong>.</p>'
++              . '<p style="text-align:center;margin:26px 0"><a href="' . $e($link) . '" style="background:#0ea5e9;color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:700">Scegli una nuova password</a></p>'
++              . '<p style="font-size:13px;color:#64748b">Il link è valido <strong>' . $ttl . ' minuti</strong> e si può usare una sola volta. '
++              . 'Se il pulsante non funziona copia questo indirizzo nel browser:<br><span style="word-break:break-all">' . $e($link) . '</span></p>'
++              . '<p style="font-size:13px;color:#64748b">Se non sei stato tu, ignora questa email: la password attuale resta valida.</p>'
++              . '<hr style="border:none;border-top:1px solid #e2e8f0;margin:22px 0">'
++              . '<p style="font-size:11px;color:#94a3b8;text-align:center">Richiesta da IP ' . $e($ip) . ' il ' . date('d/m/Y H:i') . ' · ' . $e($app) . ' · non rispondere</p>'
++              . '</div></body></html>';
++        return self::mail($pdo, $to, "$app — Reimpostazione password", $text, $html);
++    }
++
++    private static function notifyChanged(PDO $pdo, string $to, string $name, string $ip): void
++    {
++        $app = self::appName($pdo);
++        $e = fn(string $s) => htmlspecialchars($s, ENT_QUOTES, 'UTF-8');
++        $quando = date('d/m/Y H:i');
++        $text = "Ciao $name,\n\nla password del tuo account $app è stata modificata il $quando (IP $ip).\n"
++              . "Le altre sessioni aperte sono state chiuse.\n\n"
++              . "Se non sei stato tu, contatta subito l'amministratore.\n\n-- \n$app";
++        $html = '<!DOCTYPE html><html><body style="font-family:Arial,sans-serif;background:#f1f5f9;padding:32px;color:#1e293b">'
++              . '<div style="max-width:520px;margin:0 auto;background:#fff;padding:32px;border-radius:12px">'
++              . '<h2 style="margin:0 0 14px;color:#16a34a">Password modificata</h2>'
++              . '<p>Ciao <strong>' . $e($name) . '</strong>,</p><p>la password del tuo account <strong>' . $e($app) . '</strong> è stata modificata il '
++              . $e($quando) . ' (IP ' . $e($ip) . '). Le altre sessioni aperte sono state chiuse.</p>'
++              . '<p style="color:#b91c1c"><strong>Se non sei stato tu, contatta subito l\'amministratore.</strong></p></div></body></html>';
++        self::mail($pdo, $to, "$app — Password modificata", $text, $html);
++    }
++}
+diff --git a/app/Router.php b/app/Router.php
+index 3c69cd3..0153782 100644
+--- a/app/Router.php
++++ b/app/Router.php
+@@ -23,7 +23,7 @@ final class Router
+      */
+     public const PAGES = [
+         // Core
+-        'index', 'login', 'logout', 'unauthorized', 'auth_microsoft', 'user_profile', 'employee_profile', 'employee_cv', 'device_manager', 'device_export', 'device_print', 'device_import', 'notifications',
++        'index', 'login', 'logout', 'unauthorized', 'auth_microsoft', 'password_reset', 'user_profile', 'employee_profile', 'employee_cv', 'device_manager', 'device_export', 'device_print', 'device_import', 'notifications',
+ 
+         // 2FA (v4.1)
+         '2fa_verify', '2fa_settings',
+diff --git a/app/Session.php b/app/Session.php
+index 74719dc..59911bf 100644
+--- a/app/Session.php
++++ b/app/Session.php
+@@ -103,7 +103,7 @@ final class Session
+     {
+         $now = time();
+         $currentPage = basename($_SERVER['PHP_SELF'] ?? '');
+-        $isLogin = in_array($currentPage, ['login.php', 'install.php', 'unauthorized.php'], true);
++        $isLogin = in_array($currentPage, ['login.php', 'install.php', 'unauthorized.php', 'password_reset.php'], true);
+ 
+         // Prima volta che vediamo questa sessione: inizializza i marker
+         if (!isset($_SESSION['_sec'])) {
+@@ -231,8 +231,14 @@ final class Session
+         if (empty($_SESSION['user_id'])) return;
+ 
+         try {
+-            $st = $pdo->prepare('SELECT role_id, status FROM users WHERE id = ?');
+-            $st->execute([(int)$_SESSION['user_id']]);
++            // v1.9.81 — password_changed_at: una password reimpostata chiude le sessioni aperte prima
++            try {
++                $st = $pdo->prepare('SELECT role_id, status, password_changed_at FROM users WHERE id = ?');
++                $st->execute([(int)$_SESSION['user_id']]);
++            } catch (\Throwable $e) {   // colonna assente (migration v1.9.81 non ancora eseguita)
++                $st = $pdo->prepare('SELECT role_id, status, NULL AS password_changed_at FROM users WHERE id = ?');
++                $st->execute([(int)$_SESSION['user_id']]);
++            }
+             $row = $st->fetch(\PDO::FETCH_ASSOC);
+             $st->closeCursor();
+         } catch (\Throwable $e) {
+@@ -243,6 +249,11 @@ final class Session
+         if (($row['status'] ?? 'active') !== 'active') {           // utente disattivato
+             self::destroy(); return;
+         }
++        $changed = !empty($row['password_changed_at']) ? (int)strtotime((string)$row['password_changed_at']) : 0;
++        if ($changed > 0 && $changed > (int)($_SESSION['_sec']['created'] ?? 0)) {   // sessione anteriore al cambio password
++            self::destroy();
++            self::redirectLogin('pwchanged');
++        }
+         $_SESSION['role_id'] = (int)$row['role_id'];               // allinea al DB
+     }
+ 
+diff --git a/docs/CHANGELOG_v1_9_81.md b/docs/CHANGELOG_v1_9_81.md
+new file mode 100644
+index 0000000..9c7227c
+--- /dev/null
++++ b/docs/CHANGELOG_v1_9_81.md
+@@ -0,0 +1,54 @@
++# PortalManager v1.9.81 — Reimpostazione password (link via email)
++
++## Funzionalità
++- Login: link **«Password dimenticata?»** (visibile se `pwd_reset_enabled` = 1).
++- Nuova pagina pubblica `password_reset.php` (stile del login), tre passi:
++  1. **Richiesta** — email → messaggio sempre identico; se l'account esiste ed è attivo parte un'email con link.
++  2. **Link** — `?t=<token>` verificato, spostato in sessione e rimosso dall'URL (redirect).
++  3. **Nuova password** — policy con indicatore di robustezza, conferma, salvataggio.
++- Email di conferma «Password modificata» con data e IP.
++- Dopo la reimpostazione le **altre sessioni aperte vengono chiuse** (login con messaggio dedicato);
++  la **2FA resta richiesta** al login successivo.
++
++## Sicurezza
++| Misura | Dettaglio |
++|---|---|
++| Token | 256 bit (`random_bytes(32)`), solo nell'email; a DB solo l'**hash SHA-256** |
++| Validità | monouso, scadenza `pwd_reset_ttl_min` (default 60′), una nuova richiesta invalida le precedenti, tutte invalidate al cambio |
++| Enumerazione utenti | stessa risposta e tempo di risposta uniformato (1,5–2 s) per email esistenti e non |
++| Rate limit | richiesta: 10/h per IP (blocco 1 h), 3/h per email (silenzioso); verifica link: 20/15′ per IP |
++| Host header injection | link da `app_public_url`; in mancanza schema + `SERVER_NAME` configurato in Apache + base, mai `HTTP_HOST` |
++| Esposizione del token | `Referrer-Policy: no-referrer`, `Cache-Control: no-store`, token tolto dall'URL dopo la verifica |
++| Concorrenza | il token si consuma con `UPDATE … WHERE used = 0` in transazione: un solo invio vale |
++| Policy | ≥ `pwd_min_length` (default 12), 3 classi su 4, niente nome account, diversa dall'attuale, ≤ 72 byte |
++| Hash | `Security::hashPassword` (Argon2id, fallback bcrypt cost 12) |
++| CSRF | su entrambi i form |
++| Audit | `event_log` categoria Auth: richieste (esito, hash email troncato), link non validi, reimpostazioni, rate limit |
++
++## Integrazioni
++- `r.php`, `access_control.php`, `app/Router.php`: `password_reset` pagina pubblica.
++- `app/Session.php`: `password_reset.php` trattata come il login; `syncRole()` chiude le sessioni avviate prima di
++  `users.password_changed_at` (compatibile se la colonna non esiste ancora).
++- Email tramite `send_certv_email()` (SMTP del portale, registrate nel log email).
++
++## Revisione sul repository (antonelloorru/PortalManager_BI @ e001fcc, v1.9.80)
++- Pacchetto ricostruito sui file del repository: `login.php`, `r.php`, `access_control.php`, `app/Router.php`
++  coincidevano; **`app/Session.php` del repository è più recente** (cookie per istanza, path della sottocartella,
++  SameSite configurabile, controllo `instance_hash`): la prima consegna v1.9.81 lo avrebbe riportato alla v1.9.51.
++  Ora il fix è applicato alla versione del repository (+14/−3 righe, terminatori CRLF conservati).
++- Nome nel testo delle email da `employees` (nome e cognome): `users.display_name` è valorizzato solo per gli
++  account di servizio (11 utenti su 12 nel dump v1.9.80 lo hanno vuoto).
++- Test ripetuti sul dump `Dump/Dump_19.80_DB.zip`.
++
++## Nota
++`app/EmailOtp.php` (2FA via email) chiama `SmtpMailer::send()` con argomenti che il metodo non accetta: l'invio
++del codice 2FA via email non funziona. Non modificato in questa release (fuori scope), segnalato per la prossima.
++
++## QA (dump 18/09, flusso completo in PHP CLI)
++- Richiesta email esistente/inesistente: stesso messaggio; token 64 hex, a DB solo l'hash; link assoluto corretto.
++- Link errato, scaduto, già usato; riuso della sessione dopo il cambio: rifiutati.
++- Policy: corta, diverse, 2 classi, contiene l'account → errori; password valida → hash Argon2id, `password_verify` ok.
++- Email «Reimpostazione» e «Password modificata» inviate; una sola richiesta aperta per utente.
++- Rate limit email (3ª richiesta silenziosa) e IP (11ª bloccata); CSRF mancante → rifiutato.
++- Sessione avviata prima del cambio → chiusa; successiva → attiva.
++- Migration RUN1/RUN2 err=0; `php -l` su tutti i file.
+diff --git a/docs/DEPLOYMENT_v1_9_81.md b/docs/DEPLOYMENT_v1_9_81.md
+new file mode 100644
+index 0000000..854b964
+--- /dev/null
++++ b/docs/DEPLOYMENT_v1_9_81.md
+@@ -0,0 +1,10 @@
++# Deployment — v1.9.81 (richiede v1.9.80)
++1. Copiare in root: `password_reset.php` (nuovo), `login.php`, `r.php`, `access_control.php`.
++2. Copiare in `app/`: `PasswordReset.php` (nuovo), `Router.php`, `Session.php`.
++3. Eseguire `sql/migration_v1_9_81.sql` (idempotente).
++4. Impostare **`app_public_url`** con l'indirizzo pubblico del portale, es. `https://portal.azienda.it/demo_portalmanager`
++   (SQL Runner: `UPDATE app_settings SET setting_value='https://…' WHERE setting_key='app_public_url'`).
++   Se vuoto, il link usa `SERVER_NAME` di Apache: verificare che sia il nome pubblico.
++5. Verificare che l'SMTP sia attivo (Impostazioni → SMTP → invio di prova).
++6. Verifica: Login → «Password dimenticata?» → email → link → nuova password → accesso.
++7. Per disattivare: `pwd_reset_enabled = 0` (il link sparisce dal login, la pagina mostra un avviso).
+diff --git a/docs/MANUALE_PASSWORD_RESET_v1_9_81.md b/docs/MANUALE_PASSWORD_RESET_v1_9_81.md
+new file mode 100644
+index 0000000..ac0c477
+--- /dev/null
++++ b/docs/MANUALE_PASSWORD_RESET_v1_9_81.md
+@@ -0,0 +1,19 @@
++# Manuale — Reimpostazione password
++
++## Utente finale
++1. Nella pagina di accesso scegli **«Password dimenticata?»**.
++2. Inserisci l'email con cui accedi e premi **Invia il link**. Il messaggio è lo stesso anche se l'email non è registrata.
++3. Apri l'email «Reimpostazione password» (controlla lo spam) e premi **Scegli una nuova password**.
++   Il link vale 60 minuti e una sola volta; una nuova richiesta annulla la precedente.
++4. Scegli la password: almeno 12 caratteri, tre tipi fra minuscole, maiuscole, numeri e simboli, senza il tuo nome
++   account, diversa dall'attuale. L'indicatore mostra quando i requisiti sono soddisfatti.
++5. Riceverai un'email di conferma. Se hai la verifica in due passaggi, verrà richiesta al login come sempre.
++   Se non hai richiesto tu il cambio, avvisa subito l'amministratore.
++
++## Amministratore
++- Impostazioni in `app_settings`: `pwd_reset_enabled`, `pwd_reset_ttl_min`, `pwd_min_length`, `app_public_url`.
++- Registro: Log eventi, categoria **Auth** — «Reset password richiesto (sent|unknown|inactive|limited|mail_failed)»,
++  «link non valido o scaduto», «Password reimpostata tramite link email», blocchi per IP.
++- Email inviate/fallite: log email del portale (modulo `password_reset`).
++- Un account **disattivato** non riceve link. Gli account del solo SSO Microsoft possono impostare una password locale.
++- Blocco di un IP: 10 richieste in un'ora bloccano l'IP per un'ora (file in `uploads/.ratelimit`).
+diff --git a/docs/RELEASE_CHECKLIST_v1_9_81.md b/docs/RELEASE_CHECKLIST_v1_9_81.md
+new file mode 100644
+index 0000000..25409fd
+--- /dev/null
++++ b/docs/RELEASE_CHECKLIST_v1_9_81.md
+@@ -0,0 +1,8 @@
++# Release Checklist — v1.9.81
++- [x] VERSION = 1.9.81; migration aggiorna app_version / schema_version / release_label
++- [x] `pm_migration_sql` registra ('1.9.81','migration_v1_9_81.sql')
++- [x] Migration idempotente (RUN1/RUN2 err=0), nessun `;` nei commenti SQL
++- [x] `php -l` su tutti i file
++- [x] Pagina pubblica registrata in Router::PAGES, r.php, access_control, Session (nessuna voce di menu né permesso RBAC)
++- [x] Test: flusso completo, token errato/scaduto/riusato, policy, rate limit, CSRF, chiusura sessioni
++- [x] Docs: CHANGELOG, DEPLOYMENT, TECHNICAL_DESIGN, MANUALE (utente + amministratore), RELEASE_CHECKLIST
+diff --git a/docs/TECHNICAL_DESIGN_v1_9_81.md b/docs/TECHNICAL_DESIGN_v1_9_81.md
+new file mode 100644
+index 0000000..bf4126a
+--- /dev/null
++++ b/docs/TECHNICAL_DESIGN_v1_9_81.md
+@@ -0,0 +1,27 @@
++# Technical Design — v1.9.81 — Password reset
++
++## Flusso
++```
++login ──► password_reset (email) ──► PasswordReset::request()
++            │  users (email, status=active)? ──no──► nessuna azione (stessa risposta)
++            │                                 └─si─► token = random_bytes(32) → hex
++            │                                        password_resets(user_id, token = sha256, expires_at, ip, ua)
++            │                                        send_certv_email(link = app_public_url / Router::url(password_reset, t))
++link ?t= ──► PasswordReset::find(sha256(t)) ──► $_SESSION[pwreset_token] ──► redirect ?step=new
++?step=new ─► validate(policy) ──► complete(): UPDATE token used=1 (WHERE used=0)
++                                             UPDATE users password_hash, password_changed_at
++                                             invalida altre richieste · email di conferma
++richieste successive (r.php) ──► Session::syncRole(): password_changed_at > _sec.created → destroy → login?r=pwchanged
++```
++## Schema (ER)
++`password_resets(id, email, user_id → users.id, token CHAR sha256, expires_at, used, used_at, request_ip, user_agent, created_at)`
++`users.password_changed_at DATETIME NULL`
++Pulizia: righe più vecchie di 30 giorni eliminate a ogni nuova richiesta.
++
++## Impostazioni (`app_settings`)
++| Chiave | Default | Significato |
++|---|---|---|
++| `pwd_reset_enabled` | 1 | funzione attiva |
++| `pwd_reset_ttl_min` | 60 | validità link (10–1440) |
++| `pwd_min_length` | 12 | lunghezza minima (8–64) |
++| `app_public_url` | '' | base assoluta dei link nelle email |
+diff --git a/login.php b/login.php
+index dc7e91b..51867b2 100644
+--- a/login.php
++++ b/login.php
+@@ -14,6 +14,7 @@ require_once __DIR__ . '/app/EmailOtp.php';
+ require_once __DIR__ . '/app/RecoveryCodes.php';
+ require_once __DIR__ . '/app/TwoFactor.php';
+ require_once __DIR__ . '/app/Microsoft365Sso.php';
++require_once __DIR__ . '/app/PasswordReset.php';   // v1.9.81
+ 
+ // Se già loggato, vai a index
+ if (!empty($_SESSION['user_id'])) {
+@@ -149,6 +150,8 @@ $info_message = match($reason) {
+     'idle'            => 'Sessione scaduta per inattività. Accedi nuovamente.',
+     'session_expired' => 'La sessione è scaduta. Accedi nuovamente.',
+     'invalid'         => 'Sessione non valida. Accedi nuovamente.',
++    'pwreset'         => 'Password aggiornata. Accedi con la nuova password.',
++    'pwchanged'       => 'La password dell\'account è stata modificata: accedi nuovamente.',
+     default           => ''
+ };
+ ?>
+@@ -219,6 +222,11 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:linear-gradient(135d
+         Entra nel sistema
+       </button>
+     </form>
++    <?php if (PasswordReset::enabled($pdo)): ?>
++      <div style="text-align:center;margin-top:14px">
++        <a href="<?= h(url_safe('password_reset')) ?>" style="font-size:13px;color:#475569;text-decoration:none">Password dimenticata?</a>
++      </div>
++    <?php endif; ?>
+ 
+     <?php if ($sso_ms_enabled): ?>
+       <div style="display:flex;align-items:center;gap:10px;margin:18px 0 14px;color:#94a3b8;font-size:12px">
+diff --git a/password_reset.php b/password_reset.php
+new file mode 100644
+index 0000000..96bdb8f
+--- /dev/null
++++ b/password_reset.php
+@@ -0,0 +1,219 @@
++<?php
++/**
++ * PortalManager — password_reset.php (v1.9.81)
++ *
++ * Pagina pubblica, stesso stile del login. Tre passi:
++ *   1. richiesta: email → messaggio sempre identico (nessuna enumerazione) + link via email;
++ *   2. link ?t=<token>: verificato, spostato in sessione e rimosso dall'URL (redirect),
++ *      cosi' non resta in cronologia, log di accesso o header Referer;
++ *   3. nuova password (policy) → password aggiornata, token consumato, altre sessioni chiuse.
++ * Logica e sicurezza in app/PasswordReset.php.
++ */
++require_once __DIR__ . '/app/bootstrap.php';
++require_once __DIR__ . '/app/PasswordReset.php';
++
++header('Referrer-Policy: no-referrer');
++header('Cache-Control: no-store, max-age=0');
++
++if (!empty($_SESSION['user_id'])) redirect('index');
++
++$ip = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
++$ua = $_SERVER['HTTP_USER_AGENT'] ?? '';
++$settings = load_settings();
++$primary  = $settings['primary_color'] ?? '#0ea5e9';
++$app_name = $settings['app_name'] ?? 'PortalManager';
++
++$step = 'request';          // request | sent | new | done | invalid | disabled
++$error = ''; $errors = [];
++
++if (!PasswordReset::enabled($pdo)) {
++    $step = 'disabled';
++} else {
++    // ── 2. arrivo dal link: token in sessione, URL ripulito ──────────────
++    if (isset($_GET['t'])) {
++        if (!RateLimiter::attempt("pwreset:verify:ip:$ip", 20, 900, 900)) {
++            $step = 'invalid';
++            write_log('Auth', 'warning', 'Reset password: verifica token limitata per IP', null, ['ip' => $ip]);
++        } else {
++            $t = (string)$_GET['t'];
++            if (PasswordReset::find($pdo, $t)) {
++                $_SESSION['pwreset_token'] = $t;
++                $_SESSION['pwreset_at']    = time();
++                redirect('password_reset', ['step' => 'new']);
++            }
++            unset($_SESSION['pwreset_token']);
++            $step = 'invalid';
++            write_log('Auth', 'warning', 'Reset password: link non valido o scaduto', null, ['ip' => $ip]);
++        }
++    } elseif (($_GET['step'] ?? '') === 'new' || isset($_POST['new_password'])) {
++        $tok = (string)($_SESSION['pwreset_token'] ?? '');
++        $req = ($tok !== '' && time() - (int)($_SESSION['pwreset_at'] ?? 0) < 3600) ? PasswordReset::find($pdo, $tok) : null;
++        if (!$req) {
++            unset($_SESSION['pwreset_token'], $_SESSION['pwreset_at']);
++            $step = 'invalid';
++        } else {
++            $step = 'new';
++            // ── 3. nuova password ────────────────────────────────────────
++            if ($_SERVER['REQUEST_METHOD'] === 'POST') {
++                Csrf::verify();
++                $pwd = (string)($_POST['new_password'] ?? '');
++                $cnf = (string)($_POST['confirm_password'] ?? '');
++                $errors = PasswordReset::validate($pdo, $pwd, $cnf, (string)$req['email'], (string)$req['password_hash']);
++                if (!$errors) {
++                    if (PasswordReset::complete($pdo, $req, $pwd, $ip)) {
++                        unset($_SESSION['pwreset_token'], $_SESSION['pwreset_at']);
++                        RateLimiter::reset('login:email:' . strtolower((string)$req['email']));
++                        Csrf::rotate();
++                        write_log('Auth', 'success', 'Password reimpostata tramite link email', (int)$req['user_id'], ['ip' => $ip]);
++                        $step = 'done';
++                    } else {
++                        unset($_SESSION['pwreset_token'], $_SESSION['pwreset_at']);
++                        $step = 'invalid';
++                    }
++                }
++            }
++        }
++    } elseif ($_SERVER['REQUEST_METHOD'] === 'POST') {
++        // ── 1. richiesta ─────────────────────────────────────────────────
++        Csrf::verify();
++        $t0    = microtime(true);
++        $email = trim((string)($_POST['email'] ?? ''));
++        if (!RateLimiter::attempt("pwreset:req:ip:$ip", 10, 3600, 3600)) {
++            $error = 'Troppe richieste da questo indirizzo. Riprova più tardi.';
++            write_log('Auth', 'warning', 'Reset password: richieste limitate per IP', null, ['ip' => $ip]);
++        } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL) || strlen($email) > 150) {
++            $error = 'Inserisci un indirizzo email valido.';
++        } else {
++            // per email: oltre 3 richieste l'ora non si invia altro, ma la risposta non cambia
++            $esito = RateLimiter::attempt('pwreset:req:email:' . strtolower($email), 3, 3600, 3600)
++                   ? PasswordReset::request($pdo, $email, $ip, $ua) : 'limited';
++            write_log('Auth', in_array($esito, ['sent'], true) ? 'info' : 'warning',
++                      "Reset password richiesto ($esito)", null, ['ip' => $ip, 'email_hash' => substr(hash('sha256', strtolower($email)), 0, 16)]);
++            // tempo di risposta uniforme: l'invio SMTP non deve rivelare se l'account esiste
++            $min = 1.5 + random_int(0, 500) / 1000;
++            $el = microtime(true) - $t0;
++            if ($el < $min) usleep((int)(($min - $el) * 1e6));
++            $step = 'sent';
++        }
++    }
++}
++$minLen = PasswordReset::minLength($pdo);
++$ttl    = PasswordReset::ttlMinutes($pdo);
++?>
++<!DOCTYPE html>
++<html lang="it">
++<head>
++<meta charset="UTF-8">
++<meta name="viewport" content="width=device-width,initial-scale=1">
++<meta name="robots" content="noindex,nofollow">
++<meta name="referrer" content="no-referrer">
++<title>Reimposta password — <?= h($app_name) ?></title>
++<style>
++*{box-sizing:border-box;margin:0;padding:0}
++body{font-family:'Segoe UI',system-ui,sans-serif;background:linear-gradient(135deg,#f0f4f8,#e2e8f0);display:flex;min-height:100vh;align-items:center;justify-content:center}
++.wrap{width:100%;max-width:440px;padding:20px}
++.box{background:#fff;padding:40px;border-radius:16px;box-shadow:0 8px 32px rgba(0,0,0,.1)}
++.logo{text-align:center;margin-bottom:26px}
++.logo-icon{width:58px;height:58px;background:<?= h($primary) ?>;border-radius:14px;display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:26px;margin-bottom:12px}
++.logo h1{font-size:22px;font-weight:800;color:#1e293b}
++.logo p{font-size:12px;color:#64748b;margin-top:3px}
++.fg{margin-bottom:16px}
++.fg label{display:block;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:5px}
++.fg input{width:100%;padding:12px 14px;border:1.5px solid #cbd5e1;border-radius:9px;font-size:14px;color:#1e293b;font-family:inherit}
++.fg input:focus{outline:none;border-color:<?= h($primary) ?>;box-shadow:0 0 0 3px <?= h($primary) ?>33}
++.btn{display:block;text-align:center;text-decoration:none;width:100%;padding:13px;background:<?= h($primary) ?>;color:#fff;border:none;border-radius:9px;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit}
++.btn:hover{filter:brightness(1.08)}
++.lnk{display:block;text-align:center;margin-top:16px;font-size:13px;color:#475569;text-decoration:none}
++.lnk:hover{text-decoration:underline}
++.err{background:#fee2e2;color:#991b1b;border-left:4px solid #ef4444;padding:12px 16px;border-radius:8px;margin-bottom:18px;font-size:13px;line-height:1.6}
++.ok{background:#dcfce7;color:#166534;border-left:4px solid #16a34a;padding:12px 16px;border-radius:8px;margin-bottom:18px;font-size:13px;line-height:1.6}
++.info{background:#eff6ff;color:#1e40af;border-left:4px solid #3b82f6;padding:12px 16px;border-radius:8px;margin-bottom:18px;font-size:13px;line-height:1.6}
++.rules{font-size:12px;color:#64748b;margin:-4px 0 16px;padding-left:18px;line-height:1.7}
++.rules li.ok2{color:#16a34a}
++.meter{height:6px;background:#e2e8f0;border-radius:3px;overflow:hidden;margin:-8px 0 14px}
++.meter span{display:block;height:100%;width:0;transition:.2s}
++</style>
++</head>
++<body>
++<div class="wrap">
++  <div class="box">
++    <div class="logo">
++      <div class="logo-icon">🔑</div>
++      <h1>Reimposta password</h1>
++      <p><?= h($app_name) ?></p>
++    </div>
++
++<?php if ($step === 'disabled'): ?>
++    <div class="info">La reimpostazione della password in autonomia non è attiva. Contatta l'amministratore del portale.</div>
++    <a class="btn" href="<?= h(url_safe('login')) ?>">Torna all'accesso</a>
++
++<?php elseif ($step === 'sent'): ?>
++    <div class="ok">Se l'indirizzo corrisponde a un account attivo, riceverai a breve un'email con il link per scegliere
++      una nuova password. Il link è valido <strong><?= (int)$ttl ?> minuti</strong> e si può usare una sola volta.</div>
++    <p style="font-size:13px;color:#64748b;margin-bottom:18px">Non la trovi? Controlla anche la cartella spam. Puoi ripetere la richiesta tra qualche minuto.</p>
++    <a class="btn" href="<?= h(url_safe('login')) ?>">Torna all'accesso</a>
++
++<?php elseif ($step === 'invalid'): ?>
++    <div class="err">Il link non è valido, è già stato usato oppure è scaduto.</div>
++    <a class="btn" href="<?= h(url_safe('password_reset')) ?>">Richiedi un nuovo link</a>
++    <a class="lnk" href="<?= h(url_safe('login')) ?>">Torna all'accesso</a>
++
++<?php elseif ($step === 'done'): ?>
++    <div class="ok">Password aggiornata. Le altre sessioni aperte sono state chiuse e ti abbiamo inviato un'email di conferma.</div>
++    <a class="btn" href="<?= h(url_safe('login', ['r' => 'pwreset'])) ?>">Accedi con la nuova password</a>
++
++<?php elseif ($step === 'new'): ?>
++    <?php if ($errors): ?><div class="err"><?= implode('<br>', array_map('h', $errors)) ?></div><?php endif; ?>
++    <form method="POST" action="<?= h(url_safe('password_reset', ['step' => 'new'])) ?>" autocomplete="off" novalidate>
++      <?= csrf_field() ?>
++      <div class="fg">
++        <label for="np">Nuova password</label>
++        <input id="np" type="password" name="new_password" required autofocus autocomplete="new-password" maxlength="72" minlength="<?= (int)$minLen ?>">
++      </div>
++      <div class="meter"><span id="pm-meter"></span></div>
++      <ul class="rules" id="pm-rules">
++        <li data-r="len">almeno <?= (int)$minLen ?> caratteri</li>
++        <li data-r="cls">tre tipi fra minuscole, maiuscole, numeri, simboli</li>
++        <li data-r="eq">conferma uguale</li>
++      </ul>
++      <div class="fg">
++        <label for="cp">Conferma password</label>
++        <input id="cp" type="password" name="confirm_password" required autocomplete="new-password" maxlength="72">
++      </div>
++      <button type="submit" class="btn">Salva la nuova password</button>
++    </form>
++    <a class="lnk" href="<?= h(url_safe('login')) ?>">Annulla</a>
++    <script>
++    (function () {
++      var np = document.getElementById('np'), cp = document.getElementById('cp'), m = document.getElementById('pm-meter');
++      var min = <?= (int)$minLen ?>;
++      function upd() {
++        var v = np.value, c = (/[a-z]/.test(v)) + (/[A-Z]/.test(v)) + (/\d/.test(v)) + (/[^A-Za-z0-9]/.test(v));
++        var r = { len: v.length >= min, cls: c >= 3, eq: v !== '' && v === cp.value };
++        document.querySelectorAll('#pm-rules li').forEach(function (li) { li.className = r[li.dataset.r] ? 'ok2' : ''; });
++        var s = Math.min(4, (v.length >= min) + (v.length >= min + 4) + (c >= 3) + (c === 4));
++        m.style.width = (s * 25) + '%';
++        m.style.background = ['#ef4444', '#ef4444', '#f59e0b', '#84cc16', '#16a34a'][s];
++      }
++      np.addEventListener('input', upd); cp.addEventListener('input', upd);
++    })();
++    </script>
++
++<?php else: ?>
++    <?php if ($error): ?><div class="err"><?= h($error) ?></div><?php endif; ?>
++    <p style="font-size:13px;color:#475569;margin-bottom:18px;line-height:1.6">Inserisci l'email con cui accedi al portale:
++      ti invieremo un link per scegliere una nuova password.</p>
++    <form method="POST" action="<?= h(url_safe('password_reset')) ?>" novalidate autocomplete="off">
++      <?= csrf_field() ?>
++      <div class="fg">
++        <label for="em">Email</label>
++        <input id="em" type="email" name="email" value="<?= h($_POST['email'] ?? '') ?>" required autofocus autocomplete="username" maxlength="150">
++      </div>
++      <button type="submit" class="btn">Invia il link</button>
++    </form>
++    <a class="lnk" href="<?= h(url_safe('login')) ?>">Torna all'accesso</a>
++<?php endif; ?>
++  </div>
++</div>
++</body>
++</html>
+diff --git a/r.php b/r.php
+index d6dd282..b684279 100644
+--- a/r.php
++++ b/r.php
+@@ -34,7 +34,7 @@ if (!is_file($targetFile)) {
+ }
+ 
+ // ── Pagine pubbliche: nessun controllo ─────────────────────────
+-$public = ['login', 'unauthorized', 'auth_microsoft'];
++$public = ['login', 'unauthorized', 'auth_microsoft', 'password_reset'];   // v1.9.81
+ 
+ // ── Pagine "semi-pubbliche" (v4.1): accessibili senza user_id
+ //    SOLO se c'è uno stato pending corrispondente
+diff --git a/sql/migration_v1_9_81.sql b/sql/migration_v1_9_81.sql
+new file mode 100644
+index 0000000..2b97d19
+--- /dev/null
++++ b/sql/migration_v1_9_81.sql
+@@ -0,0 +1,47 @@
++-- migration_v1_9_81.sql — Reimpostazione password self-service (link monouso via email).
++-- Riusa la tabella password_resets (presente ma inutilizzata) estendendola.
++-- La colonna token contiene SOLO l'hash SHA-256 del token, mai il token in chiaro.
++
++CREATE TABLE IF NOT EXISTS `pm_migration_sql` (
++  `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT,
++  `version` varchar(20) NOT NULL, `filename` varchar(190) NOT NULL,
++  `applied_at` datetime NOT NULL DEFAULT current_timestamp(),
++  PRIMARY KEY (`id`), UNIQUE KEY `uq_pm_migration_v_f` (`version`,`filename`)
++) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
++
++CREATE TABLE IF NOT EXISTS `password_resets` (
++  `id` int(11) NOT NULL AUTO_INCREMENT,
++  `email` varchar(150) NOT NULL,
++  `token` varchar(255) NOT NULL,
++  `expires_at` datetime NOT NULL,
++  `used` tinyint(1) NOT NULL DEFAULT 0,
++  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
++  PRIMARY KEY (`id`),
++  KEY `token` (`token`)
++) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
++
++ALTER TABLE `password_resets`
++  ADD COLUMN IF NOT EXISTS `user_id` int(11) NULL AFTER `email`,
++  ADD COLUMN IF NOT EXISTS `used_at` datetime NULL AFTER `used`,
++  ADD COLUMN IF NOT EXISTS `request_ip` varchar(45) NULL AFTER `used_at`,
++  ADD COLUMN IF NOT EXISTS `user_agent` varchar(255) NULL AFTER `request_ip`;
++
++CREATE INDEX IF NOT EXISTS `idx_pwr_user` ON `password_resets` (`user_id`, `used`);
++CREATE INDEX IF NOT EXISTS `idx_pwr_email` ON `password_resets` (`email`);
++CREATE INDEX IF NOT EXISTS `idx_pwr_created` ON `password_resets` (`created_at`);
++
++-- eventuali righe del formato precedente (token in chiaro, senza utente): non piu' utilizzabili
++UPDATE `password_resets` SET `used` = 1 WHERE `user_id` IS NULL AND `used` = 0;
++
++ALTER TABLE `users` ADD COLUMN IF NOT EXISTS `password_changed_at` datetime NULL AFTER `password_hash`;
++
++INSERT IGNORE INTO `app_settings` (`setting_key`, `setting_value`) VALUES
++  ('pwd_reset_enabled', '1'),
++  ('pwd_reset_ttl_min', '60'),
++  ('pwd_min_length', '12'),
++  ('app_public_url', '');
++
++UPDATE `app_settings` SET `setting_value`='1.9.81'
++ WHERE `setting_key` IN ('app_version','schema_version','release_label');
++
++INSERT IGNORE INTO `pm_migration_sql` (`version`,`filename`) VALUES ('1.9.81','migration_v1_9_81.sql');
+-- 
+2.43.0
+
