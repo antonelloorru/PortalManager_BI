@@ -169,6 +169,8 @@ class MenuManager
                     ['page' => 'service_desk',      'label' => 'Service Desk',              'icon' => 'fa-headset'],
                     ['page' => 'it_service',        'label' => 'Relazione di Servizio IT',  'icon' => 'fa-server'],
                     ['page' => 'dir_report',        'label' => 'Report direzionale',        'icon' => 'fa-chart-pie'],
+                    // v1.10.02 — Progetti PRJ: calcoli salvati e confronti tra progetti
+                    ['page' => 'prj_history',       'label' => 'Scenari & confronti progetti', 'icon' => 'fa-scale-balanced'],
                     ['page' => 'project_gantt',     'label' => 'Gantt commesse',              'icon' => 'fa-chart-gantt'],
                 ],
             ],

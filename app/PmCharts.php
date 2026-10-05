@@ -153,6 +153,54 @@ final class PmCharts
         return $o . '</div>';
     }
 
+    /**
+     * v1.10.02 — barre raggruppate per categoria (es. canone vs costo per anno, metriche per calc run).
+     * @param string[] $labels  etichette delle categorie (asse X)
+     * @param array    $series  [['label'=>, 'color'=>, 'values'=>[float…]]] un valore per categoria
+     * @param array    $opts    unit, decimals, height, divisor (es. 1000 per k€)
+     */
+    public static function groupedBars(array $labels, array $series, array $opts = []): string
+    {
+        if (!$labels || !$series) return '<p style="color:#94a3b8;font-size:12px;margin:0">Nessun dato.</p>';
+        $h   = static fn($s) => htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8');
+        $div = (float)($opts['divisor'] ?? 1) ?: 1.0;
+        $dec = (int)($opts['decimals'] ?? 0);
+        $unit = (string)($opts['unit'] ?? '');
+        $num = static fn($v) => number_format($v, $dec, ',', '.');
+        $W = 900; $H = (int)($opts['height'] ?? 220);
+        $pL = 56; $pR = 14; $pT = 16; $pB = 30;
+        $pw = $W - $pL - $pR; $ph = $H - $pT - $pB;
+        $max = 0.0; $min = 0.0;
+        foreach ($series as $sr) foreach ($sr['values'] as $v) { $max = max($max, (float)$v / $div); $min = min($min, (float)$v / $div); }
+        $max = self::niceMax($max ?: 1);
+        $min = $min < 0 ? -self::niceMax(-$min) : 0.0;
+        $span = $max - $min ?: 1;
+        $y = static fn($v) => $pT + $ph - (($v - $min) / $span) * $ph;
+        $n = count($labels); $k = count($series);
+        $gw = $pw / $n; $bw = max(2, ($gw * 0.72) / $k);
+        $o = '<svg viewBox="0 0 ' . $W . ' ' . $H . '" width="100%" role="img" style="font-family:inherit">';
+        for ($i = 0; $i <= 4; $i++) {
+            $v = $min + $span * $i / 4; $yy = round($y($v), 1);
+            $o .= '<line x1="' . $pL . '" x2="' . ($W - $pR) . '" y1="' . $yy . '" y2="' . $yy . '" stroke="#e2e8f0"/>'
+                . '<text x="' . ($pL - 6) . '" y="' . ($yy + 4) . '" text-anchor="end" font-size="10" fill="#64748b">' . $h(number_format($v, abs($v) < 10 && floor($v) != $v ? 1 : 0, ',', '.')) . '</text>';
+        }
+        $y0 = round($y(0), 1);
+        $o .= '<line x1="' . $pL . '" x2="' . ($W - $pR) . '" y1="' . $y0 . '" y2="' . $y0 . '" stroke="#94a3b8"/>';
+        foreach ($labels as $i => $lab) {
+            $x0 = $pL + $gw * $i + ($gw - $bw * $k) / 2;
+            foreach ($series as $j => $sr) {
+                $v = (float)($sr['values'][$i] ?? 0) / $div;
+                $yv = $y($v); $top = min($yv, $y0); $hh = max(0.5, abs($y0 - $yv));
+                $o .= '<rect x="' . round($x0 + $bw * $j, 1) . '" y="' . round($top, 1) . '" width="' . round($bw - 1, 1) . '" height="' . round($hh, 1) . '" fill="' . $h($sr['color']) . '">'
+                    . '<title>' . $h($lab . ' · ' . $sr['label'] . ': ' . $num($v) . ($unit !== '' ? ' ' . $unit : '')) . '</title></rect>';
+            }
+            $o .= '<text x="' . round($pL + $gw * $i + $gw / 2, 1) . '" y="' . ($H - 10) . '" text-anchor="middle" font-size="11" fill="#475569">' . $h($lab) . '</text>';
+        }
+        $o .= '</svg><div style="display:flex;flex-wrap:wrap;gap:14px;font-size:11px;color:#64748b;margin-top:4px">';
+        foreach ($series as $sr) $o .= '<span><span style="display:inline-block;width:12px;height:9px;background:' . $h($sr['color']) . ';vertical-align:middle"></span> ' . $h($sr['label']) . '</span>';
+        return $o . ($unit !== '' ? '<span>valori in ' . $h($unit) . '</span>' : '') . '</div>';
+    }
+
     private static function niceMax(float $v): float
     {
         $p = pow(10, floor(log10($v)));

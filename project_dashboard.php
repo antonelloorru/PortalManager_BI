@@ -35,6 +35,24 @@ if (($fid = (int)($_GET['dl_upfile'] ?? 0)) > 0) {
     exit;
 }
 
+// v1.10.02 — collegamento di un Progetto PRJ dalla commessa SP (permesso proprio prj_link.php, separato dalla modifica della commessa)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['prj_link', 'prj_unlink'], true)) {
+    Csrf::verify();
+    if (!can('edit', 'prj_link.php')) { $_SESSION['flash_msg'] = "<div class='alert alert-danger'>Privilegi insufficienti.</div>"; redirect('project_dashboard', ['id' => $pid, 'tab' => 'prj']); }
+    require_once(__DIR__ . '/app/PrjLink.php');
+    try {
+        $lk = new PrjLink($pdo); $prjId = (int)($_POST['prj_id'] ?? 0);
+        if ($_POST['action'] === 'prj_link') { $lk->link($prjId, $pid, trim((string)($_POST['motivo'] ?? '')) ?: 'collegato dalla scheda commessa', (int)$_SESSION['user_id']); $m = 'Progetto PRJ collegato alla commessa.'; }
+        else {
+            $chk = $pdo->prepare("SELECT COUNT(*) FROM cm_prj WHERE id = ? AND sp_project_id = ?"); $chk->execute([$prjId, $pid]);
+            if ($chk->fetchColumn()) $lk->unlink($prjId, trim((string)($_POST['motivo'] ?? '')) ?: 'scollegato dalla scheda commessa', (int)$_SESSION['user_id']);
+            $m = 'Progetto PRJ scollegato.';
+        }
+        $_SESSION['flash_msg'] = "<div class='alert alert-success'>$m</div>";
+    } catch (Throwable $e) { $_SESSION['flash_msg'] = "<div class='alert alert-danger'>" . h($e->getMessage()) . "</div>"; }
+    redirect('project_dashboard', ['id' => $pid, 'tab' => 'prj']);
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     Csrf::verify();
     if (!$can_edit) { $_SESSION['flash_msg']="<div class='alert alert-danger'>Privilegi insufficienti.</div>"; redirect('project_dashboard',['id'=>$pid]); }
@@ -436,6 +454,27 @@ try {
     $stpx->execute([(int)$pid]);
     $pratix_rows = $stpx->fetchAll(PDO::FETCH_ASSOC);
 } catch (Throwable $e) { $pratix_rows = []; }
+// v1.10.02 — Progetti PRJ collegati alla commessa: stimato dello scenario di riferimento vs consuntivo sincronizzato
+$prj_rows = []; $prj_free = []; $prj_can_view = can('view', 'prj_dashboard.php'); $prj_can_link = can('edit', 'prj_link.php');
+try {
+    $stpj = $pdo->prepare("SELECT p.id, p.prj_code, p.nome, p.stato, p.sp_linked_at, p.scenario_riferimento_id, s.nome AS scen_nome,
+                                  (SELECT MAX(r.created_at) FROM cm_prj_calc_run r WHERE r.prj_id = p.id) AS ultimo_calcolo
+                             FROM cm_prj p LEFT JOIN cm_prj_scenario s ON s.id = p.scenario_riferimento_id
+                            WHERE p.sp_project_id = ? ORDER BY p.prj_code");
+    $stpj->execute([$pid]);
+    $prj_rows = $stpj->fetchAll(PDO::FETCH_ASSOC);
+    if ($prj_rows && $prj_can_view) {
+        require_once(__DIR__ . '/app/PrjRepo.php');
+        $prjRepo = new PrjRepo($pdo);
+        foreach ($prj_rows as &$pj) {
+            $pj['_k'] = null;
+            if ($pj['scenario_riferimento_id']) { try { $pj['_k'] = $prjRepo->calc((int)$pj['id'], (int)$pj['scenario_riferimento_id'], date('Y-m-d'))['totali']; } catch (Throwable $e) {} }
+        }
+        unset($pj);
+    }
+    if ($prj_can_link) $prj_free = $pdo->query("SELECT id, prj_code, nome FROM cm_prj WHERE sp_project_id IS NULL ORDER BY prj_code DESC LIMIT 500")->fetchAll(PDO::FETCH_ASSOC);
+} catch (Throwable $e) { $prj_rows = []; }   // schema PRJ assente
+
 $msg='';
 if (!empty($_SESSION['flash_msg'])) { $msg=$_SESSION['flash_msg']; unset($_SESSION['flash_msg']); }
 require_once('header.php');
@@ -454,7 +493,42 @@ $eur = fn($v)=> $v===null?'—':number_format((float)$v,2,',','.').' €';
   <button class="tab-btn" data-tab="report">Report &amp; Avanzamento</button>
   <button class="tab-btn" data-tab="dgb">DGB<?=$dgb_roll?' <span style="background:#0891b2;color:#fff;border-radius:8px;padding:0 6px;font-size:10px">'.number_format((int)$dgb_roll['activities'],0,',','.').'</span>':''?></button>
   <button class="tab-btn" data-tab="pratix">Pratix<?= $pratix_rows ? ' <span style="background:#0f766e;color:#fff;border-radius:8px;padding:0 6px;font-size:10px">'.count($pratix_rows).'</span>' : '' ?></button>
+  <?php if ($prj_can_view || $prj_can_link): ?><button class="tab-btn" data-tab="prj">Progetti PRJ<?= $prj_rows ? ' <span style="background:#7c3aed;color:#fff;border-radius:8px;padding:0 6px;font-size:10px">'.count($prj_rows).'</span>' : '' ?></button><?php endif; ?>
 </div>
+
+<?php if ($prj_can_view || $prj_can_link): /* v1.10.02 — Progetti PRJ collegati */ ?>
+<div id="tab-prj" class="tab-pane" style="display:none">
+  <div class="card" style="overflow-x:auto">
+    <h3 style="margin:0 0 4px;font-size:14px"><i class="fa-solid fa-compass-drafting"></i> Progetti PRJ collegati</h3>
+    <p style="color:var(--muted);font-size:12px;margin:0 0 10px">Stimato dello scenario di riferimento di ciascun progetto (annuo, alla data odierna) e consuntivo sincronizzato della commessa.
+      Consuntivo commessa: valore <?=$eur($p['value_total'] ?? null)?> · costo <?=$eur($p['actual_cost'] ?? null)?> · margine <?=$eur($p['margin_total'] ?? null)?>.</p>
+    <table class="data-table" style="width:100%;font-size:12px;white-space:nowrap">
+      <thead><tr><th>Codice PRJ</th><th>Progetto</th><th>Stato</th><th>Scenario di riferimento</th><th style="text-align:right">FTE stimati</th><th style="text-align:right">Costo stimato/anno</th>
+        <th style="text-align:right">Canone medio</th><th style="text-align:right">% canone</th><th style="text-align:right">Margine stimato/anno</th><th>Collegato il</th><th>Ultimo calcolo</th><th></th></tr></thead>
+      <tbody>
+      <?php if (!$prj_rows): ?><tr><td colspan="12" style="text-align:center;color:var(--muted);padding:16px">Nessun Progetto PRJ collegato a questa commessa.</td></tr><?php endif; ?>
+      <?php foreach ($prj_rows as $pj): $k = $pj['_k'] ?? null; ?>
+        <tr><td><?php if ($prj_can_view): ?><a href="<?=url_safe('prj_dashboard', ['id' => (int)$pj['id']])?>" style="font-weight:700"><?=h($pj['prj_code'])?></a><?php else: ?><?=h($pj['prj_code'])?><?php endif; ?></td>
+          <td><?=h($pj['nome'])?></td><td><?=h($pj['stato'])?></td><td><?=h((string)($pj['scen_nome'] ?? '—'))?></td>
+          <td style="text-align:right"><?= $k ? number_format($k['fte_totali'], 1, ',', '.') : '—' ?></td>
+          <td style="text-align:right"><?= $k ? $eur($k['costo_aziendale_totale']) : '—' ?></td><td style="text-align:right"><?= $k ? $eur($k['canone_medio']) : '—' ?></td>
+          <td style="text-align:right;font-weight:700;color:<?= $k && $k['pct_canone'] !== null ? ($k['pct_canone'] > 1 ? '#dc2626' : '#16a34a') : 'inherit' ?>"><?= $k && $k['pct_canone'] !== null ? number_format($k['pct_canone'] * 100, 0, ',', '.') . '%' : '—' ?></td>
+          <td style="text-align:right"><?= $k ? $eur($k['margine']) : '—' ?></td>
+          <td><?= $pj['sp_linked_at'] ? date('d/m/Y', strtotime($pj['sp_linked_at'])) : '—' ?></td><td><?= $pj['ultimo_calcolo'] ? date('d/m/Y H:i', strtotime($pj['ultimo_calcolo'])) : '—' ?></td>
+          <td><?php if ($prj_can_link): ?><form method="post" style="margin:0" onsubmit="return confirm('Scollegare il progetto dalla commessa?')"><?= csrf_field() ?><input type="hidden" name="action" value="prj_unlink"><input type="hidden" name="prj_id" value="<?=(int)$pj['id']?>"><button class="btn btn-sm" title="Scollega"><i class="fa-solid fa-link-slash"></i></button></form><?php endif; ?></td></tr>
+      <?php endforeach; ?>
+      </tbody>
+    </table>
+    <?php if ($prj_can_link && $prj_free): ?>
+    <form method="post" style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-top:12px"><?= csrf_field() ?><input type="hidden" name="action" value="prj_link">
+      <div class="form-group" style="margin:0;min-width:320px"><label>Collega progetto PRJ</label><select name="prj_id" required><option value="">— scegli —</option><?php foreach ($prj_free as $f_): ?><option value="<?=(int)$f_['id']?>"><?=h($f_['prj_code'] . ' — ' . $f_['nome'])?></option><?php endforeach; ?></select></div>
+      <div class="form-group" style="margin:0;flex:1;min-width:200px"><label>Motivo</label><input type="text" name="motivo" maxlength="255" placeholder="es. aggiudicazione"></div>
+      <button class="btn btn-primary btn-sm"><i class="fa-solid fa-link"></i> Collega</button>
+    </form>
+    <?php endif; ?>
+  </div>
+</div>
+<?php endif; ?>
 
 <div id="tab-pratix" class="tab-pane" style="display:none">
   <div class="card">

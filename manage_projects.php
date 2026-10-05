@@ -94,6 +94,7 @@ $f = [
     'type'           => trim($_GET['type'] ?? ''),
     'has_link'       => $_GET['link'] ?? '',
     'has_dgb'        => $_GET['dgb'] ?? '',
+    'has_prj'        => in_array($_GET['prj'] ?? '', ['0', '1'], true) ? $_GET['prj'] : '',   // v1.10.02
     // stato e compliance
     'status'               => trim($_GET['status'] ?? ''),
     'commercial'           => trim($_GET['commercial'] ?? ''),
@@ -130,6 +131,14 @@ $f = [
 ];
 
 $rows = $model->listAll($f);
+
+// v1.10.02 — Progetti PRJ collegati a ciascuna commessa SP (colonna, filtro, export)
+$prjMap = [];
+try {
+    foreach ($pdo->query("SELECT sp_project_id, GROUP_CONCAT(prj_code ORDER BY prj_code SEPARATOR ', ') FROM cm_prj WHERE sp_project_id IS NOT NULL GROUP BY sp_project_id")->fetchAll(PDO::FETCH_NUM) as [$spid, $codes])
+        $prjMap[(int)$spid] = $codes;
+} catch (Throwable $e) { /* schema PRJ assente */ }
+if ($f['has_prj'] !== '') $rows = array_values(array_filter($rows, fn($r) => isset($prjMap[(int)$r['id']]) === ($f['has_prj'] === '1')));
 
 // v1.8.11: rollup DGB per le commesse in elenco (riconciliazione via dgb_contract_id)
 require_once(__DIR__ . '/app/DgbModel.php');
@@ -208,8 +217,9 @@ if ($fmt === 'xlsx' || $fmt === 'csv') {
     while (ob_get_level() > 0) { @ob_end_clean(); }
     @ini_set('zlib.output_compression', '0');
 
-    $data = [$STD_HEADERS];
-    foreach ($rows as $r) $data[] = $rowToStd($r);
+    // v1.10.02 — colonna in coda «progetti_prj»: le 29 colonne dello standard restano nella stessa posizione
+    $data = [array_merge($STD_HEADERS, ['progetti_prj'])];
+    foreach ($rows as $r) $data[] = array_merge($rowToStd($r), [$prjMap[(int)$r['id']] ?? '']);
     $stamp = date('Ymd_Hi');
     write_log('Projects', 'info', "Export lista_commesse ($fmt): " . count($rows) . " righe", $u_id);
 
@@ -264,7 +274,7 @@ $qs = function(array $over = []) use ($f) {
     $map = [
         'q'=>$f['q'], 'abbr'=>$f['abbr'], 'cref'=>$f['commercial_ref'], 'cliente'=>$f['client_raw'],
         'descr'=>$f['descr'], 'client'=>$f['client_id'], 'company'=>$f['company_id'],
-        'sl'=>$f['service_line'], 'type'=>$f['type'], 'link'=>$f['has_link'], 'dgb'=>$f['has_dgb'],
+        'sl'=>$f['service_line'], 'type'=>$f['type'], 'link'=>$f['has_link'], 'dgb'=>$f['has_dgb'], 'prj'=>$f['has_prj'],
         'status'=>$f['status'], 'commercial'=>$f['commercial'], 'econ'=>$f['econ'], 'econ_today'=>$f['econ_today'],
         'cverify'=>$f['compliance_to_verify'], 'cpre'=>$f['compliance_preauth'],
         'aopen'=>$f['anom_open']?1:'', 'ablocking'=>$f['anom_blocking']?1:'',
@@ -546,6 +556,10 @@ $total_projects = (int)$pdo->query("SELECT COUNT(*) FROM cm_projects")->fetchCol
             <select name="dgb"><option value="">— indifferente —</option>
               <option value="1" <?=$f['has_dgb']==='1'?'selected':''?>>Sì</option>
               <option value="0" <?=$f['has_dgb']==='0'?'selected':''?>>No</option></select></div>
+          <div class="form-group"><label>Progetti PRJ collegati</label>
+            <select name="prj"><option value="">— indifferente —</option>
+              <option value="1" <?=$f['has_prj']==='1'?'selected':''?>>Sì</option>
+              <option value="0" <?=$f['has_prj']==='0'?'selected':''?>>No</option></select></div>
           <div class="form-group"><label>Batch di import (numero)</label>
             <input type="number" name="batch" min="0" value="<?=$f['batch'] ?: ''?>" placeholder="Es. 12"></div>
           <div class="form-group" style="grid-column:span 3"><label>Ordina l'elenco per</label>
@@ -617,10 +631,11 @@ $total_projects = (int)$pdo->query("SELECT COUNT(*) FROM cm_projects")->fetchCol
       <th style="text-align:right" title="Frequenza di fatturazione in mesi">Fatt. freq. (mesi)</th>
       <th title="Data della prima fattura">Prima fatt.</th>
       <th title="Attività e ore consuntivate sul gestionale">DGB att/ore</th>
+      <th title="Progetti PRJ (gare/iniziative) collegati alla commessa">Progetti PRJ</th>
     </tr></thead>
     <tbody>
     <?php if(!$rows): ?>
-      <tr><td colspan="31" style="text-align:center;color:var(--muted);padding:24px">
+      <tr><td colspan="32" style="text-align:center;color:var(--muted);padding:24px">
         <?php if ($active): ?>
           Nessuna commessa corrisponde ai filtri impostati.
           <a href="<?=url_safe('manage_projects')?>">Azzera i filtri</a> per vedere l'elenco completo.
@@ -663,12 +678,13 @@ $total_projects = (int)$pdo->query("SELECT COUNT(*) FROM cm_projects")->fetchCol
         <td style="text-align:right"><?= ($r['billing_freq_months'] ?? '') !== '' ? (int)$r['billing_freq_months'] : '—' ?></td>
         <td><?= $r['first_billing_date'] ? date('d/m/Y', strtotime($r['first_billing_date'])) : '—' ?></td>
         <td style="text-align:right"><?php if(isset($dgb_roll[(int)$r['id']])): $dr=$dgb_roll[(int)$r['id']]; ?><span style="color:#0891b2;font-weight:600" title="Attività DGB / ore consuntivate"><?=number_format((int)$dr['activities'],0,',','.')?> / <?=number_format((float)$dr['actual_hours'],0,',','.')?>h</span><?php else: ?><span style="color:var(--muted)">—</span><?php endif; ?></td>
+        <td><?php if (isset($prjMap[(int)$r['id']])): ?><a href="<?=url_safe('project_dashboard', ['id'=>(int)$r['id'], 'tab'=>'prj'])?>" style="color:#7c3aed;font-weight:600" title="Progetti PRJ collegati"><?=h($prjMap[(int)$r['id']])?></a><?php else: ?><span style="color:var(--muted)">—</span><?php endif; ?></td>
       </tr>
     <?php endforeach; endif; ?>
     </tbody>
   </table>
   <p style="color:var(--muted);font-size:11px;margin-top:8px">
-    Colonne dello standard "Lista commesse" (29). L'esportazione riporta gli stessi header e rispetta i filtri
+    Colonne dello standard "Lista commesse" (29) più «progetti_prj» in coda. L'esportazione riporta gli stessi header e rispetta i filtri
     applicati; il CSV usa il punto e virgola come separatore ed è in UTF-8 con BOM, quindi si apre correttamente
     in Excel italiano.
   </p>

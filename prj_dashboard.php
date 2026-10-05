@@ -3,7 +3,8 @@
  * prj_dashboard.php — Scheda progetto PRJ (v1.10.01)
  *
  * Analisi Gara & Dimensionamento di un Progetto PRJ, distinto dalle commesse SP.
- * Tab: Anagrafica · Collegamento commessa · Gara · Servizi & Tecnologie · Asset & Volumi · Profili · Costi · Scenari.
+ * Tab: Anagrafica · Collegamento commessa · Gara · Servizi & Tecnologie · Asset & Volumi · Profili · Costi · Scenari
+ *      · KPI & Penali · Punteggio · Storico (v1.10.02).
  *
  * Permessi: view/edit su prj_dashboard.php; calcolo e salvataggio run su prj_dashboard_calc.php (edit);
  * collegamento alla commessa SP su prj_link.php (edit), separato dalla modifica dei dati.
@@ -18,6 +19,7 @@ require_once(__DIR__ . '/app/PrjLink.php');
 require_once(__DIR__ . '/app/PrjUi.php');
 require_once(__DIR__ . '/app/EntityChangeLog.php');
 require_once(__DIR__ . '/app/RecycleBin.php');
+require_once(__DIR__ . '/app/PmCharts.php');
 
 $u_id = (int)$_SESSION['user_id'];
 $id   = (int)($_GET['id'] ?? 0);
@@ -32,7 +34,8 @@ $can_edit = can('edit', 'prj_dashboard.php');
 $can_calc = can('edit', 'prj_dashboard_calc.php');
 $can_link = can('edit', 'prj_link.php');
 $TABS = ['anag' => 'Anagrafica', 'link' => 'Collegamento commessa', 'gara' => 'Gara', 'svc' => 'Servizi & Tecnologie',
-         'vol' => 'Asset & Volumi', 'prof' => 'Profili', 'costi' => 'Costi', 'scen' => 'Scenari'];
+         'vol' => 'Asset & Volumi', 'prof' => 'Profili', 'costi' => 'Costi', 'scen' => 'Scenari',
+         'kpi' => 'KPI & Penali', 'punt' => 'Punteggio', 'stor' => 'Storico'];   // v1.10.02
 $tab = isset($TABS[$_GET['tab'] ?? '']) ? $_GET['tab'] : 'anag';
 $dOk = fn($v) => preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)$v) ? $v : null;
 $iOk = fn($v) => ctype_digit((string)$v) && (int)$v > 0 ? (int)$v : null;
@@ -270,6 +273,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $_SESSION['flash_msg'] = "<div class='alert alert-success'>Personalizzazioni dello scenario salvate ($n righe).</div>";
             redirect_self(['tab' => 'scen', 'sc' => $sid]);
 
+        case 'score_save':   // v1.10.02 — input del simulatore di punteggio (scenario NULL)
+            if (!$can_edit) { $deny(); break; }
+            $crit = $pdo->prepare("SELECT ent_id, codice, gruppo FROM cm_prj_criterion WHERE prj_id = ? AND is_current = 1");
+            $crit->execute([$id]); $byCode = []; foreach ($crit->fetchAll(PDO::FETCH_ASSOC) as $c_) $byCode[$c_['codice']] = $c_;
+            $rows = [];
+            foreach ((array)($_POST['s'] ?? []) as $code => $vals) {
+                if (!is_array($vals)) continue;
+                if ($code === 'ECO') { $targets = ['I.K1' => ['s' => 's1', 'w' => 'w', 'n' => 'n1'], 'I.K2' => ['s' => 's2', 'w' => 'w', 'n' => 'n2']];
+                    foreach ($targets as $cc => $mapK) if (isset($byCode[$cc])) foreach ($mapK as $k_ => $src_) { $v_ = PrjUi::num($vals[$src_] ?? ''); if ($v_ !== null) $rows[] = [(int)$byCode[$cc]['ent_id'], $k_, $k_ === 's' ? $v_ / 100 : $v_]; }
+                    continue; }
+                $c_ = null; foreach ($byCode as $cc => $cr) if ($cc === $code || $cr['gruppo'] === $code && in_array($code, ['C', 'D', 'E', 'F', 'G', 'H'], true)) { $c_ = $cr; break; }
+                if (!$c_) continue;
+                foreach ($vals as $k_ => $v_) {
+                    if ($k_ === 'list') { $i_ = 0; foreach (preg_split('/[\s;]+/', trim((string)$v_)) as $piece) { $n_ = PrjUi::num($piece); if ($n_ !== null) $rows[] = [(int)$c_['ent_id'], 'p' . (++$i_), $n_]; } continue; }
+                    if (!preg_match('/^[a-z0-9_]{1,30}$/', (string)$k_)) continue;
+                    $n_ = PrjUi::num($v_); if ($n_ !== null) $rows[] = [(int)$c_['ent_id'], (string)$k_, $n_];
+                }
+            }
+            $pdo->beginTransaction();
+            $old = $pdo->prepare("SELECT COUNT(*) FROM cm_prj_criterion_input WHERE prj_id = ? AND scenario_id IS NULL AND chiave NOT IN ('k')"); $old->execute([$id]); $nOld = (int)$old->fetchColumn();
+            $pdo->prepare("DELETE FROM cm_prj_criterion_input WHERE prj_id = ? AND scenario_id IS NULL AND chiave NOT IN ('k')")->execute([$id]);
+            $ins = $pdo->prepare("INSERT INTO cm_prj_criterion_input (prj_id, criterion_id, scenario_id, chiave, valore) VALUES (?,?,NULL,?,?) ON DUPLICATE KEY UPDATE valore = VALUES(valore)");
+            foreach ($rows as [$cid, $k_, $v_]) $ins->execute([$id, $cid, $k_, $v_]);
+            $ecl->logField('cm_prj_criterion_input', $id, 'input_simulatore', (string)$nOld, (string)count($rows), 'update', 'ui', null, $u_id);
+            $pdo->commit();
+            $_SESSION['flash_msg'] = "<div class='alert alert-success'>Simulazione del punteggio salvata (" . count($rows) . " valori).</div>";
+            break;
+
         case 'calc_run':
             if (!$can_calc) { $deny(); break; }
             $sid = (int)($_POST['scenario_id'] ?? 0);
@@ -350,6 +381,80 @@ $C = $calc[$selSc] ?? null;
 $lastRuns = []; foreach ($q("SELECT r.scenario_id, r.id, r.created_at, r.as_of FROM cm_prj_calc_run r
                              JOIN (SELECT scenario_id, MAX(id) mid FROM cm_prj_calc_run WHERE prj_id = ? GROUP BY scenario_id) x ON x.mid = r.id", [$id]) as $r) $lastRuns[(int)$r['scenario_id']] = $r;
 $ovr = []; foreach ($q("SELECT * FROM cm_prj_scenario_profile WHERE scenario_id = ?", [$selSc]) as $o) $ovr[$o['profile_id'] . ':' . $o['service_id']] = $o;
+
+// v1.10.02 — KPI & Penali, Punteggio, Storico
+$kpis = $crits = $runs = $changes = $verCount = $sIn = $penIn = $penRes = $tecBy = $kpiSvc = []; $pen = $cong = $cmp = null;
+$penPeriodo = ($_GET['periodo'] ?? 'mese') === 'anno' ? 'anno' : 'mese';
+$ticketStimati = 0.0; $ra = (int)($_GET['ra'] ?? 0); $rb = (int)($_GET['rb'] ?? 0);
+$tec = ['totale' => 0.0, 'righe' => []]; $eco = ['k1' => 0.0, 'k2' => 0.0, 'totale' => 0.0]; $ecoIn = []; $ptTec = 0.0; $ptEco = 0.0; $k1max = 20.0; $k2max = 10.0;
+$sList = function (array $iv): array { $o = []; foreach ($iv as $k => $v) if (preg_match('/^p(\d+)$/', $k, $m)) $o[(int)$m[1]] = rtrim(rtrim(number_format((float)$v, 4, ',', ''), '0'), ','); ksort($o); return array_values($o); };
+if ($tab === 'kpi') {
+    $kpis = $q("SELECT * FROM cm_prj_kpi WHERE prj_id = ? AND is_current = 1 ORDER BY codice", [$id]);
+    foreach ($q("SELECT k.kpi_id, s.codice FROM cm_prj_service_kpi k JOIN cm_prj_service s ON s.ent_id = k.service_id AND s.is_current = 1 WHERE k.prj_id = ? ORDER BY s.codice", [$id]) as $r_)
+        $kpiSvc[(int)$r_['kpi_id']][] = $r_['codice'];
+    foreach ((array)($_GET['pen'] ?? []) as $c_ => $v_) {
+        if (!is_array($v_) || !preg_match('/^KPI_\d{2}$/', (string)$c_)) continue;
+        if (isset($v_['q'])) { $n_ = PrjUi::num($v_['q']); if ($n_ !== null) $penIn[$c_] = $n_; continue; }
+        $pp = []; foreach ($v_ as $kk => $vv) { $n_ = PrjUi::num($vv); if ($n_ !== null && in_array($kk, ['A', 'M', 'B', 'critiche', 'non_critiche'], true)) $pp[$kk] = $n_; }
+        if ($pp) $penIn[$c_] = $pp;
+    }
+    $canMedio = $tender ? array_sum(array_map(fn($t) => (float)$t['canone_eur'], $tender)) / count($tender) : 0.0;
+    if ($penIn) {
+        $pen = PrjCalc::penalties($kpis, $penIn, $penPeriodo === 'anno' ? $canMedio : $canMedio / 12);
+        foreach ($pen['righe'] as $r_) $penRes[$r_['codice']] = $r_['penale'];
+    }
+    $ticketStimati = (float)array_sum(array_map(fn($v) => (int)$v['quantita'], $q("SELECT quantita FROM cm_prj_ticket_volume WHERE prj_id = ? AND is_current = 1 AND year = ?", [$id, $vy])));
+    if (($tr = PrjUi::num($_GET['ticket_reali'] ?? '')) !== null) $cong = PrjCalc::conguaglio($ticketStimati, $tr, $canMedio, (float)($prod['banda_volumi'] ?? 0.2));
+}
+if ($tab === 'punt') {
+    $crits = $q("SELECT * FROM cm_prj_criterion WHERE prj_id = ? AND is_current = 1 ORDER BY FIELD(gruppo,'A','B','C','D','E','F','G','H','I'), codice", [$id]);
+    foreach ($q("SELECT c.codice, i.chiave, i.valore FROM cm_prj_criterion_input i JOIN cm_prj_criterion c ON c.ent_id = i.criterion_id AND c.is_current = 1
+                  WHERE i.prj_id = ? AND i.scenario_id IS NULL", [$id]) as $r_) $sIn[$r_['codice']][$r_['chiave']] = (float)$r_['valore'];
+    $in = ['C' => [], 'D' => [], 'E' => [], 'E_n' => 11, 'F' => [], 'G' => 0, 'H' => 0, 'coeff' => []];
+    foreach ($crits as $c_) {
+        $iv = $sIn[$c_['codice']] ?? [];
+        if ($c_['tipo'] === 'E') { $ptEco += (float)$c_['punti_max']; continue; }
+        $ptTec += (float)$c_['punti_max'];
+        switch ($c_['gruppo']) {
+            case 'C': case 'D': foreach ($iv as $k => $v) if ($k[0] === 'p') $in[$c_['gruppo']][] = $v; break;
+            case 'E': $in['E_n'] = (int)($iv['n_servizi'] ?? 11); foreach ($iv as $k => $v) if (preg_match('/^s(\d+)$/', $k, $m)) $in['E'][] = [$v, $iv['c' . $m[1]] ?? 0]; break;
+            case 'F': for ($i_ = 1; $i_ <= 4; $i_++) $in['F'][] = $iv['c' . $i_] ?? 0; break;
+            case 'G': $in['G'] = $iv['rtnc'] ?? 0; break;
+            case 'H': $in['H'] = $iv['v'] ?? 0; break;
+            default: $in['coeff'][$c_['codice']] = min(1, max(0, $iv['coeff'] ?? 0));
+        }
+    }
+    try { $tec = PrjCalc::technicalScore($crits, $in); } catch (Throwable $e) { $tec = ['totale' => 0.0, 'righe' => []]; }
+    foreach ($tec['righe'] as $r_) $tecBy[$r_['codice']] = $r_;
+    foreach ($crits as $c_) { if ($c_['codice'] === 'I.K1') $k1max = (float)$c_['punti_max']; if ($c_['codice'] === 'I.K2') $k2max = (float)$c_['punti_max']; }
+    $e1 = $sIn['I.K1'] ?? []; $e2 = $sIn['I.K2'] ?? [];
+    $ecoIn = ['s1' => isset($e1['s']) ? $e1['s'] * 100 : '', 's2' => isset($e2['s']) ? $e2['s'] * 100 : '', 'w' => $e1['w'] ?? 1, 'n1' => $e1['n'] ?? 1, 'n2' => $e2['n'] ?? 1];
+    $eco = PrjCalc::economicScore((float)($e1['s'] ?? 0), (float)($e2['s'] ?? 0), (float)($e1['w'] ?? 1), (float)($e1['n'] ?? 1), (float)($e2['n'] ?? 1), $k1max, $k2max);
+}
+if ($tab === 'stor') {
+    $runs = $q("SELECT r.id, r.created_at, r.as_of, r.scenario_nome, r.app_version, sp.project_code AS sp_code,
+                       COALESCE(NULLIF(TRIM(CONCAT_WS(' ', e.last_name, e.first_name)),''), u.display_name, u.email) AS utente,
+                       MAX(CASE WHEN x.metrica = 'fte_totali' THEN x.valore END) fte, MAX(CASE WHEN x.metrica = 'costo_aziendale_totale' THEN x.valore END) tot,
+                       MAX(CASE WHEN x.metrica = 'pct_canone' THEN x.valore END) pct
+                  FROM cm_prj_calc_run r LEFT JOIN cm_projects sp ON sp.id = r.sp_project_id LEFT JOIN users u ON u.id = r.user_id LEFT JOIN employees e ON e.id = u.employee_id
+                  LEFT JOIN cm_prj_calc_result x ON x.run_id = r.id AND x.ambito = 'totale'
+                 WHERE r.prj_id = ? GROUP BY r.id ORDER BY r.id DESC LIMIT 200", [$id]);
+    $ids = array_map(fn($r) => (int)$r['id'], $runs);
+    if ($ra && $rb && $ra !== $rb && in_array($ra, $ids, true) && in_array($rb, $ids, true))
+        $cmp = array_values(array_filter($repo->compareRuns($ra, $rb), fn($c) => in_array($c['ambito'], ['totale', 'anno', 'servizio'], true)));
+    $parts = ["(c.entity_table = 'cm_prj' AND c.entity_id = " . $id . ")", "(c.entity_table = 'cm_prj_scenario' AND c.entity_id IN (SELECT id FROM cm_prj_scenario WHERE prj_id = $id))",
+              "(c.entity_table = 'cm_prj_profile' AND c.entity_id IN (SELECT id FROM cm_prj_profile WHERE prj_id = $id))"];
+    foreach (array_keys(PrjRepo::VERSIONED) as $t_) {
+        if (in_array($t_, ['cm_prj_param', 'cm_prj_zone', 'cm_prj_nearshore', 'cm_prj_equipment', 'cm_prj_site_cost', 'cm_prj_overhead'], true))
+            $parts[] = "(c.entity_table = '$t_' AND c.entity_id IN (SELECT ent_id FROM `$t_` WHERE prj_id = $id))";
+        else $parts[] = "(c.entity_table = '$t_' AND c.entity_id IN (SELECT ent_id FROM `$t_` WHERE prj_id = $id))";
+        $vc = $q("SELECT SUM(is_current = 1) cur, SUM(is_current = 0) old FROM `$t_` WHERE prj_id = ?", [$id])[0];
+        if ((int)$vc['cur'] + (int)$vc['old'] > 0) $verCount[$t_] = $vc;
+    }
+    $changes = $q("SELECT c.*, COALESCE(NULLIF(TRIM(CONCAT_WS(' ', e.last_name, e.first_name)),''), u.display_name, u.email) AS utente
+                     FROM entity_change_log c LEFT JOIN users u ON u.id = c.changed_by LEFT JOIN employees e ON e.id = u.employee_id
+                    WHERE " . implode(' OR ', $parts) . " ORDER BY c.id DESC LIMIT 300");
+}
 $svcCode = fn($sid) => (int)$sid === 0 ? 'GOV' : ($svcByEnt[(int)$sid]['codice'] ?? '?');
 
 $msg = '';
@@ -862,6 +967,11 @@ $tabUrl = fn(string $t, array $x = []) => url_safe('prj_dashboard', array_merge(
   <?php foreach ($C['anni'] as $a_): ?><tr><td><?=$a_['anno']?> <span class="prj-sub">(anno <?=$a_['n']?>)</span></td><td class="r"><?=PrjUi::n($a_['fte'], 1)?></td><td class="r"><?=PrjUi::k($a_['costo'])?></td><td class="r"><?=PrjUi::k($a_['canone'])?></td>
     <td class="r" style="color:<?=$a_['margine'] < 0 ? '#dc2626' : '#16a34a'?>"><?=PrjUi::k($a_['margine'])?></td><td class="r"><?=PrjUi::pct($a_['pct_canone'])?></td></tr><?php endforeach; ?>
   </tbody></table>
+  <?= PmCharts::groupedBars(array_map(fn($a_) => (string)$a_['anno'], $C['anni']), [
+        ['label' => 'Costo', 'color' => '#2563eb', 'values' => array_map(fn($a_) => $a_['costo'], $C['anni'])],
+        ['label' => 'Canone netto', 'color' => '#16a34a', 'values' => array_map(fn($a_) => $a_['canone'], $C['anni'])],
+        ['label' => 'Margine', 'color' => '#d97706', 'values' => array_map(fn($a_) => $a_['margine'], $C['anni'])],
+      ], ['unit' => 'k€', 'divisor' => 1000, 'decimals' => 1, 'height' => 180]) ?>
   <p class="prj-sub">I servizi con avvio dal secondo anno sono esclusi dagli anni precedenti.</p>
 </div>
 <?php endif; ?>
@@ -886,6 +996,178 @@ $tabUrl = fn(string $t, array $x = []) => url_safe('prj_dashboard', array_merge(
 </div>
 </form>
 <?php endif; ?>
+<?php elseif ($tab === 'kpi'): /* ── KPI & PENALI ── */ ?>
+<form method="post"><?= csrf_field() ?><input type="hidden" name="action" value="vsave"><input type="hidden" name="tab" value="kpi">
+<div class="card" style="overflow-x:auto">
+  <div class="card-header"><span class="card-title"><i class="fa-solid fa-bullseye"></i> Catalogo KPI e penali</span><span class="prj-sub"><?=count($kpis)?> KPI · servizi associati per KPI</span></div>
+  <table class="data-table prj-tbl"><thead><tr><th>KPI</th><th>Indicatore</th><th>Livello atteso</th><th class="r">Penale €</th><th>Per priorità A/M/B</th><th>Unità</th><th class="r">Blocco</th><th>Servizi</th><th>Fonte</th></tr></thead><tbody>
+  <?php foreach ($kpis as $k_): ?>
+    <tr><td><strong><?=h($k_['codice'])?></strong></td><td><?=h($k_['indicatore'])?></td>
+      <td><?=PrjUi::input('cm_prj_kpi', (int)$k_['id'], 'livello_atteso', $k_['livello_atteso'], $can_edit, 'style="width:200px"')?></td>
+      <td class="r"><?=PrjUi::input('cm_prj_kpi', (int)$k_['id'], 'penale_importo', $k_['penale_importo'], $can_edit, 'style="width:80px;text-align:right"')?></td>
+      <td><?=PrjUi::input('cm_prj_kpi', (int)$k_['id'], 'penale_importi_priorita', $k_['penale_importi_priorita'], $can_edit, 'style="width:100px"')?></td>
+      <td><?=h(str_replace('_', ' ', $k_['penale_unita']))?></td><td class="r"><?=h((string)($k_['blocco'] ?? ''))?></td>
+      <td class="prj-sub" title="<?=h(implode(', ', $kpiSvc[(int)$k_['ent_id']] ?? []))?>"><?=count($kpiSvc[(int)$k_['ent_id']] ?? [])?> servizi</td>
+      <td class="prj-sub"><?=h((string)$k_['source_ref'])?></td></tr>
+  <?php endforeach; ?></tbody></table>
+  <?php if ($can_edit) echo PrjUi::versionFields(); ?>
+</div>
+</form>
+
+<div class="card" style="margin-top:14px;overflow-x:auto">
+  <div class="card-header"><span class="card-title"><i class="fa-solid fa-scale-unbalanced"></i> Simulatore penali</span>
+    <span class="prj-sub">quantità fuori soglia nel periodo · canone del periodo = canone medio <?= $penPeriodo === 'anno' ? 'annuo' : '/ 12' ?></span></div>
+  <form method="get"><?= route_slug_field('prj_dashboard') ?><input type="hidden" name="id" value="<?=$id?>"><input type="hidden" name="tab" value="kpi">
+  <div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:8px;font-size:12px">
+    <div class="form-group" style="margin:0"><label>Periodo</label><select name="periodo"><option value="mese" <?=$sel('mese', $penPeriodo)?>>Mese</option><option value="anno" <?=$sel('anno', $penPeriodo)?>>Anno</option></select></div>
+    <span class="prj-sub">Per i KPI a blocchi di ticket indicare i ticket fuori SLA per priorità (A, M, B); per la patch compliance i punti % mancanti (critiche, non critiche); per i target di spesa lo sforamento in €.</span>
+  </div>
+  <table class="data-table prj-tbl"><thead><tr><th>KPI</th><th>Indicatore</th><th>Quantità</th><th class="r">Penale</th></tr></thead><tbody>
+  <?php foreach ($kpis as $k_): $c_ = $k_['codice']; $in_ = $penIn[$c_] ?? null; $pr_ = $penRes[$c_] ?? null; ?>
+    <tr><td><?=h($c_)?></td><td><?=h($k_['indicatore'])?> <span class="prj-sub"><?=h((string)$k_['livello_atteso'])?></span></td>
+      <td><?php if ($k_['penale_unita'] === 'blocco_ticket' && $k_['penale_importi_priorita']): foreach (['A', 'M', 'B'] as $pp): ?>
+            <?=$pp?> <input type="text" name="pen[<?=h($c_)?>][<?=$pp?>]" value="<?=h((string)($in_[$pp] ?? ''))?>" style="width:50px;text-align:right">
+          <?php endforeach; elseif ($k_['penale_unita'] === 'punto_pct' && $k_['penale_importi_priorita']): ?>
+            critiche <input type="text" name="pen[<?=h($c_)?>][critiche]" value="<?=h((string)($in_['critiche'] ?? ''))?>" style="width:50px;text-align:right">
+            non critiche <input type="text" name="pen[<?=h($c_)?>][non_critiche]" value="<?=h((string)($in_['non_critiche'] ?? ''))?>" style="width:50px;text-align:right">
+          <?php elseif ($k_['penale_unita'] !== 'nessuna'): ?>
+            <input type="text" name="pen[<?=h($c_)?>][q]" value="<?=h(is_array($in_) ? '' : (string)($in_ ?? ''))?>" style="width:80px;text-align:right"> <span class="prj-sub"><?=h(str_replace('_', ' ', $k_['penale_unita']))?></span>
+          <?php else: ?><span class="prj-sub">monitoraggio</span><?php endif; ?></td>
+      <td class="r"><?= $pr_ !== null ? PrjUi::eur($pr_, 0) : '' ?></td></tr>
+  <?php endforeach; ?></tbody>
+  <?php if ($pen): ?><tfoot><tr style="font-weight:700"><td colspan="3">Totale penali (<?=h($penPeriodo)?>)</td><td class="r"><?=PrjUi::eur($pen['totale'], 0)?> · <?=PrjUi::pct($pen['pct_canone'], 2)?> del canone</td></tr></tfoot><?php endif; ?>
+  </table>
+  <button class="btn btn-primary btn-sm" style="margin-top:8px"><i class="fa-solid fa-calculator"></i> Simula</button>
+  </form>
+</div>
+
+<div class="card" style="margin-top:14px">
+  <div class="card-header"><span class="card-title"><i class="fa-solid fa-arrows-left-right"></i> Banda volumi ±<?=PrjUi::pct((float)($prod['banda_volumi'] ?? 0.2))?> e conguaglio</span></div>
+  <form method="get" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap"><?= route_slug_field('prj_dashboard') ?><input type="hidden" name="id" value="<?=$id?>"><input type="hidden" name="tab" value="kpi">
+    <div class="form-group" style="margin:0"><label>Ticket stimati (anno <?=$vy?>)</label><input type="text" value="<?=PrjUi::n($ticketStimati, 0)?>" readonly style="width:110px"></div>
+    <div class="form-group" style="margin:0"><label>Ticket reali dell'anno</label><input type="text" name="ticket_reali" value="<?=h((string)($_GET['ticket_reali'] ?? ''))?>" style="width:110px"></div>
+    <button class="btn btn-sm">Calcola</button>
+    <?php if ($cong): ?><span style="font-size:12px">Valore unitario <strong><?=PrjUi::eur($cong['valore_unitario'])?></strong> · banda <?=PrjUi::n($cong['soglia_inf'], 0)?>–<?=PrjUi::n($cong['soglia_sup'], 0)?> ·
+      fuori banda <strong><?=PrjUi::n($cong['ticket_fuori_banda'], 0)?></strong> · conguaglio <strong style="color:<?=$cong['conguaglio'] < 0 ? '#dc2626' : '#16a34a'?>"><?=PrjUi::eur($cong['conguaglio'], 0)?></strong></span><?php endif; ?>
+  </form>
+  <p class="prj-sub">Eccedenza o difetto oltre la banda valorizzati a canone medio / ticket stimati [regola contrattuale della gara].</p>
+</div>
+
+<?php elseif ($tab === 'punt'): /* ── PUNTEGGIO ── */ ?>
+<form method="post"><?= csrf_field() ?><input type="hidden" name="action" value="vsave"><input type="hidden" name="tab" value="punt">
+<div class="card" style="overflow-x:auto">
+  <div class="card-header"><span class="card-title"><i class="fa-solid fa-ranking-star"></i> Criteri di valutazione</span>
+    <span class="prj-sub">tecnica <?=PrjUi::n($ptTec, 0)?> · economica <?=PrjUi::n($ptEco, 0)?> · totale <?=PrjUi::n($ptTec + $ptEco, 0)?></span></div>
+  <table class="data-table prj-tbl"><thead><tr><th>Criterio</th><th>Descrizione</th><th>Tipo</th><th class="r">Punti max</th><th>Formula</th><th>Incongruenza bando</th></tr></thead><tbody>
+  <?php foreach ($crits as $c_): ?>
+    <tr><td><strong><?=h($c_['codice'])?></strong></td><td><?=h((string)$c_['descrizione'])?></td><td><?=h(['Q' => 'quantitativo', 'D' => 'discrezionale', 'T' => 'tabellare', 'E' => 'economico'][$c_['tipo']] ?? $c_['tipo'])?></td>
+      <td class="r"><?=PrjUi::input('cm_prj_criterion', (int)$c_['id'], 'punti_max', $c_['punti_max'], $can_edit, 'style="width:60px;text-align:right"')?></td>
+      <td><?=PrjUi::input('cm_prj_criterion', (int)$c_['id'], 'formula', $c_['formula'], $can_edit, 'style="width:170px"')?></td>
+      <td><?= $c_['flag_incongruenza'] ? '<span style="color:#d97706" title="' . h((string)$c_['nota_incongruenza']) . '"><i class="fa-solid fa-triangle-exclamation"></i> ' . h((string)$c_['nota_incongruenza']) . '</span>' : '' ?></td></tr>
+  <?php endforeach; ?></tbody></table>
+  <?php if ($can_edit) echo PrjUi::versionFields(); ?>
+</div>
+</form>
+
+<form method="post" style="margin-top:14px"><?= csrf_field() ?><input type="hidden" name="action" value="score_save"><input type="hidden" name="tab" value="punt">
+<fieldset <?= $can_edit ? '' : 'disabled' ?> style="border:0;padding:0;margin:0">
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+  <div class="card">
+    <div class="card-header"><span class="card-title"><i class="fa-solid fa-clipboard-check"></i> Simulatore tecnico</span><span class="prj-sub">punteggio <?=PrjUi::n($tec['totale'], 2)?> / <?=PrjUi::n($ptTec, 0)?></span></div>
+    <table class="data-table prj-tbl"><tbody>
+    <?php foreach ($crits as $c_): if ($c_['tipo'] === 'E') continue; $cc = $c_['codice']; $iv = $sIn[$cc] ?? []; $res_ = $tecBy[$cc] ?? null; ?>
+      <tr><td style="width:60px"><strong><?=h($cc)?></strong></td><td>
+      <?php switch ($c_['gruppo']):
+        case 'C': ?>Pi delle referenze (C.1+C.2+C.3+C.4), separati da punto e virgola<br><input type="text" name="s[C][list]" value="<?=h(implode('; ', $sList($iv)))?>" style="width:100%"><?php break;
+        case 'D': ?>Pi dei CV (D.1+D.2+D.3+D.4), separati da punto e virgola<br><input type="text" name="s[D][list]" value="<?=h(implode('; ', $sList($iv)))?>" style="width:100%"><?php break;
+        case 'E': ?>Servizi con certificazione premiante: S (soglia) e C (copertura) 0-1 · N = <input type="text" name="s[E][n_servizi]" value="<?=h((string)($iv['n_servizi'] ?? 11))?>" style="width:40px">
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-top:4px"><?php foreach ($services as $i_ => $sv): ?>
+            <span style="white-space:nowrap"><?=h($sv['codice'])?> S<input type="text" name="s[E][s<?=$i_ + 1?>]" value="<?=h((string)($iv['s' . ($i_ + 1)] ?? ''))?>" style="width:34px"> C<input type="text" name="s[E][c<?=$i_ + 1?>]" value="<?=h((string)($iv['c' . ($i_ + 1)] ?? ''))?>" style="width:34px"></span>
+          <?php endforeach; ?></div><?php break;
+        case 'F': ?>Certificazioni aziendali (1 = possesso, 0,5 = possesso parziale RTI):
+          <?php for ($i_ = 1; $i_ <= 4; $i_++): ?><select name="s[F][c<?=$i_?>]"><?php foreach (['0' => '0', '0.5' => '0,5', '1' => '1'] as $vv => $ll): ?><option value="<?=$vv?>" <?=$sel((string)(float)($iv['c' . $i_] ?? 0), (string)(float)$vv)?>><?=$ll?></option><?php endforeach; ?></select><?php endfor; ?><?php break;
+        case 'G': ?>RTNc (0-100) <input type="text" name="s[G][rtnc]" value="<?=h((string)($iv['rtnc'] ?? ''))?>" style="width:60px"><?php break;
+        case 'H': ?>Possesso <select name="s[H][v]"><?php foreach (['0' => 'no', '0.5' => 'parziale (0,5)', '1' => 'sì (1)'] as $vv => $ll): ?><option value="<?=$vv?>" <?=$sel((string)(float)($iv['v'] ?? 0), (string)(float)$vv)?>><?=$ll?></option><?php endforeach; ?></select><?php break;
+        default: ?>Coefficiente atteso 0-1 <input type="text" name="s[<?=h($cc)?>][coeff]" value="<?=h((string)($iv['coeff'] ?? ''))?>" style="width:60px"><?php if ($c_['flag_incongruenza']): ?> <span class="prj-sub" style="color:#d97706"><?=h((string)$c_['nota_incongruenza'])?></span><?php endif; ?>
+      <?php endswitch; ?></td><td class="r" style="width:90px"><?= $res_ ? PrjUi::n($res_['punti'], 2) . ' / ' . PrjUi::n($res_['punti_max'], 0) : '' ?></td></tr>
+    <?php endforeach; ?>
+    </tbody></table>
+  </div>
+  <div class="card">
+    <div class="card-header"><span class="card-title"><i class="fa-solid fa-euro-sign"></i> Simulatore economico</span><span class="prj-sub">punteggio <?=PrjUi::n($eco['totale'], 2)?> / <?=PrjUi::n($ptEco, 0)?></span></div>
+    <p class="prj-sub">PE = K1·(1−((1−s1)/(1+w·s1))^n1) + K2·(1−((1−s2)/(1+w·s2))^n2). w, n1, n2 non sono definiti nel bando: indicare i valori da simulare.</p>
+    <div class="prj-grid4" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+      <div class="form-group"><label>Ribasso canone s1 %</label><input type="text" name="s[ECO][s1]" value="<?=h((string)($ecoIn['s1'] ?? ''))?>"></div>
+      <div class="form-group"><label>Ribasso Uncommitted s2 %</label><input type="text" name="s[ECO][s2]" value="<?=h((string)($ecoIn['s2'] ?? ''))?>"></div>
+      <div class="form-group"><label>w</label><input type="text" name="s[ECO][w]" value="<?=h((string)($ecoIn['w'] ?? 1))?>"></div>
+      <div class="form-group"><label>n1</label><input type="text" name="s[ECO][n1]" value="<?=h((string)($ecoIn['n1'] ?? 1))?>"></div>
+      <div class="form-group"><label>n2</label><input type="text" name="s[ECO][n2]" value="<?=h((string)($ecoIn['n2'] ?? 1))?>"></div>
+    </div>
+    <table class="data-table prj-tbl"><tbody>
+      <tr><td>K1 canone (max <?=PrjUi::n($k1max, 0)?>)</td><td class="r"><?=PrjUi::n($eco['k1'], 2)?></td></tr>
+      <tr><td>K2 Uncommitted (max <?=PrjUi::n($k2max, 0)?>)</td><td class="r"><?=PrjUi::n($eco['k2'], 2)?></td></tr>
+      <tr style="font-weight:700"><td>Punteggio totale (tecnico + economico)</td><td class="r"><?=PrjUi::n($tec['totale'] + $eco['totale'], 2)?> / <?=PrjUi::n($ptTec + $ptEco, 0)?></td></tr>
+      <?php if ($C): ?><tr><td>Ribasso s1 rispetto al pareggio dello scenario «<?=h($C['scenario']['nome'])?>»</td><td class="r"><?=PrjUi::pct($C['totali']['ribasso_max_pareggio'], 1)?> massimo</td></tr><?php endif; ?>
+    </tbody></table>
+  </div>
+</div>
+<?php if ($can_edit): ?><button class="btn btn-primary btn-sm" style="margin-top:10px"><i class="fa-solid fa-floppy-disk"></i> Salva e ricalcola</button><?php endif; ?>
+</fieldset>
+</form>
+
+<?php elseif ($tab === 'stor'): /* ── STORICO ── */ ?>
+<div class="card" style="overflow-x:auto">
+  <div class="card-header"><span class="card-title"><i class="fa-solid fa-flask"></i> Calcoli salvati</span><span class="prj-sub">selezionare due calcoli per il confronto (il primo è la base)</span></div>
+  <form method="get"><?= route_slug_field('prj_dashboard') ?><input type="hidden" name="id" value="<?=$id?>"><input type="hidden" name="tab" value="stor">
+  <table class="data-table prj-tbl"><thead><tr><th>A</th><th>B</th><th>Run</th><th>Data</th><th>As-of</th><th>Scenario</th><th>Commessa SP</th><th class="r">FTE</th><th class="r">Costo totale</th><th class="r">% canone</th><th>Versione</th><th>Utente</th></tr></thead><tbody>
+  <?php if (!$runs): ?><tr><td colspan="12" class="prj-sub" style="text-align:center;padding:12px">Nessun calcolo salvato: usare «Calcola e salva» nella tab Scenari.</td></tr><?php endif; ?>
+  <?php foreach ($runs as $r_): ?>
+    <tr><td><input type="radio" name="ra" value="<?=(int)$r_['id']?>" <?=$sel($r_['id'], $ra) ? 'checked' : ''?>></td><td><input type="radio" name="rb" value="<?=(int)$r_['id']?>" <?=$sel($r_['id'], $rb) ? 'checked' : ''?>></td>
+      <td>#<?=(int)$r_['id']?></td><td><?=h(date('d/m/Y H:i', strtotime($r_['created_at'])))?></td><td><?=h($r_['as_of'])?></td><td><?=h((string)$r_['scenario_nome'])?></td>
+      <td><?=h((string)($r_['sp_code'] ?? '—'))?></td><td class="r"><?=PrjUi::n($r_['fte'] !== null ? (float)$r_['fte'] : null, 1)?></td><td class="r"><?=PrjUi::k($r_['tot'] !== null ? (float)$r_['tot'] : null)?></td>
+      <td class="r"><?=PrjUi::pct($r_['pct'] !== null ? (float)$r_['pct'] : null)?></td><td class="prj-sub"><?=h($r_['app_version'])?></td><td class="prj-sub"><?=h((string)($r_['utente'] ?? ''))?></td></tr>
+  <?php endforeach; ?></tbody></table>
+  <?php if (count($runs) > 1): ?><button class="btn btn-sm" style="margin-top:8px"><i class="fa-solid fa-code-compare"></i> Confronta</button><?php endif; ?>
+  </form>
+  <?php if ($cmp): ?>
+    <h4 style="font-size:12px;margin:14px 0 6px">Confronto run #<?=$ra?> → #<?=$rb?></h4>
+    <table class="data-table prj-tbl"><thead><tr><th>Ambito</th><th>Metrica</th><th class="r">#<?=$ra?></th><th class="r">#<?=$rb?></th><th class="r">Delta</th><th class="r">Delta %</th></tr></thead><tbody>
+    <?php foreach ($cmp as $c_): if (abs((float)($c_['delta'] ?? 0)) < 1e-9 && $c_['ambito'] !== 'totale') continue; ?>
+      <tr><td><?=h($c_['ambito'] . ($c_['ref'] !== '' ? ' ' . $c_['ref'] : ''))?></td><td><?=h(str_replace('_', ' ', $c_['metrica']))?></td>
+        <td class="r"><?=PrjUi::n($c_['a'], 2)?></td><td class="r"><?=PrjUi::n($c_['b'], 2)?></td>
+        <?php $up = in_array($c_['metrica'], ['margine', 'margine_pct', 'ribasso_max_pareggio', 'fte_finanziabili', 'canone_medio', 'canone_netto', 'canone', 'valore_punto_ribasso', 'valore_unitario_ticket'], true); $dd = (float)($c_['delta'] ?? 0); ?>
+        <td class="r" style="color:<?=abs($dd) < 1e-9 ? 'inherit' : (($dd > 0) !== $up ? '#dc2626' : '#16a34a')?>"><?=PrjUi::n($c_['delta'], 2)?></td><td class="r"><?=PrjUi::pct($c_['delta_pct'], 1)?></td></tr>
+    <?php endforeach; ?></tbody></table>
+  <?php endif; ?>
+</div>
+
+<div style="display:grid;grid-template-columns:2fr 1fr;gap:14px;margin-top:14px">
+<div class="card" style="overflow-x:auto">
+  <div class="card-header"><span class="card-title"><i class="fa-solid fa-clock-rotate-left"></i> Modifiche ai dati</span><span class="prj-sub">ultime 300 · EntityChangeLog</span></div>
+  <table class="data-table prj-tbl"><thead><tr><th>Data</th><th>Tabella</th><th>Record</th><th>Campo</th><th>Prima</th><th>Dopo</th><th>Fonte</th><th>Utente</th></tr></thead><tbody>
+  <?php if (!$changes): ?><tr><td colspan="8" class="prj-sub" style="text-align:center;padding:12px">Nessuna modifica registrata.</td></tr><?php endif; ?>
+  <?php foreach ($changes as $c_): ?>
+    <tr><td><?=h(date('d/m/Y H:i', strtotime($c_['changed_at'])))?></td><td><?=h(str_replace('cm_prj_', '', $c_['entity_table']))?></td><td>#<?=(int)$c_['entity_id']?></td><td><?=h($c_['field_name'])?></td>
+      <td title="<?=h((string)$c_['old_value'])?>"><?=h(mb_strimwidth((string)$c_['old_value'], 0, 30, '…'))?></td><td title="<?=h((string)$c_['new_value'])?>"><?=h(mb_strimwidth((string)$c_['new_value'], 0, 30, '…'))?></td>
+      <td class="prj-sub"><?=h($c_['change_action'] . ' · ' . $c_['change_source'])?></td><td class="prj-sub"><?=h((string)($c_['utente'] ?? ''))?></td></tr>
+  <?php endforeach; ?></tbody></table>
+</div>
+<div>
+  <div class="card">
+    <div class="card-header"><span class="card-title"><i class="fa-solid fa-layer-group"></i> Versioni dei dati</span></div>
+    <table class="data-table prj-tbl"><thead><tr><th>Dati</th><th class="r">Vigenti</th><th class="r">Storiche</th></tr></thead><tbody>
+    <?php foreach ($verCount as $t_ => $vc): ?><tr><td><?=h(str_replace(['cm_prj_', '_'], ['', ' '], $t_))?></td><td class="r"><?=(int)$vc['cur']?></td><td class="r"><?=(int)$vc['old']?></td></tr><?php endforeach; ?>
+    </tbody></table>
+  </div>
+  <div class="card" style="margin-top:14px">
+    <div class="card-header"><span class="card-title"><i class="fa-solid fa-link"></i> Collegamenti</span></div>
+    <table class="data-table prj-tbl"><tbody>
+    <?php if (!$linkHist): ?><tr><td class="prj-sub">Nessun collegamento.</td></tr><?php endif; ?>
+    <?php foreach ($linkHist as $hh): ?><tr><td><?=h(date('d/m/Y', strtotime($hh['created_at'])))?></td><td><?=h(str_replace('_', ' ', $hh['azione']))?></td><td><?=h((string)$hh['sp_project_code'])?></td></tr><?php endforeach; ?>
+    </tbody></table>
+  </div>
+</div>
+</div>
 <?php endif; ?>
 
 <?php require_once('footer.php'); ?>
