@@ -1,30 +1,29 @@
 {
-    "name": "PortalManager Release v1.9.99",
-    "version": "1.9.99",
-    "release_date": "2026-10-05 15:00:00",
-    "description": "Progetti PRJ e Analisi Gara & Dimensionamento (fase 2 di 6): schema cm_prj* (38 tabelle), seed parametri e PRJ-2026-0001 ASPI, permessi, PM_VERSION riallineato.",
+    "name": "PortalManager Release v1.10.00",
+    "version": "1.10.00",
+    "release_date": "2026-10-05 16:00:00",
+    "description": "Progetti PRJ (fase 3 di 6): motore di calcolo PrjCalc e accesso dati PrjRepo (as-of, calc run immutabili, versioning, codice PRJ).",
     "files": [
         "update_manifest.json",
         "VERSION",
         "app/Version.php",
-        "app/Router.php",
-        "manage_permissions.php",
-        "merge_employees.php",
-        "tools/verify_v1_9_99.php",
-        "sql/migration_v1_9_99.sql",
-        "docs/CHANGELOG_v1_9_99.md",
-        "docs/DEPLOYMENT_v1_9_99.md",
-        "docs/TECHNICAL_DESIGN_v1_9_99.md",
-        "docs/MANUALE_PRJ_v1_9_99.md",
-        "docs/RELEASE_CHECKLIST_v1_9_99.md"
+        "app/PrjCalc.php",
+        "app/PrjRepo.php",
+        "tools/verify_v1_10_00.php",
+        "sql/migration_v1_10_00.sql",
+        "docs/CHANGELOG_v1_10_00.md",
+        "docs/DEPLOYMENT_v1_10_00.md",
+        "docs/TECHNICAL_DESIGN_v1_10_00.md",
+        "docs/MANUALE_PRJ_v1_10_00.md",
+        "docs/RELEASE_CHECKLIST_v1_10_00.md"
     ],
     "migrations": [
-        "sql/migration_v1_9_99.sql"
+        "sql/migration_v1_10_00.sql"
     ],
     "post_install": [
-        "Eseguire sql/migration_v1_9_99.sql",
+        "Eseguire sql/migration_v1_10_00.sql",
         "Stop+Start Apache",
         "Ctrl+F5",
-        "php tools/verify_v1_9_99.php --db=<database>"
+        "php tools/verify_v1_10_00.php --db=<database>"
     ]
 }
