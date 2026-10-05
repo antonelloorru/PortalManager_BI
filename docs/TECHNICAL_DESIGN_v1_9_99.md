@@ -9,11 +9,11 @@ Base: repository `antonelloorru/PortalManager_BI`, branch `feature/v1.9.99-prj` 
 
 | # | Specifica | Stato reale del repository | Decisione proposta |
 |---|---|---|---|
-| A0.1 | Prima release v1.9.82 (dopo 1.9.81) | VERSION = **1.9.98** (v1.9.82–v1.9.98 già rilasciate) | Serie PRJ da **v1.9.99** (fasi 2–6 → v1.9.99…v1.9.103) |
+| A0.1 | Prima release v1.9.82 (dopo 1.9.81) | VERSION = **1.9.98** (v1.9.82–v1.9.98 già rilasciate) | Serie PRJ da **v1.9.99** (fasi 2–6 → v1.9.99…v1.10.03) |
 | A0.2 | `PM_VERSION` = 1.9.23 vs VERSION | Confermato: `app/Version.php:16` → `'1.9.23'`; `autoBumpIfNeeded()` confronta con questo valore, quindi non riallinea mai `app_settings` oltre 1.9.23 | In v1.9.99 `PM_VERSION` ← VERSION e da allora allineati a ogni release |
 | A0.3 | Dump QA `Dump/Dump_19.80_DB.zip` | Presente (131,8 MB, 1 file `.sql`) | Usato per RUN1/RUN2 |
 | A0.4 | FK verso tabelle esistenti `ON DELETE RESTRICT` | `CommesseSync` cancella i segnaposto `DGB-%` (`app/CommesseSync.php:174`). Con RESTRICT la sync fallirebbe se un PRJ puntasse a un segnaposto | `cm_prj.sp_project_id` → `ON DELETE SET NULL` + controllo orfani (§2.5). RESTRICT resta per `clients`, `companies`, `technologies`, `certifications`, `employees` |
-| A0.5 | `tools/verify_v1_9_*.php` | Presenti v1.9.27–v1.9.30 | `tools/verify_v1_9_100.php` (fase motore di calcolo) |
+| A0.5 | `tools/verify_v1_9_*.php` | Presenti v1.9.27–v1.9.30 | `tools/verify_v1_10_00.php` (fase motore di calcolo) |
 | A0.6 | Prefisso `cm_prj` | Nessuna occorrenza nel repository | Confermato |
 
 ---
@@ -169,7 +169,7 @@ WHERE valid_from <= :d AND (valid_to IS NULL OR valid_to >= :d)
 | `manage_projects.php` | Schede «Commesse SP» / «Progetti PRJ» (`?view=prj`). Elenco commesse invariato, + colonna nascosta «Progetti PRJ collegati» (`COUNT` da `cm_prj`). Filtro unico server-side, senza barra automatica (pattern v1.9.93) |
 | `project_dashboard.php` | + tab `data-tab="prj"` con badge (pattern DGB/Pratix, riga 455), elenco PRJ collegati, stimato vs consuntivo, «Collega progetto PRJ» |
 | `app/CommesseSync.php` | Hook post-sync `PrjLink::afterSync()`, read-only su `cm_projects` (§2.5) |
-| Nuovi: `app/PrjCalc.php`, `app/PrjRepo.php`, `app/PrjLink.php`, `prj_dashboard.php`, `prj_parameters.php`, `prj_history.php`, `api_prj.php`, `tools/verify_v1_9_100.php` | — |
+| Nuovi: `app/PrjCalc.php`, `app/PrjRepo.php`, `app/PrjLink.php`, `prj_dashboard.php`, `prj_parameters.php`, `prj_history.php`, `api_prj.php`, `tools/verify_v1_10_00.php` | — |
 
 Riuso: `FormulaEval` (formule penali, criterio A.1, PE), `EntityChangeLog`, `write_log()`, `RecycleBin`, `PmCharts`, `XlsxWriter`/`DocxWriter`, `ListFilter` + `saved_views_api.php`, `Workload::monthlyCapacity()`, `DgbModel::rollupForContract()`, `RateResolver`, `cm_employee_cost_year`, `cm_cost_year_params` (giorni/ore al posto di 220/1.600 quando valorizzati), `CostModel` (default `oneri_pct` = `moltiplicatore_fc` − 1 dell'anno, con il seed 0,40 come fallback).
 
@@ -255,11 +255,11 @@ AHT (ore medie per ticket), stima interna confermata:
 | Release | Fase | Contenuto |
 |---|---|---|
 | — | 1 | Questo Technical Design → conferma |
-| v1.9.99 | 2 | Migrazione di tutte le `cm_prj*` + seed globali + seed PRJ-2026-0001 (ASPI, non collegato) + Router + catalogo permessi + `PM_VERSION` allineato. Le voci di menu entrano con le pagine (v1.9.101 e v1.9.102), per non pubblicare link a pagine non ancora presenti |
-| v1.9.100 | 3 | `PrjCalc`, `PrjRepo` + `tools/verify_v1_9_100.php` (test §9) |
-| v1.9.101 | 4 | `?view=prj`, `prj_dashboard` (tab Anagrafica…Scenari), collegamento con storico e suggerimenti, `prj_parameters` |
-| v1.9.102 | 5 | KPI & penali, Punteggio, `prj_history`, tab «Progetti PRJ» nella commessa, colonna PRJ nell'elenco commesse |
-| v1.9.103 | 6 | Stimato vs Consuntivo, export XLSX/DOCX, manuali completi, checklist |
+| v1.9.99 | 2 | Migrazione di tutte le `cm_prj*` + seed globali + seed PRJ-2026-0001 (ASPI, non collegato) + Router + catalogo permessi + `PM_VERSION` allineato. Le voci di menu entrano con le pagine (v1.10.01 e v1.10.02), per non pubblicare link a pagine non ancora presenti |
+| v1.10.00 | 3 | `PrjCalc`, `PrjRepo` + `tools/verify_v1_10_00.php` (test §9) |
+| v1.10.01 | 4 | `?view=prj`, `prj_dashboard` (tab Anagrafica…Scenari), collegamento con storico e suggerimenti, `prj_parameters` |
+| v1.10.02 | 5 | KPI & penali, Punteggio, `prj_history`, tab «Progetti PRJ» nella commessa, colonna PRJ nell'elenco commesse |
+| v1.10.03 | 6 | Stimato vs Consuntivo, export XLSX/DOCX, manuali completi, checklist |
 
 Ogni release contiene:
 
@@ -282,3 +282,4 @@ Ogni release contiene:
 | Q5 | Permessi | Tabella §4, applicata nella migration v1.9.99 (modificabile da Gestione permessi) |
 | Q6 | Strutturale remoto | Solo dotazione per gli FTE marcati remoti nello scenario e per i nearshore; ufficio per gli altri |
 | Q7 | Collegamento | `ON DELETE SET NULL` + registro orfani |
+| Q8 | Numerazione dopo v1.9.99 | **v1.10.00** (non 1.9.100), poi v1.10.01, v1.10.02… File: `migration_v1_10_NN.sql`, `verify_v1_10_NN.php`. `version_compare('1.10.00','1.9.99') = 1`: ordinamento e auto-bump corretti |

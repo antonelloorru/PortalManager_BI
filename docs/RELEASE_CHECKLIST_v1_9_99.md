@@ -9,4 +9,4 @@
 - [x] Terminatori di riga preservati (manage_permissions.php misto CRLF/LF)
 - [x] Docs: CHANGELOG, DEPLOYMENT, TECHNICAL_DESIGN (con le decisioni del 05/10/2026), MANUALE (Admin e Utente), RELEASE_CHECKLIST
 - [x] `update_manifest.json` aggiornato
-- [ ] Voci di menu: rinviate a v1.9.101 e v1.9.102, insieme alle pagine
+- [ ] Voci di menu: rinviate a v1.10.01 e v1.10.02, insieme alle pagine

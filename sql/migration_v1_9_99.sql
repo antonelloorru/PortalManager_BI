@@ -1692,7 +1692,7 @@ UPDATE `cm_prj_overhead` SET `ent_id` = `id` WHERE `ent_id` IS NULL;
 
 -- ════════════════════════════════════════════════════════════════════
 -- 3. PERMESSI (catalogo e ruoli)
--- Pagine reali: prj_dashboard.php, prj_parameters.php, prj_history.php (rilasciate in v1.9.101 e v1.9.102)
+-- Pagine reali: prj_dashboard.php, prj_parameters.php, prj_history.php (rilasciate in v1.10.01 e v1.10.02)
 -- Permessi virtuali: manage_projects_prj.php (vista PRJ dell elenco), prj_dashboard_calc.php (calcolo),
 -- prj_link.php (collega e scollega commessa SP), prj_costs_real.php (costi reali dei dipendenti)
 -- ════════════════════════════════════════════════════════════════════
