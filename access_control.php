@@ -23,6 +23,13 @@ if (isset($pdo) && $pdo instanceof PDO && class_exists('Session')) {
     Session::syncRole($pdo);
 }
 
+// v1.9.83 — auto-sync RBAC: se il codice (menu, router, catalogo, versione) e' cambiato, allinea a fine
+// richiesta catalogo pagine e matrice permessi. Nel caso normale costa la lettura di un file.
+if (isset($pdo) && $pdo instanceof PDO && is_file(__DIR__ . '/app/RbacSync.php')) {
+    require_once __DIR__ . '/app/RbacSync.php';
+    RbacSync::autoSync($pdo);
+}
+
 // v1.9.56 — Auto-migrazione idempotente tabelle menu_preferences e permissions
 if (isset($pdo) && $pdo instanceof PDO) {
     static $menuMigrated = false;
