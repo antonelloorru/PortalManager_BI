@@ -4,6 +4,9 @@
  * Gestione Commesse: analisi gerarchica pianificazione -> attività -> incaricati,
  * KPI (SLA innesco, consuntivo vs pianificato), distribuzione carico sede/remoto,
  * data quality e import batch dei modelli DogoBit con report differenziale.
+ * v1.9.98 — pannello filtri allineato alla Relazione di Servizio IT (stato commessa, cliente,
+ *           linea/codice, settore, azienda, sede, modalità, fascia, durata, natura, raggruppa per)
+ *           e dettaglio aggregato sulle entità DGB (allocazioni incaricato × attività).
  */
 require_once('access_control.php');
 require_once('functions.php');
@@ -26,11 +29,19 @@ $dgbFiltriSheet = function () use ($f, $vCtr): array {
     if ($f['from'] !== '' || $f['to'] !== '') $r[] = ['Periodo (data lavoro)', ($f['from'] ?: '…') . ' – ' . ($f['to'] ?: '…')];
     if ($f['contratti']) $r[] = ['Contratto / PM Project', implode(', ', array_map(fn($v) => PmContractFilter::label($v, $vCtr), $f['contratti']))];
     // v1.9.97 — filtri multi-valore
-    foreach (['operators' => 'Incaricato (id)', 'statuses' => 'Stato', 'report_types' => 'Tipo report', 'modes' => 'Modalità',
-              'schedules' => 'Orario', 'clienti' => 'Cliente (id)', 'linee' => 'Codice linea', 'tipi' => 'Tipo attività (id)'] as $k => $l)
-        if (!empty($f[$k])) $r[] = [$l, implode(', ', $f[$k])];
+    // v1.9.98 — stessi campi della Relazione di Servizio IT
+    $lab = ['stati' => ['aperta' => 'Aperta', 'chiusa' => 'Chiusa', 'sospesa' => 'Sospesa', 'non_chiusa' => 'Non chiusa'],
+            'modes' => DgbModel::MODALITA];
+    foreach (['stati' => 'Stato commessa', 'operators' => 'Incaricato (id)', 'statuses' => 'Stato attività', 'report_types' => 'Tipo report',
+              'modes' => 'Modalità', 'schedules' => 'Orario', 'clienti' => 'Cliente (id)', 'linee' => 'Linea di servizio',
+              'codici' => 'Codice linea', 'settori' => 'Settore tecnologico', 'aziende' => 'Azienda esecutrice', 'sedi' => 'Sede di riferimento',
+              'fasce' => 'Fascia oraria', 'durate' => 'Durata', 'tipi' => 'Tipo attività (id)'] as $k => $l)
+        if (!empty($f[$k])) $r[] = [$l, implode(', ', array_map(fn($v) => $lab[$k][$v] ?? $v, $f[$k]))];
+    $r[] = ['Raggruppa per', implode(' › ', array_map(fn($d) => DgbModel::DIM[$d], $f['gb']))];
+    if (($f['cliente'] ?? '') !== '') $r[] = ['Cliente (testo)', $f['cliente']];
+    if (($f['ricavo'] ?? '') !== '') $r[] = ['Natura', $f['ricavo'] === '1' ? 'Commesse a ricavo' : 'Commesse interne'];
     $sn = ['1' => 'sì', '0' => 'no'];
-    foreach (['q' => 'Codice/ticket', 'oncall' => 'Incaricato reperibile (profilo)', 'rep' => 'Intervento in reperibilità',
+    foreach (['q' => 'Cerca (codice/ticket)', 'oncall' => 'Incaricato reperibile (profilo)', 'rep' => 'Intervento in reperibilità',
               'extra' => 'Con straordinario', 'ticket' => 'Ticket presente', 'modulo' => 'Modulo di intervento collegato',
               'sforo' => 'Consuntivo oltre il pianificato'] as $k => $l)
         if (($f[$k] ?? '') !== '') $r[] = [$l, $k === 'q' ? (string)$f[$k] : $sn[$f[$k]]];
@@ -442,6 +453,31 @@ if ($tab === 'anomalie') {
     }
 }
 
+// v1.9.98 — export XLSX del dettaglio aggregato (stesso perimetro e raggruppamento della pagina)
+if (strtolower((string)($_GET['export'] ?? '')) === 'aggxlsx') {
+    $agg = $model->aggrega($f, 50000); $tot = $model->aggregaTotale($f);
+    $met = ['attivita' => 'Attività', 'allocazioni' => 'Allocazioni', 'giornate_uomo' => 'Giornate-uomo (gg)', 'ore' => 'Ore consuntivate (h)',
+            'ore_ordinarie' => 'Ordinarie (h)', 'ore_straordinario' => 'Straordinario (h)', 'ore_reperibilita' => 'Reperibilità (h)',
+            'ore_viaggio' => 'Viaggio (h)', 'costo' => 'Costo (€)', 'ricavo' => 'Ricavo (€)', 'margine' => 'Margine (€)',
+            'presso_cliente' => 'Presso cliente (n.)', 'da_remoto' => 'Da remoto (n.)', 'smart_working' => 'Smart working (n.)'];
+    $data = [array_merge(array_map(fn($d) => DgbModel::DIM[$d], $f['gb']), array_values($met))];
+    foreach ($agg as $r) {
+        $row = []; foreach ($f['gb'] as $d) $row[] = DgbModel::etichetta($d, (string)$r[$d]);
+        foreach (array_keys($met) as $k) $row[] = (float)$r[$k];
+        $data[] = $row;
+    }
+    if ($tot) {
+        $tot['margine'] = round((float)$tot['ricavo'] - (float)$tot['costo'], 2);
+        $row = array_merge(['TOTALE'], array_fill(0, count($f['gb']) - 1, ''));
+        foreach (array_keys($met) as $k) $row[] = (float)$tot[$k];
+        $data[] = $row;
+    }
+    require_once(__DIR__ . '/XlsxWriter.php');
+    write_log('DGB', 'info', 'Export XLSX dettaglio aggregato (' . implode(',', $f['gb']) . '): ' . count($agg) . ' righe', $u_id);
+    $w = new XlsxWriter(); $w->addSheet('Dettaglio aggregato', $data); $w->addSheet('Filtri', $dgbFiltriSheet());
+    $w->download('dgb_dettaglio_aggregato_' . date('Ymd_Hi') . '.xlsx'); exit;
+}
+
 // dati analisi
 $kpi   = $model->kpi($f);
 $hb    = $model->hoursBreakdown($f);
@@ -506,6 +542,16 @@ $statuses  = $model->statuses();
 $optClienti = $model->clientiOptions();
 $optLinee   = $model->lineeOptions();
 $optTipi    = $model->tipiOptions();
+// v1.9.98 — opzioni dei campi della Relazione di Servizio IT (valori delle entità DGB, con conteggi)
+$optLabel   = $model->valori('linea_label');
+$optCodici  = $model->valori('linea_servizio');
+$optSettori = $model->valori('settore');
+$optAziende = $model->valori('azienda');
+$optSedi    = $model->valori('sede');
+$AGG_LIM    = 1000;
+$agg        = $tab === 'analisi' ? $model->aggrega($f, $AGG_LIM) : [];
+$aggTot     = $tab === 'analisi' ? $model->aggregaTotale($f) : [];
+$aggN       = (count($agg) >= $AGG_LIM) ? $model->aggregaGruppi($f) : count($agg);
 // v1.8.11: contratti DGB collegati a una commessa (per filtro ed etichette)
 $clabels = $model->contractLabels(); // dgb_contract_id => project_code
 $cinst = $pdo->query("SELECT dgb_contract_id, name FROM cm_projects WHERE dgb_contract_id IS NOT NULL")->fetchAll(PDO::FETCH_KEY_PAIR); // dgb_contract_id => code_x_installation (name)
@@ -789,10 +835,12 @@ $qs = function (array $over = []) use ($f, $tab, $gran, $month) {
       <?= route_slug_field() ?>
       <input type="hidden" name="gran" value="<?=h($gran)?>"><input type="hidden" name="month" value="<?=h($month)?>">
 
+      <?php // v1.9.98 — stessi gruppi, campi e logica di selezione della Relazione di Servizio IT ?>
       <div class="pm-group">
-        <h4>Contratto <span class="pm-multi">(filtro globale)</span></h4>
+        <h4>Contratto e stato commessa <span class="pm-multi">(filtro globale: KPI, grafici, dettaglio, tabelle, export)</span></h4>
         <div class="pm-grid-auto">
           <?= PmContractFilter::field($vCtr, $f['contratti'], 'vale anche per Relazione IT, Service Desk, Report direzionale') ?>
+          <?= $ms('stato_commessa', 'Stato commessa', ['aperta' => 'Aperta', 'chiusa' => 'Chiusa', 'sospesa' => 'Sospesa', 'non_chiusa' => 'Non chiusa'], $f['stati']) ?>
         </div>
       </div>
 
@@ -801,33 +849,53 @@ $qs = function (array $over = []) use ($f, $tab, $gran, $month) {
         <div class="pm-grid-auto">
           <div class="form-group"><label>Dal (data lavoro)</label><input type="date" name="from" value="<?=h($f['from'])?>"></div>
           <div class="form-group"><label>Al (data lavoro)</label><input type="date" name="to" value="<?=h($f['to'])?>"></div>
-          <div class="form-group"><label>Codice attività o ticket</label>
-            <input type="text" name="q" value="<?=h($f['q'] ?? '')?>" placeholder="Es. MAMT_23_000790"></div>
+          <div class="form-group"><label>Cerca ovunque</label>
+            <input type="text" name="q" value="<?=h($f['q'] ?? '')?>" placeholder="attività, ticket, commessa, cliente"></div>
+          <div class="form-group"><label>Cliente</label>
+            <input type="text" name="cliente" value="<?=h($f['cliente'])?>" placeholder="parte della ragione sociale"></div>
           <div class="form-group"><label>Ore ordinarie/giorno</label>
             <input type="number" name="stdh" step="0.5" min="1" max="24" value="<?=h((string)$f['stdh'])?>"></div>
         </div>
       </div>
 
       <div class="pm-group">
-        <h4>Attività</h4>
+        <h4>Servizio</h4>
         <div class="pm-grid-auto">
-          <?= $ms('status', 'Stato', $optSt, $f['statuses']) ?>
-          <?= $ms('tipi', 'Tipo attività (fascia)', $optTipi, $f['tipi']) ?>
-          <?= $ms('clienti', 'Cliente', $optClienti, $f['clienti']) ?>
-          <?= $ms('linee', 'Codice linea', $optLinee, $f['linee']) ?>
-          <?= $sn('ticket', 'Ticket', 'Presente', 'Assente') ?>
-          <?= $sn('modulo', 'Modulo di intervento', 'Collegato', 'Non collegato') ?>
-          <?= $sn('sforo', 'Consuntivo vs pianificato', 'Oltre il pianificato', 'Entro il pianificato') ?>
+          <?= $ms('linee', 'Linea di servizio', $optLabel, $f['linee']) ?>
+          <?= $ms('codici', 'Codice linea', $optCodici, $f['codici']) ?>
+          <?= $ms('settori', 'Settore tecnologico', $optSettori, $f['settori']) ?>
+          <?= $ms('aziende', 'Azienda esecutrice', $optAziende, $f['aziende']) ?>
+          <div class="form-group"><label>Natura</label>
+            <select name="ricavo" class="pm-ms"><option value="">— tutte —</option>
+              <option value="1" <?=$f['ricavo']==='1'?'selected':''?>>Commesse a ricavo</option>
+              <option value="0" <?=$f['ricavo']==='0'?'selected':''?>>Commesse interne</option>
+            </select></div>
         </div>
       </div>
 
       <div class="pm-group">
-        <h4>Incaricato ed erogazione</h4>
+        <h4>Erogazione</h4>
         <div class="pm-grid-auto">
           <?= $ms('operator', 'Incaricato', $optOp, $f['operators']) ?>
-          <?= $ms('mode', 'Modalità', ['sede' => 'In sede / presso cliente', 'remoto' => 'Da remoto', 'smart' => 'Smart working'], $f['modes']) ?>
+          <?= $ms('sedi', 'Sede di riferimento', $optSedi, $f['sedi']) ?>
+          <?= $ms('mode', 'Modalità', DgbModel::MODALITA, $f['modes']) ?>
+          <?= $ms('fasce', 'Fascia oraria', ['in orario' => 'In orario', 'fuori orario' => 'Fuori orario', 'non rilevata' => 'Non rilevata'], $f['fasce']) ?>
+          <?= $ms('durate', 'Durata', ['giornata' => 'Giornata (≥ 4 h)', 'mezza giornata' => 'Mezza giornata (< 4 h)', 'non rilevata' => 'Non rilevata'], $f['durate']) ?>
+          <?= $ms('gb', 'Raggruppa per', DgbModel::DIM, $f['gb']) ?>
+        </div>
+      </div>
+
+      <div class="pm-group">
+        <h4>Attività DGB <span class="pm-multi">(campi propri del modello DogoBit)</span></h4>
+        <div class="pm-grid-auto">
+          <?= $ms('status', 'Stato attività', $optSt, $f['statuses']) ?>
+          <?= $ms('tipi', 'Tipo attività (fascia)', $optTipi, $f['tipi']) ?>
+          <?= $ms('clienti', 'Cliente (anagrafica)', $optClienti, $f['clienti']) ?>
           <?= $ms('report_type', 'Tipo report', ['STD' => 'STD', 'R_ANTEA' => 'R_ANTEA'], $f['report_types']) ?>
           <?= $ms('schedule', 'Orario incaricato', ['ordinario' => 'Ordinario', 'turni' => 'Turni'], $f['schedules']) ?>
+          <?= $sn('ticket', 'Ticket', 'Presente', 'Assente') ?>
+          <?= $sn('modulo', 'Modulo di intervento', 'Collegato', 'Non collegato') ?>
+          <?= $sn('sforo', 'Consuntivo vs pianificato', 'Oltre il pianificato', 'Entro il pianificato') ?>
           <?= $sn('oncall', 'Incaricato reperibile (profilo)', 'Solo reperibili', 'Non reperibili') ?>
           <?= $sn('rep', 'Intervento in reperibilità', 'Sì', 'No') ?>
           <?= $sn('extra', 'Straordinario', 'Con ore di straordinario', 'Senza straordinario') ?>
@@ -1269,6 +1337,50 @@ $qs = function (array $over = []) use ($f, $tab, $gran, $month) {
       <a class="btn btn-sm" href="<?=$qs(['export'=>'distsvg'])?>"><i class="fa-solid fa-image"></i> Grafico (SVG)</a>
     </div>
   </div>
+</div>
+
+<!-- v1.9.98 — Dettaglio aggregato (Raggruppa per), metriche del dominio DGB -->
+<?php
+  $nh = fn($v) => number_format((float)$v, 2, ',', '.') . ' h';
+  $ne = fn($v) => number_format((float)$v, 2, ',', '.') . ' €';
+  $nn = fn($v) => number_format((float)$v, 0, ',', '.');
+  $AGG_COL = [
+    ['attivita', 'Attività', $nn, 'attività distinte'], ['giornate_uomo', 'Giornate-uomo', fn($v) => number_format((float)$v, 0, ',', '.') . ' gg', 'coppie incaricato × giorno di lavoro'],
+    ['ore', 'Ore cons.', $nh, 'ore consuntivate dagli incaricati'], ['ore_ordinarie', 'Ordinarie', $nh, 'ore − straordinario, esclusa la reperibilità'],
+    ['ore_straordinario', 'Straord.', $nh, 'quota extra (compresa nelle ore), esclusa la reperibilità'], ['ore_reperibilita', 'Reperib.', $nh, 'ore degli interventi in reperibilità'],
+    ['ore_viaggio', 'Viaggio', $nh, 'ore di trasferta'], ['costo', 'Costo', $ne, ''], ['ricavo', 'Ricavo', $ne, ''], ['margine', 'Margine', $ne, 'ricavo − costo'],
+    ['presso_cliente', 'Presso cl.', $nn, 'interventi presso cliente'], ['da_remoto', 'Remoto', $nn, 'interventi da remoto'], ['smart_working', 'Smart', $nn, 'interventi in smart working'],
+  ];
+  if ($aggTot) $aggTot['margine'] = round((float)$aggTot['ricavo'] - (float)$aggTot['costo'], 2);
+?>
+<div class="card" style="margin-bottom:14px;overflow-x:auto">
+  <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+    <span class="card-title"><i class="fa-solid fa-layer-group"></i> Dettaglio — <?=h(implode(' › ', array_map(fn($d) => DgbModel::DIM[$d], $f['gb'])))?></span>
+    <span style="font-size:12px;color:var(--muted)"><strong><?=$nn($aggN)?></strong> gruppi<?= $aggN > count($agg) ? ' · primi ' . $nn(count($agg)) . ' a video (export completo)' : '' ?>
+      <a class="btn btn-success btn-sm" style="margin-left:8px" href="<?=$qs(['export' => 'aggxlsx'])?>"><i class="fa-solid fa-file-excel"></i> XLSX</a></span>
+  </div>
+  <p style="font-size:11px;color:var(--muted);margin:0 0 8px">Base: allocazioni incaricato × attività nel perimetro dei filtri, per data di lavoro; stesse ore del Quadro del periodo. Le attività senza incaricati non entrano nel dettaglio.</p>
+  <table class="data-table" style="width:100%;font-size:12px;white-space:nowrap">
+    <thead><tr>
+      <?php foreach ($f['gb'] as $d): ?><th><?=h(DgbModel::DIM[$d])?></th><?php endforeach; ?>
+      <?php foreach ($AGG_COL as [$k, $l, , $t]): ?><th style="text-align:right" title="<?=h($t)?>"><?=h($l)?></th><?php endforeach; ?>
+    </tr></thead>
+    <tbody>
+    <?php if (!$agg): ?><tr><td colspan="<?=count($f['gb']) + count($AGG_COL)?>" style="text-align:center;color:var(--muted);padding:18px">Nessun dato per i filtri impostati.</td></tr>
+    <?php else: foreach ($agg as $r): ?>
+      <tr>
+        <?php foreach ($f['gb'] as $d): ?><td><?=h(DgbModel::etichetta($d, (string)$r[$d]))?></td><?php endforeach; ?>
+        <?php foreach ($AGG_COL as [$k, , $fn]): ?><td style="text-align:right<?= $k === 'margine' && (float)$r[$k] < 0 ? ';color:#dc2626' : '' ?>"><?=$fn($r[$k])?></td><?php endforeach; ?>
+      </tr>
+    <?php endforeach; endif; ?>
+    </tbody>
+    <?php if ($aggTot && $agg): ?>
+    <tfoot><tr style="font-weight:700;border-top:2px solid var(--border)">
+      <td colspan="<?=count($f['gb'])?>">Totale</td>
+      <?php foreach ($AGG_COL as [$k, , $fn]): ?><td style="text-align:right"><?=$fn($aggTot[$k])?></td><?php endforeach; ?>
+    </tr></tfoot>
+    <?php endif; ?>
+  </table>
 </div>
 
 <!-- Data quality -->
