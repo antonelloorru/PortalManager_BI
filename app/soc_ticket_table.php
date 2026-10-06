@@ -15,7 +15,7 @@ function soc_ticket_table(array $rows, callable $qs, callable $pill, callable $c
     foreach ($rows as $t) {
         $late = (int)($t['ore_da_ultimo'] ?? 0);
         echo '<tr><td style="white-space:nowrap"><a href="' . $qs(['ticket' => $t['ticket_code'], 'tab' => 'ticket']) . '">' . $h($t['ticket_code']) . '</a></td>'
-           . '<td>' . $h(mb_strimwidth((string)$t['title'], 0, 80, '…')) . '</td><td>' . $h($t['client_name']) . '</td><td>' . $h($t['category']) . '</td><td>' . $h($t['assignee_name']) . '</td>'
+           . '<td>' . $h(mb_strimwidth((string)$t['title'], 0, 80, '…')) . '</td><td>' . $h($t['client_name']) . '</td><td>' . $h($t['category']) . '</td><td>' . $h($t['assignee_name']) . ((($t['assignee_source'] ?? '') === 'dedotto') ? ' <span style="color:var(--muted);font-size:10px" title="dedotto dai messaggi: primo operatore che risponde o annota">(ded.)</span>' : '') . '</td>'
            . '<td style="white-space:nowrap">' . $dt($t['opened_at']) . '</td><td style="white-space:nowrap">' . $dt($t['last_event_at']) . '</td>'
            . '<td>' . $pill($t['status_now'] ?? '—', $colStato($t['status_now'] ?? '')) . '</td>';
         if ($compact) {

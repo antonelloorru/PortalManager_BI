@@ -1,9 +1,9 @@
 {
-    "name": "PortalManager Release v1.10.08",
-    "version": "1.10.08",
-    "release_date": "2026-10-06 11:40:00",
+    "name": "PortalManager Release v1.10.09",
+    "version": "1.10.09",
+    "release_date": "2026-10-06 12:10:00",
     "cumulative_from": "1.10.06",
-    "description": "DB SOC con la stessa logica di connessione del gestionale: opzione per ereditarne server e credenziali (cambia solo il database), errori di accesso guidati. Include la v1.10.07.",
+    "description": "Service SOC: ticket associati agli incaricati del team SOC anche con la sola sorgente DB (incaricato dedotto dai messaggi, operatori abbinati come autori, colonna Seguiti). Include v1.10.07 e v1.10.08.",
     "files": [
         "VERSION",
         "app/CronlessScheduler.php",
@@ -14,38 +14,47 @@
         "app/Version.php",
         "app/soc_sync_actions.php",
         "app/soc_sync_panel.php",
+        "app/soc_ticket_table.php",
         "cron_soc_sync.php",
         "cronless_worker.php",
         "docs/CHANGELOG_v1_10_07.md",
         "docs/CHANGELOG_v1_10_08.md",
+        "docs/CHANGELOG_v1_10_09.md",
         "docs/DEPLOYMENT_v1_10_07.md",
         "docs/DEPLOYMENT_v1_10_08.md",
+        "docs/DEPLOYMENT_v1_10_09.md",
         "docs/MANUALE_ADMIN_v1_10_07.md",
         "docs/MANUALE_ADMIN_v1_10_08.md",
+        "docs/MANUALE_ADMIN_v1_10_09.md",
         "docs/MANUALE_UTENTE_v1_10_07.md",
         "docs/MANUALE_UTENTE_v1_10_08.md",
+        "docs/MANUALE_UTENTE_v1_10_09.md",
         "docs/RELEASE_CHECKLIST_v1_10_07.md",
         "docs/RELEASE_CHECKLIST_v1_10_08.md",
+        "docs/RELEASE_CHECKLIST_v1_10_09.md",
         "docs/TECHNICAL_DESIGN_v1_10_07.md",
         "docs/TECHNICAL_DESIGN_v1_10_08.md",
+        "docs/TECHNICAL_DESIGN_v1_10_09.md",
         "service_soc.php",
         "sql/migration_v1_10_07.sql",
         "sql/migration_v1_10_08.sql",
+        "sql/migration_v1_10_09.sql",
         "sync_commesse.php",
         "tools/verify_v1_10_07.php",
         "tools/verify_v1_10_08.php",
+        "tools/verify_v1_10_09.php",
         "update_manifest.json"
     ],
     "migrations": [
         "sql/migration_v1_10_07.sql",
-        "sql/migration_v1_10_08.sql"
+        "sql/migration_v1_10_08.sql",
+        "sql/migration_v1_10_09.sql"
     ],
     "post_install": [
-        "Eseguire sql/migration_v1_10_07.sql (se non applicata) e sql/migration_v1_10_08.sql",
+        "Eseguire le migrazioni mancanti: sql/migration_v1_10_07.sql, sql/migration_v1_10_08.sql, sql/migration_v1_10_09.sql",
         "Stop+Start Apache",
         "Ctrl+F5",
-        "Sincronizzazione gestionale › SOC › Connessione: spuntare «Usa server e credenziali della Connessione al gestionale», indicare il database SOC, Salva, Test connessione",
-        "Sincronizzazione gestionale › SOC: attivare l'esecuzione automatica",
-        "php tools/verify_v1_10_08.php --db=<database> --connect=1"
+        "Sincronizzazione gestionale › SOC: Esegui ora (ricostruisce ticket, incaricati e abbinamenti)",
+        "php tools/verify_v1_10_09.php --db=<database>"
     ]
 }

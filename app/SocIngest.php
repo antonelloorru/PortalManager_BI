@@ -422,6 +422,21 @@ ORDER BY a.id";
                                  SET t.avg_reply_min = x.m, t.opened_by = x.k");
             $this->pdo->exec("UPDATE cm_soc_tickets SET resolution_min = CASE WHEN is_closed = 1 THEN TIMESTAMPDIFF(MINUTE, opened_at, closed_at) END,
                                      title = TRIM(REGEXP_REPLACE(title, '^((re|r|fw|fwd|i|aw)\\\\s*:\\\\s*)+', ''))");
+            // v1.10.09 — incaricato: dalla sorgente (export «Incaricato» o query personalizzata) oppure, se assente
+            // (query predefinita sul DB SOC: tt_article non porta l'assegnazione), dedotto dai messaggi: il primo operatore
+            // che risponde al cliente o scrive una nota interna sul ticket (presa in carico). Confronto con l'export
+            // dello stesso periodo: 92% di corrispondenze (più messaggi 90%, ultimo messaggio 84%).
+            $na = implode(',', array_map(fn($x) => $this->pdo->quote($x), self::NOT_ASSIGNED));
+            $this->pdo->exec("UPDATE cm_soc_tickets SET assignee_name = NULL WHERE LOWER(TRIM(COALESCE(assignee_name, ''))) IN ($na)");
+            $this->pdo->exec("UPDATE cm_soc_tickets SET assignee_source = 'sorgente' WHERE assignee_name IS NOT NULL");
+            $this->pdo->exec("UPDATE cm_soc_tickets t JOIN (
+                                   SELECT ticket_code, SUBSTRING(MIN(CONCAT(DATE_FORMAT(event_at, '%Y%m%d%H%i%s'), LPAD(id, 11, '0'), author_name)), 26) who
+                                     FROM cm_soc_events
+                                    WHERE event_kind IN ('supporto', 'nota') AND COALESCE(author_name, '') <> ''
+                                      AND LOWER(TRIM(author_name)) NOT IN ($na)
+                                    GROUP BY ticket_code) x ON x.ticket_code = t.ticket_code
+                                 SET t.assignee_name = x.who, t.assignee_source = 'dedotto'
+                               WHERE t.assignee_name IS NULL");
             $this->pdo->exec("UPDATE cm_soc_tickets t LEFT JOIN cm_soc_people p ON p.name = t.assignee_name LEFT JOIN cm_soc_people o ON o.name = t.owner_name
                                  LEFT JOIN cm_soc_clients c ON c.name = t.client_name
                                  SET t.assignee_employee_id = p.employee_id, t.owner_employee_id = o.employee_id, t.client_id = c.client_id");
@@ -445,7 +460,10 @@ ORDER BY a.id";
     {
         $o = ['people' => 0, 'clients' => 0];
         // persone
-        $names = $this->pdo->query("SELECT DISTINCT n FROM (SELECT assignee_name n FROM cm_soc_tickets UNION SELECT owner_name FROM cm_soc_tickets) x WHERE n IS NOT NULL AND n <> ''")->fetchAll(PDO::FETCH_COLUMN);
+        // v1.10.09 — anche gli autori di risposte e note (operatori SOC): con la sola sorgente DB incaricato e
+        // responsabile non arrivano dalla query predefinita e gli operatori restavano senza abbinamento
+        $names = $this->pdo->query("SELECT DISTINCT n FROM (SELECT assignee_name n FROM cm_soc_tickets UNION SELECT owner_name FROM cm_soc_tickets
+                                     UNION SELECT author_name FROM cm_soc_events WHERE event_kind IN ('supporto', 'nota')) x WHERE n IS NOT NULL AND n <> ''")->fetchAll(PDO::FETCH_COLUMN);
         $emps = $this->pdo->query("SELECT id, CONCAT_WS(' ', first_name, last_name) n FROM employees")->fetchAll(PDO::FETCH_KEY_PAIR);
         $et = []; foreach ($emps as $id => $n) $et[(int)$id] = self::tokens((string)$n);
         $st = $this->pdo->prepare("INSERT INTO cm_soc_people (name, employee_id, is_manual) VALUES (?, ?, 0) ON DUPLICATE KEY UPDATE employee_id = IF(is_manual = 1, employee_id, VALUES(employee_id))");

@@ -199,7 +199,7 @@ require_once('header.php');
     <?php foreach ([['Per categoria', $bCat, 'categoria'], ['Esito dei ticket chiusi', $bEsito, 'esito'], ['Stato attuale', $bStato, null]] as [$tt, $rows, $fk]): ?>
       <div class="card" style="padding:14px 16px;overflow-x:auto">
         <h3 style="font-size:14px;margin:0 0 8px"><?=h($tt)?></h3>
-        <table class="data-table" style="width:100%;font-size:12px"><thead><tr><th></th><th style="text-align:right">Ticket</th><th style="text-align:right">Chiusi</th><th style="text-align:right">Risposta media</th><th style="text-align:right">Ore moduli</th></tr></thead><tbody>
+        <table class="data-table" style="width:100%;font-size:12px"><thead><tr><th></th><th style="text-align:right" title="Ticket di cui è incaricato (fra parentesi: incaricato dedotto dai messaggi)">Incaricato</th><th style="text-align:right" title="Ticket su cui ha scritto risposte o note">Seguiti</th><th style="text-align:right">Chiusi</th><th style="text-align:right">Risposta media</th><th style="text-align:right">Ore moduli</th></tr></thead><tbody>
         <?php if (!$rows): ?><tr><td colspan="5" style="color:var(--muted)">Nessun dato.</td></tr><?php endif; ?>
         <?php foreach ($rows as $r): ?><tr>
           <td><?= $fk ? '<a href="' . $qs([$fk => $r['k']]) . '">' . h($r['k']) . '</a>' : $pill($r['k'], $colStato($r['k'])) ?></td>
@@ -228,7 +228,7 @@ require_once('header.php');
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px 16px;font-size:12px;margin-top:10px">
         <?php foreach (['Cliente' => $tk['client_name'] . ($tk['cliente_pm'] ? ' (' . $tk['cliente_pm'] . ')' : ''), 'Commessa SOC' => $tk['soc_contract'], 'Categoria' => $tk['category'], 'Tipo' => $tk['ticket_type'],
-                        'Responsabile' => $tk['owner_name'], 'Incaricato' => $tk['assignee_name'] . ($tk['dipendente'] ? ' → ' . $tk['dipendente'] : ''), 'Coda' => $tk['queue_name'], 'Casella' => $tk['mailbox'],
+                        'Responsabile' => $tk['owner_name'], 'Incaricato' => $tk['assignee_name'] . (($tk['assignee_source'] ?? '') === 'dedotto' ? ' (dedotto dai messaggi)' : '') . ($tk['dipendente'] ? ' → ' . $tk['dipendente'] : ''), 'Coda' => $tk['queue_name'], 'Casella' => $tk['mailbox'],
                         'Aperto' => $dt($tk['opened_at']), 'Ultimo evento' => $dt($tk['last_event_at']), 'Chiuso' => $dt($tk['closed_at']),
                         'Risposta media al cliente' => $tk['avg_reply_min'] === null ? '—' : $n1($tk['avg_reply_min'] / 60) . ' h',
                         'Eventi' => $tk['n_events'] . ' (' . $tk['n_support'] . ' supporto, ' . $tk['n_customer'] . ' cliente, ' . $tk['n_notes'] . ' note)', 'Riaperture' => $tk['n_reopen'],
@@ -280,14 +280,15 @@ require_once('header.php');
   </div>
   <div class="card" style="padding:14px 16px;overflow-x:auto">
     <h3 style="font-size:14px;margin:0 0 4px">Il team SOC e i dati del portale</h3>
-    <p style="font-size:11px;color:var(--muted);margin:0 0 8px">Ore dai moduli di intervento del dipendente abbinato nel periodo: «SOC» = moduli che riportano un ticket SOC; «totali» = tutti i suoi moduli. Unità = Unità Organizzativa del dipendente (i tecnici del servizio sono assegnati all'unità SOC dalla sincronizzazione); abbinamenti in Sincronizzazione gestionale › SOC.</p>
-    <table class="data-table" style="width:100%;font-size:12px"><thead><tr><th>Componente SOC</th><th>Dipendente</th><th>Unità</th><th style="text-align:right">Ticket</th><th style="text-align:right">Chiusi</th><th style="text-align:right">Aperti</th>
+    <p style="font-size:11px;color:var(--muted);margin:0 0 8px">Incaricato = dalla sorgente (export) o, se la sorgente non lo riporta (DB SOC), dedotto dai messaggi: il primo operatore che risponde o scrive una nota sul ticket. Seguiti = ticket su cui ha scritto risposte o note. Ore dai moduli di intervento del dipendente abbinato nel periodo: «SOC» = moduli che riportano un ticket SOC; «totali» = tutti i suoi moduli. Unità = Unità Organizzativa del dipendente (i tecnici del servizio sono assegnati all'unità SOC dalla sincronizzazione); abbinamenti in Sincronizzazione gestionale › SOC.</p>
+    <table class="data-table" style="width:100%;font-size:12px"><thead><tr><th>Componente SOC</th><th>Dipendente</th><th>Unità</th><th style="text-align:right" title="Ticket di cui è incaricato (fra parentesi: incaricato dedotto dai messaggi)">Incaricato</th><th style="text-align:right" title="Ticket su cui ha scritto risposte o note">Seguiti</th><th style="text-align:right">Chiusi</th><th style="text-align:right">Aperti</th>
       <th style="text-align:right">Msg supporto</th><th style="text-align:right">Note</th><th style="text-align:right">Risposta media</th><th style="text-align:right">Ore SOC</th><th style="text-align:right">Ore totali</th><th style="text-align:right">Quota SOC</th></tr></thead><tbody>
     <?php foreach ($team as $t): ?><tr>
-      <td><?= !empty($t['senza_ticket']) ? '<span style="color:var(--muted)">unità SOC, nessun ticket</span>' : '<a href="' . $qs(['tec' => $t['nome'], 'tab' => 'ticket']) . '">' . h($t['nome']) . '</a>' ?></td>
+      <td><?= !empty($t['senza_ticket']) ? '<span style="color:var(--muted)">unità SOC, nessun ticket nel periodo</span>' : '<a href="' . $qs(['tec' => $t['nome'], 'tab' => 'ticket']) . '">' . h($t['nome']) . '</a>' ?></td>
       <td><?= $t['dipendente'] ? h($t['dipendente']) : '<span style="color:var(--muted)">non abbinato</span>' ?></td>
       <td><?= $t['in_uo_soc'] ? $pill('SOC', '#7c3aed') : ($t['unita'] ? h($t['unita']) : '<span style="color:var(--muted)">—</span>') ?></td>
-      <td style="text-align:right"><?=$n($t['ticket'])?></td><td style="text-align:right"><?=$n($t['chiusi'])?></td><td style="text-align:right"><?=$n($t['aperti'])?></td>
+      <td style="text-align:right"><?=$n($t['ticket'])?><?= !empty($t['dedotti']) ? ' <span style="color:var(--muted);font-size:10px" title="incaricato dedotto dai messaggi">(' . $n($t['dedotti']) . ' ded.)</span>' : '' ?></td>
+      <td style="text-align:right"><?=$n($t['seguiti'] ?? 0)?></td><td style="text-align:right"><?=$n($t['chiusi'])?></td><td style="text-align:right"><?=$n($t['aperti'])?></td>
       <td style="text-align:right"><?=$n($t['msg_supporto'])?></td><td style="text-align:right"><?=$n($t['note'])?></td>
       <td style="text-align:right"><?=$t['risposta_media_h'] === null ? '—' : $n1($t['risposta_media_h']) . ' h'?></td>
       <td style="text-align:right"><?=$n1($t['ore_soc'])?></td><td style="text-align:right"><?=$n1($t['ore_tot'])?></td><td style="text-align:right"><?=$t['quota_soc'] === null ? '—' : $n1($t['quota_soc']) . '%'?></td></tr>
@@ -308,7 +309,7 @@ require_once('header.php');
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(480px,1fr));gap:14px">
     <div class="card" style="padding:14px 16px;overflow-x:auto">
       <h3 style="font-size:14px;margin:0 0 8px">Per commessa SOC</h3>
-      <table class="data-table" style="width:100%;font-size:12px"><thead><tr><th>Commessa SOC</th><th style="text-align:right">Ticket</th><th style="text-align:right">Chiusi</th><th style="text-align:right">Ancora aperti</th><th style="text-align:right">Ore moduli</th></tr></thead><tbody>
+      <table class="data-table" style="width:100%;font-size:12px"><thead><tr><th>Commessa SOC</th><th style="text-align:right" title="Ticket di cui è incaricato (fra parentesi: incaricato dedotto dai messaggi)">Incaricato</th><th style="text-align:right" title="Ticket su cui ha scritto risposte o note">Seguiti</th><th style="text-align:right">Chiusi</th><th style="text-align:right">Ancora aperti</th><th style="text-align:right">Ore moduli</th></tr></thead><tbody>
       <?php foreach ($bCom as $r): ?><tr><td><a href="<?=$qs(['commessa' => $r['k'] === '(non indicato)' ? null : $r['k']])?>"><?=h($r['k'])?></a></td><td style="text-align:right"><?=$n($r['attivi'])?></td>
         <td style="text-align:right"><?=$n($r['chiusi'])?></td><td style="text-align:right"><?=$n($r['ancora_aperti'])?></td><td style="text-align:right"><?=$n1($r['ore_moduli'])?></td></tr><?php endforeach; ?></tbody></table>
     </div>

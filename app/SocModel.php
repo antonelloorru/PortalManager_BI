@@ -79,7 +79,7 @@ final class SocModel
         if ($f['cliente'] !== '')   { $w[] = 't.client_name = ?'; $a[] = $f['cliente']; }
         if ($f['commessa'] !== '')  { $w[] = 't.soc_contract = ?'; $a[] = $f['commessa']; }
         if ($f['categoria'] !== '') { $w[] = 't.category = ?'; $a[] = $f['categoria']; }
-        if ($f['tec'] !== '')       { $w[] = '(t.assignee_name = ? OR t.owner_name = ?)'; $a[] = $f['tec']; $a[] = $f['tec']; }
+        if ($f['tec'] !== '')       { $w[] = "(t.assignee_name = ? OR t.owner_name = ? OR EXISTS (SELECT 1 FROM cm_soc_events fe WHERE fe.ticket_code = t.ticket_code AND fe.author_name = ? AND fe.event_kind IN ('supporto', 'nota')))"; array_push($a, $f['tec'], $f['tec'], $f['tec']); }
         if ($f['esito'] !== '')     { $w[] = 't.resolution = ?'; $a[] = $f['esito']; }
         if ($f['stato'] === 'aperti') $w[] = 't.is_closed = 0';
         if ($f['stato'] === 'chiusi') $w[] = 't.is_closed = 1';
@@ -233,16 +233,24 @@ final class SocModel
     {
         [$w, $a] = $this->where(['tec' => ''] + $f);
         $from = $f['from'] . ' 00:00:00'; $to = $f['to'] . ' 23:59:59';
-        $rows = $this->rows("SELECT t.assignee_name nome, MAX(t.assignee_employee_id) employee_id, COUNT(*) ticket,
+        $rows = $this->rows("SELECT t.assignee_name nome, MAX(t.assignee_employee_id) employee_id, COUNT(*) ticket, SUM(t.assignee_source = 'dedotto') dedotti,
                                     SUM(t.is_closed = 1 AND t.closed_at BETWEEN ? AND ?) chiusi, SUM(t.is_closed = 0) aperti,
                                     ROUND(AVG(t.avg_reply_min) / 60, 1) risposta_media_h
                                FROM cm_soc_tickets t WHERE $w AND COALESCE(t.assignee_name, '') <> '' GROUP BY t.assignee_name", array_merge([$from, $to], $a));
         // messaggi scritti dalla persona nel periodo (autore = nome come nel sistema SOC)
-        $msg = $this->rows("SELECT e.author_name n, SUM(e.event_kind = 'supporto') supporto, SUM(e.event_kind = 'nota') note
+        // v1.10.09 — «seguiti»: ticket su cui la persona ha scritto risposte o note, anche se l'incaricato è un altro
+        $msg = $this->rows("SELECT e.author_name n, SUM(e.event_kind = 'supporto') supporto, SUM(e.event_kind = 'nota') note,
+                                   COUNT(DISTINCT CASE WHEN e.event_kind IN ('supporto', 'nota') THEN e.ticket_code END) seguiti
                               FROM cm_soc_events e JOIN cm_soc_tickets t ON t.ticket_code = e.ticket_code
                              WHERE $w AND e.event_at BETWEEN ? AND ? GROUP BY e.author_name", array_merge($a, [$from, $to]));
         $mm = []; foreach ($msg as $r) $mm[$r['n']] = $r;
         $emp = []; foreach ($this->rows("SELECT name, employee_id FROM cm_soc_people", []) as $p) $emp[$p['name']] = $p['employee_id'];
+        // operatori che nel periodo hanno risposto o scritto note senza essere incaricati di alcun ticket
+        $have = array_column($rows, 'nome');
+        foreach ($mm as $nm => $m) {
+            if ($nm === '' || in_array($nm, $have, true) || ((int)$m['supporto'] + (int)$m['note']) === 0) continue;
+            $rows[] = ['nome' => $nm, 'employee_id' => $emp[$nm] ?? null, 'ticket' => 0, 'dedotti' => 0, 'chiusi' => 0, 'aperti' => 0, 'risposta_media_h' => null];
+        }
         // portale: ore dei moduli di intervento (SOC = ticket del sistema SOC; totale = tutti i moduli) del dipendente nel periodo
         $ids = array_filter(array_map('intval', array_values($emp)));
         $ore = []; $nomi = [];
@@ -259,6 +267,7 @@ final class SocModel
             $eid = (int)($emp[$r['nome']] ?? $r['employee_id'] ?? 0);
             $r['employee_id'] = $eid ?: null; $r['dipendente'] = $eid ? ($nomi[$eid] ?? null) : null;
             $r['msg_supporto'] = (int)($mm[$r['nome']]['supporto'] ?? 0); $r['note'] = (int)($mm[$r['nome']]['note'] ?? 0);
+            $r['seguiti'] = (int)($mm[$r['nome']]['seguiti'] ?? 0); $r['dedotti'] = (int)($r['dedotti'] ?? 0);
             $r['ore_soc'] = (float)($ore[$eid]['soc'] ?? 0); $r['ore_tot'] = (float)($ore[$eid]['tot'] ?? 0);
             $r['quota_soc'] = $r['ore_tot'] > 0 ? 100 * $r['ore_soc'] / $r['ore_tot'] : null;
         }
@@ -270,12 +279,12 @@ final class SocModel
                                JOIN employees e ON e.id = tp.employee_id WHERE u.code = ? AND tp.is_active = 1", [$code]) as $m) {
             if (in_array((int)$m['id'], $have, true)) continue;
             $o = $this->rows("SELECT COALESCE(SUM(quantity_hours),0) t FROM cm_intervention_reports WHERE technician_id = ? AND report_date BETWEEN ? AND ?", [(int)$m['id'], $f['from'], $f['to']])[0]['t'];
-            $rows[] = ['nome' => '(' . $m['n'] . ')', 'employee_id' => (int)$m['id'], 'dipendente' => $m['n'], 'ticket' => 0, 'chiusi' => 0, 'aperti' => 0, 'risposta_media_h' => null,
+            $rows[] = ['nome' => '(' . $m['n'] . ')', 'employee_id' => (int)$m['id'], 'dipendente' => $m['n'], 'ticket' => 0, 'dedotti' => 0, 'seguiti' => 0, 'chiusi' => 0, 'aperti' => 0, 'risposta_media_h' => null,
                        'msg_supporto' => 0, 'note' => 0, 'ore_soc' => 0.0, 'ore_tot' => (float)$o, 'quota_soc' => (float)$o > 0 ? 0.0 : null, 'senza_ticket' => true];
         }
         foreach ($rows as &$r) { $u = $units[(int)($r['employee_id'] ?? 0)] ?? null; $r['unita'] = $u['name'] ?? null; $r['in_uo_soc'] = $u && $u['code'] === $code; }
         unset($r);
-        usort($rows, fn($x, $y) => $y['ticket'] <=> $x['ticket']);
+        usort($rows, fn($x, $y) => [$y['ticket'], $y['seguiti']] <=> [$x['ticket'], $x['seguiti']]);
         return $rows;
     }
 
@@ -349,7 +358,8 @@ final class SocModel
         $c = ['cliente' => 'client_name', 'commessa' => 'soc_contract', 'categoria' => 'category', 'esito' => 'resolution'][$col] ?? null;
         if ($c === null) {
             if ($col !== 'tec') return [];
-            return array_column($this->rows("SELECT DISTINCT n FROM (SELECT assignee_name n FROM cm_soc_tickets UNION SELECT owner_name FROM cm_soc_tickets) x
+            return array_column($this->rows("SELECT DISTINCT n FROM (SELECT assignee_name n FROM cm_soc_tickets UNION SELECT owner_name FROM cm_soc_tickets
+                                               UNION SELECT author_name FROM cm_soc_events WHERE event_kind IN ('supporto', 'nota')) x
                                                WHERE n IS NOT NULL AND n <> '' ORDER BY n", []), 'n');
         }
         return array_column($this->rows("SELECT DISTINCT $c v FROM cm_soc_tickets WHERE $c IS NOT NULL AND $c <> '' ORDER BY v", []), 'v');
@@ -374,7 +384,8 @@ final class SocModel
     public function people(): array
     {
         return $this->rows("SELECT p.*, CONCAT_WS(' ', e.last_name, e.first_name) dipendente,
-                                   (SELECT COUNT(*) FROM cm_soc_tickets t WHERE t.assignee_name = p.name OR t.owner_name = p.name) ticket
+                                   (SELECT COUNT(*) FROM cm_soc_tickets t WHERE t.assignee_name = p.name OR t.owner_name = p.name
+                                       OR EXISTS (SELECT 1 FROM cm_soc_events e WHERE e.ticket_code = t.ticket_code AND e.author_name = p.name AND e.event_kind IN ('supporto', 'nota'))) ticket
                               FROM cm_soc_people p LEFT JOIN employees e ON e.id = p.employee_id ORDER BY p.name", []);
     }
 
