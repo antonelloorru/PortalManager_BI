@@ -160,6 +160,7 @@ $page_map = [
         'project_gantt.php'          => ['Gantt commesse', 'Diagramma di Gantt di portfolio: pianificato vs effettivo dai rapporti'],
         'workload_overview.php'      => ['Carico & Sovrapposizioni', 'Impegno persone per commessa, contemporaneità, sovraccarichi, contesa risorse'],
         'dgb_activities.php'         => ['Attività & Rendicontazione DGB', 'Gerarchia pianificazione/attività/incaricati DogoBit, KPI SLA e consuntivo, distribuzione carico, data quality, import batch con diff'],
+        'service_soc.php'            => ['Service SOC', 'Ticket del sistema di gestione SOC aggregati con moduli, commesse e dipendenti; import XLSX e sync DB SOC'],
         'dgb_api.php'                => ['↳ API attività DGB', 'Sub-route: endpoint JSON parametrizzato (tabella, KPI, grafici, anomalie)'],
         // v1.9.99 — Progetti PRJ e Analisi Gara & Dimensionamento
         'manage_projects_prj.php'    => ['Progetti PRJ (elenco)', 'Permesso virtuale: vista ?view=prj di Commesse / Progetti (consultazione, creazione, export)'],

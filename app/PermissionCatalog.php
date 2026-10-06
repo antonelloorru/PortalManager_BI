@@ -99,6 +99,7 @@ final class PermissionCatalog
             'tech_registry.php'          => ['Anagrafica tecnici', 'Registro tecnici IT e profili'],
             'tech_units.php'             => ['Unità organizzative tecniche', 'Unità e sotto-unità tecniche, assegnazioni'],
             'service_desk.php'           => ['Service Desk', 'Ticket, prese in carico, squadra, costi e OBJ_2 del Service Desk'],
+            'service_soc.php'           => ['Service SOC', 'Ticket del sistema di gestione SOC aggregati con moduli, commesse e dipendenti; import XLSX e sync DB SOC'],
             'it_service.php'             => ['Relazione di Servizio IT', 'Operatività per incaricato, linea, settore, modalità; stampa ed export'],
             'dir_report.php'             => ['Report direzionale', 'Portafoglio commesse, margini, rischio, schede commerciali per agente'],
             'relazione_servizio_it.php'  => ['↳ Relazione servizio IT (legacy)', 'Pagina storica della relazione IT'],

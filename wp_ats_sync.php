@@ -130,7 +130,7 @@ require_once('header.php');
         <thead><tr><th>Posizione</th><th>Sede</th><th>Contratto</th><th>Sul sito</th></tr></thead><tbody>
         <?php if (!$pubs): ?><tr><td colspan="4" style="color:var(--muted)">Nessuna posizione aperta.</td></tr><?php endif; ?>
         <?php foreach ($pubs as $p): ?>
-          <tr><td><a href="<?= $h(url_safe('publish_posizione', ['pos_id' => $p['id']])) ?>"><?= $h($p['title']) ?></a></td><td><?= $h($p['location']) ?></td><td><?= $h($p['contract_type']) ?></td>
+          <tr><td><a href="<?= url_safe('publish_posizione', ['pos_id' => $p['id']]) ?>"><?= $h($p['title']) ?></a></td><td><?= $h($p['location']) ?></td><td><?= $h($p['contract_type']) ?></td>
             <td><?= $p['pub_status'] === 'published' && $p['channel_url'] ? "<a href='" . $h($p['channel_url']) . "' target='_blank' rel='noopener'>Apri <i class='fa-solid fa-arrow-up-right-from-square'></i></a>" : $pill('DA INVIARE', '#d97706') ?></td></tr>
         <?php endforeach; ?>
         </tbody></table>
@@ -143,7 +143,7 @@ require_once('header.php');
         <?php if (!$imps): ?><tr><td colspan="4" style="color:var(--muted)">Nessuna candidatura importata.</td></tr><?php endif; ?>
         <?php foreach ($imps as $i): ?>
           <tr><td><?= $dt($i['imported_at']) ?></td>
-            <td><?php if ($i['candidate_id']): ?><a href="<?= $h(url_safe('candidato_profilo', ['id' => $i['candidate_id']])) ?>"><?= $h(trim($i['first_name'] . ' ' . $i['last_name'])) ?></a><br><small style="color:var(--muted)"><?= $h($i['email']) ?></small><?php else: ?>—<?php endif; ?></td>
+            <td><?php if ($i['candidate_id']): ?><a href="<?= url_safe('candidato_profilo', ['id' => $i['candidate_id']]) ?>"><?= $h(trim($i['first_name'] . ' ' . $i['last_name'])) ?></a><br><small style="color:var(--muted)"><?= $h($i['email']) ?></small><?php else: ?>—<?php endif; ?></td>
             <td><?= $i['position_id'] ? $h($i['title']) : '<i>spontanea</i>' ?></td><td><code><?= $h(strtoupper(substr($i['wp_uuid'], 0, 8))) ?></code></td></tr>
         <?php endforeach; ?>
         </tbody></table>
