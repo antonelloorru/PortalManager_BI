@@ -7,7 +7,9 @@
  * del gestionale) aggregati con i dati del portale — moduli di intervento (ore, costi, ricavi, commesse),
  * anagrafica dipendenti e clienti, filtro globale Codice Contratto / PM Project.
  *
- * Schede: Cruscotto · Ticket · Team · Clienti e commesse.
+ * Schede: Cruscotto · Ticket · Team · Consuntivo attività SOC (v1.10.11) · Clienti e commesse.
+ * v1.10.11 — Consuntivo: moduli di intervento dei componenti dell'Unità Organizzativa SOC per Tipologia di contratto e
+ *            per operatore, con il modello di calcolo della Relazione di Servizio IT (ItServiceModel: classi di ore).
  * v1.10.07 — import da file, DB SOC, impostazioni e abbinamenti spostati in Sincronizzazione gestionale › SOC (pipeline unica, app/SocSync.php).
  * Permessi: view = consultazione; export = XLSX.
  */
@@ -19,7 +21,7 @@ require_once(__DIR__ . '/app/PmCharts.php');
 
 if (!can('view', 'service_soc.php')) { redirect('manage_projects'); }
 $u_id   = (int)$_SESSION['user_id'];
-$TABS = ['cruscotto' => 'Cruscotto', 'ticket' => 'Ticket', 'team' => 'Team', 'clienti' => 'Clienti e commesse'];
+$TABS = ['cruscotto' => 'Cruscotto', 'ticket' => 'Ticket', 'team' => 'Team', 'consuntivo' => 'Consuntivo attività SOC', 'clienti' => 'Clienti e commesse'];
 $tab = array_key_exists($_GET['tab'] ?? '', $TABS) ? $_GET['tab'] : 'cruscotto';
 
 $soc = new SocModel($pdo);
@@ -69,6 +71,21 @@ if ($ready && ($_GET['export'] ?? '') === 'xlsx' && can('export', 'service_soc.p
     $r = [['Commessa PM', 'Descrizione', 'Cliente', 'Moduli', 'Ticket', 'Ore', 'Costo (€)', 'Ricavo (€)', 'Tecnici']];
     foreach ($soc->commessePm($f) as $c) $r[] = [$c['codice'], $c['nome'], $c['cliente'], (int)$c['moduli'], (int)$c['ticket'], (float)$c['ore'], (float)$c['costo'], (float)$c['ricavo'], (int)$c['tecnici']];
     $w->addSheet('Commesse PM', $r);
+    // v1.10.11 — consuntivo dei componenti dell'Unità Organizzativa SOC (modello Relazione di Servizio IT)
+    require_once(__DIR__ . '/app/ItServiceModel.php');
+    $itx = new ItServiceModel($pdo); [$cfx] = $soc->consuntivoFiltri($f, $itx);
+    $ch = ['Interventi', 'Giornate-uomo', 'Ore totali', 'Ore ordinarie', 'Ore fuori orario', 'Ore reperibilità', 'N. interventi reperibilità', 'Ore non classificate', 'Ore a ricavo', 'Ore extra', 'Ore viaggio'];
+    $cv = fn($r) => [(int)$r['interventi'], (int)$r['giornate_uomo'], (float)$r['ore'], (float)$r['ore_ordinarie'], (float)$r['ore_fuori_orario'], (float)$r['ore_reperibilita'],
+                     (int)$r['reperibilita'], (float)$r['ore_non_classificate'], (float)$r['ore_ricavo'], (float)$r['ore_extra'], (float)$r['ore_viaggio']];
+    $r = [array_merge(['Codice', 'Tipologia di contratto', 'Modello'], $ch)];
+    foreach ($itx->aggrega(['gb' => ['linea_servizio', 'linea_label', 'modello_contratto']] + $cfx, 500) as $x) $r[] = array_merge([$x['linea_servizio'], $x['linea_label'], $x['modello_contratto']], $cv($x));
+    $w->addSheet('Consuntivo tipologia', $r);
+    $r = [array_merge(['Operatore'], $ch)];
+    foreach ($itx->aggrega(['gb' => ['incaricato']] + $cfx, 500) as $x) $r[] = array_merge([$x['incaricato']], $cv($x));
+    $w->addSheet('Consuntivo operatori', $r);
+    $r = [array_merge(['Operatore', 'Tipologia di contratto'], $ch)];
+    foreach ($itx->aggrega(['gb' => ['incaricato', 'linea_label']] + $cfx, 5000) as $x) $r[] = array_merge([$x['incaricato'], $x['linea_label']], $cv($x));
+    $w->addSheet('Operatore x tipologia', $r);
     $w->addSheet('Filtri', [['Filtro', 'Valore'], ['Periodo', $f['from'] . ' → ' . $f['to']], ['Cliente', $f['cliente']], ['Commessa SOC', $f['commessa']],
         ['Categoria', implode(', ', $f['categoria'])], ['Componente', $f['tec']], ['Stato', $f['stato']], ['Esito', $f['esito']], ['Ricerca', $f['q']], ['Contratti', implode(', ', $f['contratti'])]]);
     write_log('Service SOC', 'info', 'Export XLSX ' . $f['from'] . ' → ' . $f['to'], $u_id);
@@ -84,6 +101,17 @@ if ($ready) {
     }
     if ($tab === 'ticket' && !$tk) { $order = in_array($_GET['ord'] ?? '', ['recenti', 'vecchi', 'eventi', 'ore'], true) ? $_GET['ord'] : 'recenti'; $list = $soc->tickets($f, 500, $order); $nList = $soc->countTickets($f); }
     if ($tab === 'team') { $team = $soc->team($f); $tCat = $soc->teamCategorie($f); }
+    if ($tab === 'consuntivo') {
+        require_once(__DIR__ . '/app/ItServiceModel.php');
+        $itm = new ItServiceModel($pdo);
+        [$cf, $cInfo] = $soc->consuntivoFiltri($f, $itm);
+        $cTot   = $itm->totali($cf);
+        $cTip   = $itm->aggrega(['gb' => ['linea_servizio', 'linea_label', 'modello_contratto']] + $cf, 500);
+        $cOp    = $itm->aggrega(['gb' => ['incaricato']] + $cf, 500);
+        $cPiv   = $itm->aggrega(['gb' => ['incaricato', 'linea_label']] + $cf, 5000);
+        $cTrend = $itm->andamento($cf);
+        $cIds   = $itm->incaricatiDipendenti($cf);
+    }
     if ($tab === 'clienti') { $cli = $soc->clienti($f); $bCom = $soc->breakdown($f, 'commessa'); $cpm = $soc->commessePm($f); }
 }
 $qs = function (array $over = []) use ($f, $tab) {
@@ -339,6 +367,8 @@ require_once('header.php');
   </div>
   <?php endif; ?>
 <?php endif; ?>
+
+<?php if ($tab === 'consuntivo' && $ready) include __DIR__ . '/app/soc_consuntivo_panel.php'; ?>
 
 <?php if ($tab === 'clienti' && $ready): ?>
   <div class="card" style="padding:14px 16px;margin-bottom:14px;overflow-x:auto">

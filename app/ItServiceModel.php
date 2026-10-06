@@ -160,7 +160,21 @@ final class ItServiceModel
                 foreach ($f[$k] as $v) $a[] = $v;
             }
         }
-        if ($f['ricavo'] !== '') { $w[] = "s.`ha_ricavo` = ?"; $a[] = (int)$f['ricavo']; }
+        // v1.10.11 — perimetri usati dal Consuntivo del Service SOC (non esposti nel pannello della Relazione IT):
+        // dipendenti = componenti dell'Unità Organizzativa (id); tickets = moduli che riportano i ticket filtrati.
+        if (!empty($f['dipendenti'])) {
+            $ids = array_values(array_unique(array_map('intval', $f['dipendenti'])));
+            $w[] = "s.`employee_id` IN (" . implode(',', array_fill(0, count($ids), '?')) . ")";
+            foreach ($ids as $v) $a[] = $v;
+        }
+        if (isset($f['tickets']) && is_array($f['tickets'])) {
+            if (!$f['tickets']) $w[] = '1 = 0';
+            else {
+                $w[] = "s.`report_id` IN (SELECT irt.`id` FROM `cm_intervention_reports` irt WHERE irt.`ticket` IN (" . implode(',', array_fill(0, count($f['tickets']), '?')) . "))";
+                foreach ($f['tickets'] as $v) $a[] = (string)$v;
+            }
+        }
+        if (($f['ricavo'] ?? '') !== '') { $w[] = "s.`ha_ricavo` = ?"; $a[] = (int)$f['ricavo']; }
         if ($c = $this->ctrCond('s.`commessa`', $f, $a)) $w[] = $c;
         if ($c = self::statoCond('pst.`project_code` = s.`commessa`', $f)) $w[] = $c;   // v1.9.87
 
@@ -231,8 +245,9 @@ final class ItServiceModel
     /** Filtri attivi oltre al periodo (qualunque dimensione). */
     private static function haFiltri(array $f): bool
     {
-        foreach (['linee','codici','settori','aziende','incaricati','modalita','fasce','durate','sedi','contratti','stati'] as $k)
+        foreach (['linee','codici','settori','aziende','incaricati','modalita','fasce','durate','sedi','contratti','stati','dipendenti'] as $k)
             if (!empty($f[$k])) return true;
+        if (isset($f['tickets'])) return true;                                       // v1.10.11
         return ($f['ricavo'] ?? '') !== '' || ($f['q'] ?? '') !== '' || ($f['cliente'] ?? '') !== '';
     }
 
@@ -383,6 +398,18 @@ final class ItServiceModel
         $out = $st->fetchAll(PDO::FETCH_ASSOC);
         $st->closeCursor();
         return $out;
+    }
+
+    /** v1.10.11 — Incaricato (nome sul modulo) → dipendente, sullo stesso perimetro di KPI e tabelle. */
+    public function incaricatiDipendenti(array $f): array
+    {
+        [$w, $a] = $this->where($f);
+        $st = $this->pdo->prepare("SELECT s.`incaricato`, MAX(s.`employee_id`) AS employee_id
+                                     FROM `{$this->v['v_cm_it_servizio']}` s WHERE $w GROUP BY s.`incaricato`");
+        $st->execute($a);
+        $out = $st->fetchAll(PDO::FETCH_KEY_PAIR);
+        $st->closeCursor();
+        return array_map('intval', $out);
     }
 
     /** Ripartizione su una singola dimensione, per i grafici. */

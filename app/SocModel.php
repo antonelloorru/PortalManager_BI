@@ -340,6 +340,44 @@ final class SocModel
         return ['months' => $months, 'series' => array_map(fn($c) => ['cat' => $c, 'values' => array_map(fn($ym) => $m[$c][$ym] ?? 0, $months)], array_keys($tot))];
     }
 
+    /* ── v1.10.11 — consuntivo dei componenti dell'Unità Organizzativa SOC ── */
+
+    /** Componenti attivi dell'Unità Organizzativa SOC (soc.uo_code): id → «Cognome Nome». */
+    public function membriUo(): array
+    {
+        return array_map('strval', array_column($this->rows("SELECT e.id, CONCAT_WS(' ', e.last_name, e.first_name) n FROM cm_tech_profiles tp
+                                    JOIN cm_tech_units u ON u.id = tp.unit_id JOIN employees e ON e.id = tp.employee_id
+                                   WHERE u.code = ? AND tp.is_active = 1 ORDER BY e.last_name, e.first_name", [$this->setting('soc.uo_code', 'SOC')]), 'n', 'id'));
+    }
+
+    /**
+     * Filtri della Relazione di Servizio IT (ItServiceModel) derivati dal filtro principale del Service SOC:
+     * periodo e contratti invariati; perimetro = moduli di intervento dei componenti dell'unità SOC (per id);
+     * «Componente» = il dipendente abbinato a quel nome SOC; filtri sui ticket (categoria, cliente, commessa SOC,
+     * stato, esito, ricerca) = moduli che riportano i ticket filtrati.
+     * @return array{0:array,1:array} [filtri ItServiceModel, informazioni sul perimetro]
+     */
+    public function consuntivoFiltri(array $f, ItServiceModel $it): array
+    {
+        $x = $it->normFilters(['from' => $f['from'], 'to' => $f['to'], 'gb' => ['incaricato']]);
+        $x['contratti'] = $f['contratti'];
+        $membri = $this->membriUo();
+        $info = ['membri' => $membri, 'tec' => null, 'ticket_filtrati' => null];
+        $ids = array_map('intval', array_keys($membri));
+        if ($f['tec'] !== '') {
+            $eid = (int)($this->rows("SELECT employee_id FROM cm_soc_people WHERE name = ?", [$f['tec']])[0]['employee_id'] ?? 0);
+            $ids = [$eid ?: -1];
+            $info['tec'] = $eid ? ($this->rows("SELECT CONCAT_WS(' ', last_name, first_name) n FROM employees WHERE id = ?", [$eid])[0]['n'] ?? null) : null;
+        }
+        $x['dipendenti'] = $ids ?: [-1];
+        if ($f['cliente'] !== '' || $f['commessa'] !== '' || $f['categoria'] || $f['esito'] !== '' || $f['stato'] !== '' || $f['q'] !== '') {
+            [$w, $a] = $this->where(['tec' => ''] + $f, 'none');
+            $x['tickets'] = array_column($this->rows("SELECT t.ticket_code FROM cm_soc_tickets t WHERE $w", $a), 'ticket_code');
+            $info['ticket_filtrati'] = count($x['tickets']);
+        }
+        return [$x, $info];
+    }
+
     /* ── clienti e commesse del portale ─────────────────────────────── */
 
     public function clienti(array $f): array
