@@ -256,6 +256,16 @@ final class SyncRunner
                         $lk['by_allocation'], $lk['by_code'], $lk['unlinked']));
                 } catch (Throwable $e) { $say('Collegamento rapportini non eseguito: ' . $e->getMessage()); }
             }
+            // v1.10.07 — pipeline del Service SOC in coda alla sincronizzazione giornaliera (se attiva)
+            if (!$dryRun) {
+                try {
+                    require_once __DIR__ . '/SocSync.php';
+                    if (SocSync::setting($pdo, 'soc.sync_enabled', '0') === '1') {
+                        $sr = SocSync::run($pdo, 'giornaliera', true, null, $say);
+                        if (!$sr['ok']) $say('Service SOC: ' . $sr['message']);
+                    }
+                } catch (Throwable $e) { $say('Service SOC non sincronizzato: ' . $e->getMessage()); }
+            }
             // v1.9.73 — dati cambiati: si ricostruiscono le copie delle viste lente
             if (!$dryRun && $ok > 0) {
                 try {

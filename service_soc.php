@@ -7,128 +7,28 @@
  * del gestionale) aggregati con i dati del portale — moduli di intervento (ore, costi, ricavi, commesse),
  * anagrafica dipendenti e clienti, filtro globale Codice Contratto / PM Project.
  *
- * Schede: Cruscotto · Ticket · Team · Clienti e commesse · Ingestion.
- * Permessi: view = consultazione; edit = import, sincronizzazione, abbinamenti; Super Admin = connessione DB SOC.
+ * Schede: Cruscotto · Ticket · Team · Clienti e commesse.
+ * v1.10.07 — import da file, DB SOC, impostazioni e abbinamenti spostati in Sincronizzazione gestionale › SOC (pipeline unica, app/SocSync.php).
+ * Permessi: view = consultazione; export = XLSX.
  */
 require_once('access_control.php');
 require_once('functions.php');
 require_once(__DIR__ . '/app/SocModel.php');
 require_once(__DIR__ . '/app/SocIngest.php');
-require_once(__DIR__ . '/app/SourceDb.php');
 require_once(__DIR__ . '/app/PmCharts.php');
 
 if (!can('view', 'service_soc.php')) { redirect('manage_projects'); }
 $u_id   = (int)$_SESSION['user_id'];
-$isSA   = (int)($_SESSION['role_id'] ?? 99) === 1;
-$canRun = can('edit', 'service_soc.php');
-$TABS = ['cruscotto' => 'Cruscotto', 'ticket' => 'Ticket', 'team' => 'Team', 'clienti' => 'Clienti e commesse', 'ingestion' => 'Ingestion'];
+$TABS = ['cruscotto' => 'Cruscotto', 'ticket' => 'Ticket', 'team' => 'Team', 'clienti' => 'Clienti e commesse'];
 $tab = array_key_exists($_GET['tab'] ?? '', $TABS) ? $_GET['tab'] : 'cruscotto';
 
 $soc = new SocModel($pdo);
-$ing = new SocIngest($pdo);
-$flash = function (string $type, string $msg): void { $_SESSION['flash_msg'] = "<div class='alert alert-$type'>" . h($msg) . "</div>"; };
-$back = fn(array $extra = []) => redirect('service_soc', array_filter(['tab' => 'ingestion'] + $extra, fn($v) => $v !== null));
+require_once(__DIR__ . '/app/SocSync.php');
+$syncUrl = url_safe('sync_commesse', ['tab' => 'soc']);
+$canSync = can('view', 'sync_commesse.php');
 
-// ── azioni (POST → redirect) ────────────────────────────────────────────────
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    Csrf::verify();
-    $act = (string)($_POST['action'] ?? '');
-    if (!$canRun) { $flash('danger', 'Operazione non consentita.'); $back(); }
-    @set_time_limit(600);
-
-    if ($act === 'upload') {
-        $fl = $_FILES['file'] ?? null;
-        $ext = strtolower(pathinfo((string)($fl['name'] ?? ''), PATHINFO_EXTENSION));
-        $err = (int)($fl['error'] ?? UPLOAD_ERR_NO_FILE);
-        if (in_array($err, [UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE], true)) $flash('danger', 'File oltre il limite del server (upload_max_filesize = ' . ini_get('upload_max_filesize') . ', post_max_size = ' . ini_get('post_max_size') . '): aumentarlo in php.ini o importare un CSV.');
-        elseif (!$fl || $err !== UPLOAD_ERR_OK || !is_uploaded_file((string)$fl['tmp_name'])) $flash('danger', 'Caricamento del file non riuscito.');
-        elseif (!in_array($ext, ['xlsx', 'csv'], true)) $flash('danger', 'Formato non ammesso: usare l\'export XLSX o un CSV.');
-        elseif ((int)$fl['size'] > 30 * 1048576) $flash('danger', 'File oltre 30 MB.');
-        else {
-            $r = $ing->importFile((string)$fl['tmp_name'], basename((string)$fl['name']), $u_id);
-            write_log('Service SOC', $r['ok'] ? 'success' : 'warning', 'Import file ' . basename((string)$fl['name']) . ': ' . $r['message'], $u_id);
-            $flash($r['ok'] ? 'success' : 'danger', $r['message']);
-        }
-        $back();
-    }
-    if ($act === 'db_sync' || $act === 'db_sync_all') {
-        $r = $ing->importDb($u_id, 'manuale', $act === 'db_sync_all' ? 0 : null);
-        write_log('Service SOC', $r['ok'] ? 'success' : 'warning', 'Sincronizzazione DB SOC: ' . $r['message'], $u_id);
-        $flash($r['ok'] ? 'success' : 'danger', $r['message']);
-        $back();
-    }
-    if ($act === 'rebuild') {
-        $n = $ing->rebuild(); $m = $ing->autoMap();
-        $flash('success', "Ticket ricostruiti: $n · persone abbinate {$m['people']} · clienti abbinati {$m['clients']}");
-        $back();
-    }
-    if (in_array($act, ['db_save', 'db_test', 'db_preview'], true)) {
-        if (!$isSA) { $flash('danger', 'Solo il Super Admin configura la connessione al DB SOC.'); $back(); }
-        $cur = $pdo->query("SELECT * FROM cm_soc_source_db ORDER BY id DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC) ?: null;
-        $in = fn($k) => trim((string)($_POST[$k] ?? ''));
-        $row = [
-            'label' => $in('label') ?: 'Gestionale SOC', 'driver' => array_key_exists($in('driver'), SourceDb::DRIVERS) ? $in('driver') : 'mysql',
-            'host' => $in('host'), 'port' => (int)$in('port') ?: 3306, 'dbname' => $in('dbname'), 'username' => $in('username'),
-            'source_schema' => $in('source_schema') ?: null, 'timeout' => max(3, min(60, (int)$in('timeout') ?: 10)),
-            'window_days' => max(0, min(3650, (int)$in('window_days'))), 'ticket_prefix' => preg_replace('/[^A-Za-z0-9_]/', '', $in('ticket_prefix')) ?: null,
-            'extract_sql' => $in('extract_sql') ?: null, 'is_active' => empty($_POST['is_active']) ? 0 : 1,
-        ];
-        $pw = (string)($_POST['password'] ?? '');
-        try { $row['password_enc'] = $pw !== '' ? SourceDb::encrypt($pw) : ($cur['password_enc'] ?? ''); }
-        catch (Throwable $e) { $flash('danger', $e->getMessage()); $back(); }
-        if ($row['host'] === '' || $row['dbname'] === '' || $row['username'] === '') { $flash('danger', 'Host, database e utente sono obbligatori.'); $back(); }
-        if ($row['extract_sql'] !== null && !preg_match('/^\s*(SELECT|WITH)\b/i', (string)$row['extract_sql'])) { $flash('danger', 'La query di estrazione deve essere una SELECT.'); $back(); }
-        if ($act === 'db_save') {
-            $cols = array_keys($row);
-            if ($cur) {
-                $pdo->prepare("UPDATE cm_soc_source_db SET " . implode(', ', array_map(fn($c) => "$c = ?", $cols)) . " WHERE id = ?")->execute([...array_values($row), $cur['id']]);
-            } else {
-                $pdo->prepare("INSERT INTO cm_soc_source_db (" . implode(', ', $cols) . ", created_by) VALUES (" . implode(',', array_fill(0, count($cols) + 1, '?')) . ")")->execute([...array_values($row), $u_id]);
-            }
-            write_log('Service SOC', 'info', 'Connessione DB SOC salvata (' . $row['host'] . '/' . $row['dbname'] . ')', $u_id);
-            $flash('success', 'Connessione al DB SOC salvata.');
-            $back();
-        }
-        try {
-            $src = SourceDb::connect(SourceDb::configFromRow($row));
-            if ($act === 'db_test') {
-                $flash('success', 'Connessione riuscita: ' . SourceDb::DRIVERS[$row['driver']]['label'] . ' ' . $src->serverVersion());
-            } else {
-                $pv = $ing->previewDb($row, 10);
-                $_SESSION['soc_preview'] = $pv;
-                $flash('success', 'Anteprima (ultimi 7 giorni): ' . $pv['count'] . ' eventi letti, colonne riconosciute: ' . implode(', ', $pv['columns']));
-            }
-        } catch (Throwable $e) { $flash('danger', 'DB SOC: ' . $e->getMessage()); }
-        $back(['pv' => $act === 'db_preview' ? 1 : null]);
-    }
-    if ($act === 'settings') {
-        $st = $pdo->prepare("INSERT INTO app_settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)");
-        $st->execute(['soc.sla_risposta_ore', (string)max(1, min(240, (int)($_POST['sla'] ?? 4)))]);
-        $st->execute(['soc.presidio_ore', (string)max(1, min(720, (int)($_POST['presidio'] ?? 24)))]);
-        $st->execute(['soc.sync_enabled', empty($_POST['sync_enabled']) ? '0' : '1']);
-        $cs = implode(',', array_filter(array_map(fn($s) => strtoupper(trim($s)), explode(',', (string)($_POST['closed'] ?? '')))));
-        $st->execute(['soc.closed_states', $cs ?: 'CHIUSO,CHIUSO DAL CLIENTE']);
-        (new SocIngest($pdo))->rebuild();
-        $flash('success', 'Impostazioni salvate, ticket ricalcolati.');
-        $back();
-    }
-    if ($act === 'map_people' || $act === 'map_clients') {
-        $tbl = $act === 'map_people' ? ['cm_soc_people', 'employee_id', 'employees'] : ['cm_soc_clients', 'client_id', 'clients'];
-        $st = $pdo->prepare("UPDATE {$tbl[0]} SET {$tbl[1]} = ?, is_manual = 1 WHERE name = ?");
-        $ok = $pdo->prepare("SELECT COUNT(*) FROM {$tbl[2]} WHERE id = ?");
-        $n = 0;
-        foreach ((array)($_POST['map'] ?? []) as $name => $id) {
-            $id = (int)$id; $orig = (string)($_POST['orig'][$name] ?? '');
-            if ((string)$id === $orig) continue;
-            if ($id > 0) { $ok->execute([$id]); if (!$ok->fetchColumn()) continue; }
-            $st->execute([$id > 0 ? $id : null, (string)$name]); $n++;
-        }
-        $ing->autoMap();
-        $flash('success', "Abbinamenti aggiornati: $n.");
-        $back();
-    }
-    $back();
-}
+// v1.10.07 — import, sincronizzazione DB, impostazioni e abbinamenti sono in Sincronizzazione gestionale › SOC (pipeline unica)
+if ($_SERVER['REQUEST_METHOD'] === 'POST') { Csrf::verify(); redirect('sync_commesse', ['tab' => 'soc']); }
 
 // ── dati ────────────────────────────────────────────────────────────────────
 $f = $soc->normFilters($_GET);
@@ -138,7 +38,7 @@ $vCtr = $soc->valoriContratti();
 $ticketCode = strtoupper(preg_replace('/[^A-Za-z0-9_]/', '', (string)($_GET['ticket'] ?? '')));
 $tk = $ticketCode !== '' ? $soc->ticket($ticketCode) : null;
 if ($tk) $tab = 'ticket';
-if (!$ready) $tab = 'ingestion';
+
 
 // export XLSX: perimetro e filtri della pagina
 if ($ready && ($_GET['export'] ?? '') === 'xlsx' && can('export', 'service_soc.php')) {
@@ -183,18 +83,6 @@ if ($ready) {
     if ($tab === 'team') $team = $soc->team($f);
     if ($tab === 'clienti') { $cli = $soc->clienti($f); $bCom = $soc->breakdown($f, 'commessa'); $cpm = $soc->commessePm($f); }
 }
-if ($tab === 'ingestion') {
-    $batches = $soc->batches(20);
-    $dbCfg = $pdo->query("SELECT * FROM cm_soc_source_db ORDER BY id DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC) ?: null;
-    $people = $soc->people(); $cmap = $soc->clientMap();
-    $emps = $pdo->query("SELECT id, CONCAT_WS(' ', last_name, first_name) n, status FROM employees ORDER BY last_name, first_name")->fetchAll(PDO::FETCH_ASSOC);
-    $clients = $pdo->query("SELECT id, name FROM clients ORDER BY name")->fetchAll(PDO::FETCH_KEY_PAIR);
-    $preview = !empty($_GET['pv']) ? ($_SESSION['soc_preview'] ?? null) : null; unset($_SESSION['soc_preview']);
-    $drivers = SourceDb::availableDrivers();
-    $set = ['sla' => $soc->setting('soc.sla_risposta_ore', '4'), 'presidio' => $soc->setting('soc.presidio_ore', '24'),
-            'sync' => $soc->setting('soc.sync_enabled', '0'), 'closed' => $soc->setting('soc.closed_states', 'CHIUSO,CHIUSO DAL CLIENTE')];
-}
-
 $qs = function (array $over = []) use ($f, $tab) {
     $p = array_filter(['tab' => $tab, 'from' => $f['from'], 'to' => $f['to'], 'cliente' => $f['cliente'], 'commessa' => $f['commessa'], 'categoria' => $f['categoria'],
                        'tec' => $f['tec'], 'stato' => $f['stato'], 'esito' => $f['esito'], 'q' => $f['q'], 'contratti' => implode(',', $f['contratti'])], fn($v) => $v !== '' && $v !== null);
@@ -217,12 +105,16 @@ require_once('header.php');
     Ticket del sistema di gestione SOC aggregati con i dati del portale (moduli di intervento, commesse, dipendenti, clienti).
     <?php if ($arch['ticket']): ?>Archivio: <strong><?=$n($arch['ticket'])?></strong> ticket, <?=$n($arch['eventi'])?> eventi dal <?=$dd($arch['dal'])?> al <?=$dd($arch['al'])?>
       · <?=$n($arch['con_moduli'])?> ticket con moduli di intervento.<?php endif; ?>
+    <?php $lr = SocSync::setting($pdo, 'soc.last_run_at'); ?>
+    Ultima sincronizzazione: <strong><?= $lr ? h(date('d/m/Y H:i', strtotime($lr))) : '—' ?></strong>
+    <?php if ($canSync): ?>· <a href="<?=$syncUrl?>">Sincronizzazione gestionale › SOC</a><?php endif; ?>
   </p>
 </div>
 <?= $_SESSION['flash_msg'] ?? '' ?><?php unset($_SESSION['flash_msg']); ?>
 
 <?php if (!$ready): ?>
-  <div class="alert alert-warning"><strong>Nessun ticket SOC nel portale.</strong> Importare l'export «lista eventi ticket» o configurare la sincronizzazione dal DB SOC nella scheda Ingestion.</div>
+  <div class="alert alert-warning"><strong>Nessun ticket SOC nel portale.</strong> Caricare l'export «lista eventi ticket» o configurare il DB SOC in
+    <?= $canSync ? '<a href="' . $syncUrl . '">Sincronizzazione gestionale › SOC</a>' : 'Sincronizzazione gestionale › SOC' ?>.</div>
 <?php else: ?>
 <?= PmContractFilter::banner($f['contratti'], $vCtr, $qs(['contratti' => null, 'contratti_set' => 1]), 'ticket con moduli di intervento sulle commesse selezionate') ?>
 
@@ -233,7 +125,7 @@ require_once('header.php');
     <span class="pm-hint"><?=$n($hl['attivi'])?> ticket nel periodo <?=$dd($f['from'])?> – <?=$dd($f['to'])?></span></summary>
   <div class="pm-panel-body">
     <form method="get">
-      <?= route_slug_field() ?><input type="hidden" name="tab" value="<?=h($tab === 'ingestion' ? 'cruscotto' : $tab)?>">
+      <?= route_slug_field() ?><input type="hidden" name="tab" value="<?=h($tab)?>">
       <div class="pm-group"><h4>Contratto</h4><div class="pm-grid-auto"><?= PmContractFilter::field($vCtr, $f['contratti'], 'ticket con moduli di intervento sulle commesse') ?></div></div>
       <div class="pm-group"><h4>Periodo</h4><div class="pm-grid-auto">
         <div class="form-group"><label>Dal</label><input type="date" name="from" value="<?=h($f['from'])?>"></div>
@@ -249,7 +141,7 @@ require_once('header.php');
       </div></div>
       <div class="pm-actions">
         <button class="btn btn-primary btn-sm"><i class="fa-solid fa-filter"></i> Applica</button>
-        <a class="btn btn-sm" href="<?=url_safe('service_soc', ['tab' => $tab === 'ingestion' ? 'cruscotto' : $tab, 'contratti_set' => 1])?>">Azzera</a>
+        <a class="btn btn-sm" href="<?=url_safe('service_soc', ['tab' => $tab, 'contratti_set' => 1])?>">Azzera</a>
         <?php if (can('export', 'service_soc.php')): ?><a class="btn btn-sm" href="<?=$qs(['export' => 'xlsx'])?>"><i class="fa-solid fa-file-excel"></i> XLSX</a><?php endif; ?>
       </div>
     </form>
@@ -277,7 +169,7 @@ require_once('header.php');
 <?php endif; ?>
 
 <div class="tabs" style="margin-bottom:12px;border-bottom:1px solid #e2e8f0">
-  <?php foreach ($TABS as $k => $l): if (!$ready && $k !== 'ingestion') continue; ?>
+  <?php foreach ($TABS as $k => $l): if (!$ready) continue; ?>
     <a class="tab-btn <?=$tab === $k ? 'active' : ''?>" href="<?=$qs(['tab' => $k, 'ticket' => null])?>" style="text-decoration:none"><?=h($l)?></a>
   <?php endforeach; ?>
 </div>
@@ -380,7 +272,7 @@ require_once('header.php');
 <?php if ($tab === 'team' && $ready): ?>
   <div class="card" style="padding:14px 16px;margin-bottom:14px">
     <h3 style="font-size:14px;margin:0 0 6px"><i class="fa-solid fa-users"></i> Ticket per componente (incaricato)</h3>
-    <?php $tm = array_values(array_filter($team, fn($t) => mb_strtolower($t['nome']) !== 'non assegnato')); ?>
+    <?php $tm = array_values(array_filter($team, fn($t) => mb_strtolower($t['nome']) !== 'non assegnato' && empty($t['senza_ticket']))); ?>
     <?= PmCharts::groupedBars(array_map(fn($t) => explode(' ', $t['nome'])[0], $tm), [
           ['label' => 'Ticket del periodo', 'color' => '#2563eb', 'values' => array_map(fn($t) => (int)$t['ticket'], $tm)],
           ['label' => 'Chiusi nel periodo', 'color' => '#16a34a', 'values' => array_map(fn($t) => (int)$t['chiusi'], $tm)],
@@ -388,12 +280,13 @@ require_once('header.php');
   </div>
   <div class="card" style="padding:14px 16px;overflow-x:auto">
     <h3 style="font-size:14px;margin:0 0 4px">Il team SOC e i dati del portale</h3>
-    <p style="font-size:11px;color:var(--muted);margin:0 0 8px">Ore dai moduli di intervento del dipendente abbinato nel periodo: «SOC» = moduli che riportano un ticket SOC; «totali» = tutti i suoi moduli. Abbinamenti nella scheda Ingestion.</p>
-    <table class="data-table" style="width:100%;font-size:12px"><thead><tr><th>Componente SOC</th><th>Dipendente</th><th style="text-align:right">Ticket</th><th style="text-align:right">Chiusi</th><th style="text-align:right">Aperti</th>
+    <p style="font-size:11px;color:var(--muted);margin:0 0 8px">Ore dai moduli di intervento del dipendente abbinato nel periodo: «SOC» = moduli che riportano un ticket SOC; «totali» = tutti i suoi moduli. Unità = Unità Organizzativa del dipendente (i tecnici del servizio sono assegnati all'unità SOC dalla sincronizzazione); abbinamenti in Sincronizzazione gestionale › SOC.</p>
+    <table class="data-table" style="width:100%;font-size:12px"><thead><tr><th>Componente SOC</th><th>Dipendente</th><th>Unità</th><th style="text-align:right">Ticket</th><th style="text-align:right">Chiusi</th><th style="text-align:right">Aperti</th>
       <th style="text-align:right">Msg supporto</th><th style="text-align:right">Note</th><th style="text-align:right">Risposta media</th><th style="text-align:right">Ore SOC</th><th style="text-align:right">Ore totali</th><th style="text-align:right">Quota SOC</th></tr></thead><tbody>
     <?php foreach ($team as $t): ?><tr>
-      <td><a href="<?=$qs(['tec' => $t['nome'], 'tab' => 'ticket'])?>"><?=h($t['nome'])?></a></td>
+      <td><?= !empty($t['senza_ticket']) ? '<span style="color:var(--muted)">unità SOC, nessun ticket</span>' : '<a href="' . $qs(['tec' => $t['nome'], 'tab' => 'ticket']) . '">' . h($t['nome']) . '</a>' ?></td>
       <td><?= $t['dipendente'] ? h($t['dipendente']) : '<span style="color:var(--muted)">non abbinato</span>' ?></td>
+      <td><?= $t['in_uo_soc'] ? $pill('SOC', '#7c3aed') : ($t['unita'] ? h($t['unita']) : '<span style="color:var(--muted)">—</span>') ?></td>
       <td style="text-align:right"><?=$n($t['ticket'])?></td><td style="text-align:right"><?=$n($t['chiusi'])?></td><td style="text-align:right"><?=$n($t['aperti'])?></td>
       <td style="text-align:right"><?=$n($t['msg_supporto'])?></td><td style="text-align:right"><?=$n($t['note'])?></td>
       <td style="text-align:right"><?=$t['risposta_media_h'] === null ? '—' : $n1($t['risposta_media_h']) . ' h'?></td>
@@ -428,126 +321,6 @@ require_once('header.php');
         <td><?=h($c['cliente'])?></td><td style="text-align:right"><?=$n($c['moduli'])?></td><td style="text-align:right"><?=$n($c['ticket'])?></td><td style="text-align:right"><?=$n1($c['ore'])?></td>
         <td style="text-align:right"><?=$eur($c['costo'])?></td><td style="text-align:right"><?=$eur($c['ricavo'])?></td></tr><?php endforeach; ?></tbody></table>
     </div>
-  </div>
-<?php endif; ?>
-
-<?php if ($tab === 'ingestion'): ?>
-  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(460px,1fr));gap:14px;margin-bottom:14px">
-    <div class="card" style="padding:14px 16px">
-      <h3 style="font-size:14px;margin:0 0 6px"><i class="fa-solid fa-file-excel"></i> Import da file</h3>
-      <p style="font-size:12px;color:var(--muted);margin:0 0 8px">Export «lista eventi ticket» del sistema di gestione SOC, XLSX o CSV, con le intestazioni del gestionale
-        (Data evento, Codice, Evento, Stato prima, Stato dopo, Autore, Titolo; facoltative Responsabile, Incaricato, Tipo, Categoria, Coda, Risoluzione, Cliente, Commessa, Durata, Casella di posta).
-        Reimportare lo stesso file non crea doppioni; file successivi aggiornano i ticket.</p>
-      <?php if ($canRun): ?>
-      <p style="font-size:11px;color:var(--muted);margin:0 0 6px">Limite di caricamento del server: <?=h(ini_get('upload_max_filesize'))?>.</p>
-      <form method="POST" enctype="multipart/form-data" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <?= Csrf::field() ?><input type="hidden" name="action" value="upload">
-        <input type="file" name="file" accept=".xlsx,.csv" required style="flex:1;min-width:220px">
-        <button class="btn btn-primary btn-sm"><i class="fa-solid fa-upload"></i> Importa</button>
-      </form><?php endif; ?>
-      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px;font-size:12px">
-        <div><div style="color:var(--muted);font-size:10px;font-weight:700;text-transform:uppercase">Eventi</div><b><?=$n($arch['eventi'])?></b> <span style="color:var(--muted)">(prima fonte: file <?=$n($arch['da_file'])?> · DB <?=$n($arch['da_db'])?>)</span></div>
-        <div><div style="color:var(--muted);font-size:10px;font-weight:700;text-transform:uppercase">Ticket</div><b><?=$n($arch['ticket'])?></b></div>
-        <div><div style="color:var(--muted);font-size:10px;font-weight:700;text-transform:uppercase">Periodo</div><?=$dd($arch['dal'])?> – <?=$dd($arch['al'])?></div>
-      </div>
-      <?php if ($canRun && $arch['ticket']): ?><form method="POST" style="margin-top:10px"><?= Csrf::field() ?><input type="hidden" name="action" value="rebuild">
-        <button class="btn btn-sm"><i class="fa-solid fa-rotate"></i> Ricostruisci ticket e abbinamenti</button></form><?php endif; ?>
-    </div>
-
-    <div class="card" style="padding:14px 16px">
-      <h3 style="font-size:14px;margin:0 0 6px"><i class="fa-solid fa-database"></i> Sincronizzazione dal DB SOC</h3>
-      <p style="font-size:12px;color:var(--muted);margin:0 0 8px">Istanza separata con lo stesso schema del gestionale, utenza di sola lettura. Password cifrata con APP_SECRET.
-        Stato: <?= $dbCfg ? ($dbCfg['is_active'] ? $pill('CONFIGURATO', '#16a34a') : $pill('DISATTIVO', '#64748b')) . ' ' . h($dbCfg['host'] . '/' . $dbCfg['dbname']) . ' · ultima: ' . $dt($dbCfg['last_sync_at']) . ' — ' . h((string)$dbCfg['last_sync_note']) : $pill('NON CONFIGURATO', '#d97706') ?></p>
-      <?php if ($canRun && $dbCfg): ?>
-        <form method="POST" style="display:inline"><?= Csrf::field() ?><input type="hidden" name="action" value="db_sync"><button class="btn btn-primary btn-sm"><i class="fa-solid fa-rotate"></i> Sincronizza ora (ultimi <?=$n($dbCfg['window_days'])?> gg)</button></form>
-        <form method="POST" style="display:inline"><?= Csrf::field() ?><input type="hidden" name="action" value="db_sync_all"><button class="btn btn-sm" onclick="return confirm('Lettura completa del DB SOC: può richiedere alcuni minuti. Continuare?')">Sincronizzazione completa</button></form>
-      <?php endif; ?>
-      <?php if ($isSA): $c = $dbCfg ?: ['label' => 'Gestionale SOC', 'driver' => 'mysql', 'host' => '', 'port' => 3306, 'dbname' => '', 'username' => '', 'source_schema' => '', 'timeout' => 10, 'window_days' => 30, 'ticket_prefix' => 'WES_', 'extract_sql' => '', 'is_active' => 1, 'password_enc' => '']; ?>
-      <details style="margin-top:10px" <?= $dbCfg ? '' : 'open' ?>><summary style="cursor:pointer;font-size:13px;font-weight:700">Connessione (Super Admin)</summary>
-        <form method="POST" autocomplete="off" style="margin-top:8px">
-          <?= Csrf::field() ?>
-          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:6px 10px">
-            <div class="form-group"><label>Nome</label><input name="label" value="<?=h($c['label'])?>"></div>
-            <div class="form-group"><label>Driver</label><select name="driver"><?php foreach (SourceDb::DRIVERS as $k => $d): ?><option value="<?=$k?>" <?=$c['driver'] === $k ? 'selected' : ''?> <?=isset($drivers[$k]) ? '' : 'disabled'?>><?=h($d['label'])?><?=isset($drivers[$k]) ? '' : ' (non disponibile)'?></option><?php endforeach; ?></select></div>
-            <div class="form-group"><label>Host</label><input name="host" value="<?=h($c['host'])?>" placeholder="10.100.7.65"></div>
-            <div class="form-group"><label>Porta</label><input type="number" name="port" value="<?=(int)$c['port']?>"></div>
-            <div class="form-group"><label>Database</label><input name="dbname" value="<?=h($c['dbname'])?>" placeholder="sp-soc"></div>
-            <div class="form-group"><label>Utente (sola lettura)</label><input name="username" value="<?=h($c['username'])?>"></div>
-            <div class="form-group"><label>Password</label><input type="password" name="password" placeholder="<?=$c['password_enc'] ? '•••••• (vuoto = invariata)' : ''?>" autocomplete="new-password"></div>
-            <div class="form-group"><label>Schema (facoltativo)</label><input name="source_schema" value="<?=h((string)$c['source_schema'])?>"></div>
-            <div class="form-group"><label>Timeout (s)</label><input type="number" name="timeout" min="3" max="60" value="<?=(int)$c['timeout']?>"></div>
-            <div class="form-group"><label>Finestra (giorni, 0 = tutto)</label><input type="number" name="window_days" min="0" value="<?=(int)$c['window_days']?>"></div>
-            <div class="form-group"><label>Prefisso ticket</label><input name="ticket_prefix" value="<?=h((string)$c['ticket_prefix'])?>" placeholder="WES_"></div>
-          </div>
-          <div class="form-group"><label>Query di estrazione (vuota = predefinita)</label>
-            <textarea name="extract_sql" rows="6" style="font-family:monospace;font-size:11px" placeholder="<?=h(SocIngest::DEFAULT_SQL)?>"><?=h((string)$c['extract_sql'])?></textarea>
-            <small style="color:var(--muted)">Solo SELECT. Le colonne devono avere i nomi delle intestazioni dell'export (alias `data evento`, `codice`, `evento`, `stato prima`, `stato dopo`, `autore`, `titolo`, e se disponibili `responsabile`, `incaricato`, `categoria`, `cliente`, `commessa`, `risoluzione`…). Il primo <code>?</code> riceve la data minima della finestra, il secondo il prefisso ticket (LIKE).</small></div>
-          <label style="font-size:13px"><input type="checkbox" name="is_active" value="1" <?=$c['is_active'] ? 'checked' : ''?>> Connessione attiva</label>
-          <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
-            <button class="btn btn-primary btn-sm" name="action" value="db_save"><i class="fa-solid fa-floppy-disk"></i> Salva</button>
-            <button class="btn btn-sm" name="action" value="db_test"><i class="fa-solid fa-plug"></i> Test connessione</button>
-            <button class="btn btn-sm" name="action" value="db_preview"><i class="fa-solid fa-eye"></i> Anteprima</button>
-          </div>
-          <small style="color:var(--muted)">Test e anteprima usano i valori del modulo (password vuota = quella salvata) senza salvarli.</small>
-        </form>
-      </details>
-      <?php endif; ?>
-      <?php if ($preview): ?>
-        <div style="overflow-x:auto;margin-top:10px"><table class="data-table" style="width:100%;font-size:11px"><thead><tr><th>Data</th><th>Ticket</th><th>Tipo</th><th>Stato</th><th>Autore</th><th>Titolo</th></tr></thead><tbody>
-          <?php foreach ($preview['rows'] as $r): ?><tr><td><?=h($r['event_at'] ?? '')?></td><td><?=h($r['ticket_code'] ?? '')?></td><td><?=h($r['event_kind'] ?? 'scartata')?></td>
-            <td><?=h(($r['status_before'] ?? '') . ' → ' . ($r['status_after'] ?? ''))?></td><td><?=h($r['author_name'] ?? '')?></td><td><?=h(mb_strimwidth((string)($r['subject'] ?? ''), 0, 70, '…'))?></td></tr><?php endforeach; ?></tbody></table></div>
-      <?php endif; ?>
-    </div>
-  </div>
-
-  <?php if ($canRun): ?>
-  <div class="card" style="padding:14px 16px;margin-bottom:14px">
-    <h3 style="font-size:14px;margin:0 0 6px"><i class="fa-solid fa-sliders"></i> Impostazioni e pianificazione</h3>
-    <form method="POST" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:6px 12px;align-items:end">
-      <?= Csrf::field() ?><input type="hidden" name="action" value="settings">
-      <div class="form-group"><label>Risposta al cliente entro (ore)</label><input type="number" name="sla" min="1" max="240" value="<?=h($set['sla'])?>"></div>
-      <div class="form-group"><label>Da presidiare dopo (ore senza risposta)</label><input type="number" name="presidio" min="1" max="720" value="<?=h($set['presidio'])?>"></div>
-      <div class="form-group"><label>Stati di chiusura</label><input name="closed" value="<?=h($set['closed'])?>"></div>
-      <label style="font-size:13px"><input type="checkbox" name="sync_enabled" value="1" <?=$set['sync'] === '1' ? 'checked' : ''?>> Sincronizzazione pianificata dal DB SOC</label>
-      <div><button class="btn btn-primary btn-sm"><i class="fa-solid fa-floppy-disk"></i> Salva</button></div>
-    </form>
-    <pre style="font-size:11px;background:#0f172a;color:#e2e8f0;padding:10px;border-radius:6px;overflow-x:auto;margin:10px 0 0">schtasks /Create /SC MINUTE /MO 30 /TN "PortalManager - Service SOC" /TR "\"<?=h(PHP_OS_FAMILY === 'Windows' ? dirname(PHP_BINARY) . '\\php.exe' : PHP_BINARY)?>\" \"<?=h(__DIR__ . DIRECTORY_SEPARATOR . 'cron_soc_sync.php')?>\" --quiet" /RU SYSTEM</pre>
-  </div>
-
-  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(460px,1fr));gap:14px;margin-bottom:14px">
-    <div class="card" style="padding:14px 16px;overflow-x:auto">
-      <h3 style="font-size:14px;margin:0 0 4px"><i class="fa-solid fa-user-check"></i> Abbinamento persone → dipendenti</h3>
-      <p style="font-size:11px;color:var(--muted);margin:0 0 8px">Automatico quando tutte le parole del nome SOC compaiono in un solo dipendente; le scelte manuali non vengono più modificate.</p>
-      <form method="POST"><?= Csrf::field() ?><input type="hidden" name="action" value="map_people">
-        <table class="data-table" style="width:100%;font-size:12px"><thead><tr><th>Nome SOC</th><th style="text-align:right">Ticket</th><th>Dipendente</th><th></th></tr></thead><tbody>
-        <?php foreach ($people as $p): ?><tr><td><?=h($p['name'])?></td><td style="text-align:right"><?=$n($p['ticket'])?></td>
-          <td><input type="hidden" name="orig[<?=h($p['name'])?>]" value="<?=(int)$p['employee_id']?>"><select name="map[<?=h($p['name'])?>]" style="min-width:200px"><option value="0">— nessuno —</option>
-            <?php foreach ($emps as $e): ?><option value="<?=$e['id']?>" <?=(int)$p['employee_id'] === (int)$e['id'] ? 'selected' : ''?>><?=h($e['n'])?><?=$e['status'] !== 'active' ? ' (' . h($e['status']) . ')' : ''?></option><?php endforeach; ?></select></td>
-          <td><?=$p['is_manual'] ? $pill('manuale', '#2563eb') : ($p['employee_id'] ? $pill('auto', '#16a34a') : '')?></td></tr><?php endforeach; ?></tbody></table>
-        <?php if ($people): ?><button class="btn btn-primary btn-sm" style="margin-top:8px">Salva abbinamenti</button><?php endif; ?></form>
-    </div>
-    <div class="card" style="padding:14px 16px;overflow-x:auto">
-      <h3 style="font-size:14px;margin:0 0 4px"><i class="fa-solid fa-building-circle-check"></i> Abbinamento clienti</h3>
-      <p style="font-size:11px;color:var(--muted);margin:0 0 8px">Automatico sul nome (es. «ESTAR - TOSCANA CENTRO» → «ESTAR CENTRO»); le scelte manuali restano.</p>
-      <form method="POST"><?= Csrf::field() ?><input type="hidden" name="action" value="map_clients">
-        <table class="data-table" style="width:100%;font-size:12px"><thead><tr><th>Cliente SOC</th><th style="text-align:right">Ticket</th><th>Cliente portale</th><th></th></tr></thead><tbody>
-        <?php foreach ($cmap as $p): ?><tr><td><?=h($p['name'])?></td><td style="text-align:right"><?=$n($p['ticket'])?></td>
-          <td><input type="hidden" name="orig[<?=h($p['name'])?>]" value="<?=(int)$p['client_id']?>"><select name="map[<?=h($p['name'])?>]" style="min-width:200px"><option value="0">— nessuno —</option>
-            <?php foreach ($clients as $id => $nm): ?><option value="<?=$id?>" <?=(int)$p['client_id'] === (int)$id ? 'selected' : ''?>><?=h($nm)?></option><?php endforeach; ?></select></td>
-          <td><?=$p['is_manual'] ? $pill('manuale', '#2563eb') : ($p['client_id'] ? $pill('auto', '#16a34a') : '')?></td></tr><?php endforeach; ?></tbody></table>
-        <?php if ($cmap): ?><button class="btn btn-primary btn-sm" style="margin-top:8px">Salva abbinamenti</button><?php endif; ?></form>
-    </div>
-  </div>
-  <?php endif; ?>
-
-  <div class="card" style="padding:14px 16px;overflow-x:auto">
-    <h3 style="font-size:14px;margin:0 0 8px"><i class="fa-solid fa-list"></i> Registro import e sincronizzazioni</h3>
-    <table class="data-table" style="width:100%;font-size:12px"><thead><tr><th>Avvio</th><th>Fonte</th><th>Origine</th><th>Esito</th><th style="text-align:right">Righe</th><th style="text-align:right">Nuove</th><th style="text-align:right">Aggiornate</th><th>Dettaglio</th><th>Utente</th></tr></thead><tbody>
-    <?php if (!$batches): ?><tr><td colspan="9" style="color:var(--muted)">Nessun import eseguito.</td></tr><?php endif; ?>
-    <?php foreach ($batches as $b): ?><tr><td style="white-space:nowrap"><?=$dt($b['started_at'])?></td><td><?=$b['source'] === 'file' ? 'File' : 'DB SOC'?></td><td><?=h($b['origin'])?><br><small style="color:var(--muted)"><?=h($b['trigger_type'])?></small></td>
-      <td><?=['ok' => $pill('OK', '#16a34a'), 'warn' => $pill('ATTENZIONE', '#d97706'), 'error' => $pill('ERRORE', '#dc2626'), 'running' => $pill('IN CORSO', '#2563eb')][$b['status']] ?? ''?></td>
-      <td style="text-align:right"><?=$n($b['rows_read'])?></td><td style="text-align:right"><?=$n($b['rows_inserted'])?></td><td style="text-align:right"><?=$n($b['rows_updated'])?></td>
-      <td><?=h($b['message'])?></td><td><?=h($b['utente'] ?? ($b['trigger_type'] === 'pianificata' ? 'pianificazione' : '—'))?></td></tr><?php endforeach; ?></tbody></table>
   </div>
 <?php endif; ?>
 

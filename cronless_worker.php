@@ -31,7 +31,7 @@ require_once __DIR__ . '/app/CronlessScheduler.php';
 $ts    = (string)($_POST['ts'] ?? '');
 $force = (string)($_POST['force'] ?? '0');
 $sig   = (string)($_POST['sig'] ?? '');
-$task  = (string)($_POST['task'] ?? 'sync');     // v1.9.73: 'sync' | 'snapshot'
+$task  = (string)($_POST['task'] ?? 'sync');     // v1.9.73: 'sync' | 'snapshot' · v1.10.07: 'soc'
 
 if (!CronlessScheduler::verify($ts, $force, $sig, $task)) {
     http_response_code(403);
@@ -59,6 +59,9 @@ if (function_exists('fastcgi_finish_request')) {
 if ($task === 'snapshot') {
     require_once __DIR__ . '/app/PmSnapshot.php';
     PmSnapshot::refresh($pdo, $force === '1');     // copie delle viste lente (v1.9.73)
+} elseif ($task === 'soc') {
+    require_once __DIR__ . '/app/SocSync.php';
+    SocSync::run($pdo, 'pianificata', $force === '1');   // pipeline Service SOC (v1.10.07)
 } else {
     SyncRunner::run($pdo, 'cronless', $force === '1');
 }

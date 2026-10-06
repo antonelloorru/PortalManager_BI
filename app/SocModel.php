@@ -262,6 +262,19 @@ final class SocModel
             $r['ore_soc'] = (float)($ore[$eid]['soc'] ?? 0); $r['ore_tot'] = (float)($ore[$eid]['tot'] ?? 0);
             $r['quota_soc'] = $r['ore_tot'] > 0 ? 100 * $r['ore_soc'] / $r['ore_tot'] : null;
         }
+        // v1.10.07 — Unità Organizzativa: unità di ciascun dipendente e componenti dell'unità SOC senza ticket nel periodo
+        $code = $this->setting('soc.uo_code', 'SOC');
+        $units = []; foreach ($this->rows("SELECT tp.employee_id, u.name, u.code FROM cm_tech_profiles tp JOIN cm_tech_units u ON u.id = tp.unit_id WHERE tp.is_active = 1", []) as $u) $units[(int)$u['employee_id']] = $u;
+        $have = array_filter(array_map(fn($r) => (int)($r['employee_id'] ?? 0), $rows));
+        foreach ($this->rows("SELECT e.id, CONCAT_WS(' ', e.last_name, e.first_name) n FROM cm_tech_profiles tp JOIN cm_tech_units u ON u.id = tp.unit_id
+                               JOIN employees e ON e.id = tp.employee_id WHERE u.code = ? AND tp.is_active = 1", [$code]) as $m) {
+            if (in_array((int)$m['id'], $have, true)) continue;
+            $o = $this->rows("SELECT COALESCE(SUM(quantity_hours),0) t FROM cm_intervention_reports WHERE technician_id = ? AND report_date BETWEEN ? AND ?", [(int)$m['id'], $f['from'], $f['to']])[0]['t'];
+            $rows[] = ['nome' => '(' . $m['n'] . ')', 'employee_id' => (int)$m['id'], 'dipendente' => $m['n'], 'ticket' => 0, 'chiusi' => 0, 'aperti' => 0, 'risposta_media_h' => null,
+                       'msg_supporto' => 0, 'note' => 0, 'ore_soc' => 0.0, 'ore_tot' => (float)$o, 'quota_soc' => (float)$o > 0 ? 0.0 : null, 'senza_ticket' => true];
+        }
+        foreach ($rows as &$r) { $u = $units[(int)($r['employee_id'] ?? 0)] ?? null; $r['unita'] = $u['name'] ?? null; $r['in_uo_soc'] = $u && $u['code'] === $code; }
+        unset($r);
         usort($rows, fn($x, $y) => $y['ticket'] <=> $x['ticket']);
         return $rows;
     }

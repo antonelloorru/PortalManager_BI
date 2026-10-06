@@ -70,6 +70,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     @set_time_limit(0);
 
     $action = (string)($_POST['action'] ?? '');
+    // v1.10.07 — sottosezione SOC: azioni della pipeline del Service SOC (terminano con redirect)
+    if (str_starts_with($action, 'soc_')) { require __DIR__ . '/app/soc_sync_actions.php'; }
     $ds     = (string)($_POST['dataset'] ?? '');
     if ($ds !== '' && !isset($datasets[$ds])) { $_SESSION['flash_msg'] = "<div class='alert alert-danger'>Dataset non valido.</div>"; redirect_self(); }
 
@@ -452,6 +454,14 @@ require_once('header.php');
   </p>
 </div>
 <?= $msg ?>
+
+<?php // v1.10.07 — sottosezioni: gestionale (dataset) e SOC (pipeline del Service SOC)
+$syncTab = ($_GET['tab'] ?? '') === 'soc' ? 'soc' : 'gestionale'; ?>
+<div class="tabs" style="margin-bottom:14px;border-bottom:1px solid #e2e8f0">
+  <a class="tab-btn <?= $syncTab === 'gestionale' ? 'active' : '' ?>" href="<?= url_safe('sync_commesse') ?>" style="text-decoration:none"><i class="fa-solid fa-database"></i> Gestionale</a>
+  <a class="tab-btn <?= $syncTab === 'soc' ? 'active' : '' ?>" href="<?= url_safe('sync_commesse', ['tab' => 'soc']) ?>" style="text-decoration:none"><i class="fa-solid fa-shield-halved"></i> SOC</a>
+</div>
+<?php if ($syncTab === 'soc') { require __DIR__ . '/app/soc_sync_panel.php'; require_once('footer.php'); exit; } ?>
 
 <?php if ($rep): $d = $datasets[$rep['dataset']]; ?>
   <div class="card" style="margin-bottom:16px;border:2px solid <?= $rep['dry'] ? '#3b82f6' : '#16a34a' ?>">

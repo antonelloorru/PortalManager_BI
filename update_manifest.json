@@ -1,41 +1,41 @@
 {
-    "name": "PortalManager Release v1.10.06",
-    "version": "1.10.06",
-    "release_date": "2026-10-06 10:00:00",
-    "cumulative_from": "1.10.05",
-    "description": "Gestione Commesse › Service SOC: ticket del sistema di gestione SOC (import XLSX/CSV o sync DB SOC separato) aggregati con moduli di intervento, commesse, dipendenti e clienti del portale.",
+    "name": "PortalManager Release v1.10.07",
+    "version": "1.10.07",
+    "release_date": "2026-10-06 11:00:00",
+    "cumulative_from": "1.10.06",
+    "description": "Service SOC: import da file e DB SOC spostati in Sincronizzazione gestionale › SOC; pipeline unica automatizzata (scheduler, giornaliera, CLI, caricamento); tecnici del servizio mappati sull'Unità Organizzativa SOC.",
     "files": [
         "VERSION",
-        "app/MenuManager.php",
-        "app/PermissionCatalog.php",
-        "app/Router.php",
+        "app/CronlessScheduler.php",
         "app/SocIngest.php",
         "app/SocModel.php",
+        "app/SocSync.php",
+        "app/SyncRunner.php",
         "app/Version.php",
-        "app/soc_ticket_table.php",
+        "app/soc_sync_actions.php",
+        "app/soc_sync_panel.php",
         "cron_soc_sync.php",
-        "docs/CHANGELOG_v1_10_06.md",
-        "docs/DEPLOYMENT_v1_10_06.md",
-        "docs/MANUALE_ADMIN_v1_10_06.md",
-        "docs/MANUALE_UTENTE_v1_10_06.md",
-        "docs/RELEASE_CHECKLIST_v1_10_06.md",
-        "docs/TECHNICAL_DESIGN_v1_10_06.md",
-        "manage_permissions.php",
+        "cronless_worker.php",
+        "docs/CHANGELOG_v1_10_07.md",
+        "docs/DEPLOYMENT_v1_10_07.md",
+        "docs/MANUALE_ADMIN_v1_10_07.md",
+        "docs/MANUALE_UTENTE_v1_10_07.md",
+        "docs/RELEASE_CHECKLIST_v1_10_07.md",
+        "docs/TECHNICAL_DESIGN_v1_10_07.md",
         "service_soc.php",
-        "sql/migration_v1_10_06.sql",
-        "tools/verify_v1_10_06.php",
-        "update_manifest.json",
-        "wp_ats_sync.php"
+        "sql/migration_v1_10_07.sql",
+        "sync_commesse.php",
+        "tools/verify_v1_10_07.php",
+        "update_manifest.json"
     ],
     "migrations": [
-        "sql/migration_v1_10_06.sql"
+        "sql/migration_v1_10_07.sql"
     ],
     "post_install": [
-        "Eseguire sql/migration_v1_10_06.sql",
-        "php.ini: upload_max_filesize/post_max_size >= 32M",
+        "Eseguire sql/migration_v1_10_07.sql",
         "Stop+Start Apache",
         "Ctrl+F5",
-        "Service SOC › Ingestion: import export o configurazione DB SOC",
-        "php tools/verify_v1_10_06.php --db=<database>"
+        "Sincronizzazione gestionale › SOC: attivare l'esecuzione automatica",
+        "php tools/verify_v1_10_07.php --db=<database>"
     ]
 }

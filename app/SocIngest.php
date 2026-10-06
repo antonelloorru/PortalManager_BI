@@ -61,6 +61,9 @@ WHERE a.received_at >= ?
 ORDER BY a.id";
 
     private array $closed;
+    /** v1.10.07 — pipeline SocSync: più sorgenti in un'esecuzione, ricostruzione ticket una sola volta alla fine. */
+    public bool $deferFinalize = false;
+    public string $trigger = 'manuale';
 
     public function __construct(private PDO $pdo)
     {
@@ -168,7 +171,7 @@ ORDER BY a.id";
     public function importFile(string $path, string $origName, ?int $userId): array
     {
         $ext = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
-        $batch = $this->openBatch('file', $origName, 'manuale', $userId);
+        $batch = $this->openBatch('file', $origName, $this->trigger, $userId);
         $rows = []; $headers = [];
         try {
             if ($ext === 'xlsx') {
@@ -315,7 +318,7 @@ ORDER BY a.id";
             return $this->closeBatch($batch, 'error', ['rows_read' => count($rows), 'rows_inserted' => $ins, 'rows_updated' => $upd,
                 'message' => 'Errore in scrittura dopo ' . ($ins + $upd + $same) . ' righe: ' . $ex->getMessage()]);
         }
-        try { $nt = $this->rebuild(); $this->autoMap(); }
+        try { $nt = $this->deferFinalize ? (int)$this->pdo->query("SELECT COUNT(DISTINCT ticket_code) FROM cm_soc_events")->fetchColumn() : $this->rebuild(); if (!$this->deferFinalize) $this->autoMap(); }
         catch (Throwable $ex) {
             error_log('[SocIngest::rebuild] ' . $ex->getMessage());
             return $this->closeBatch($batch, 'error', ['rows_read' => count($rows), 'rows_inserted' => $ins, 'rows_updated' => $upd, 'rows_unchanged' => $same,

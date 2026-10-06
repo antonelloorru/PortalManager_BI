@@ -41,6 +41,11 @@ final class CronlessScheduler
             if (!$cfg || ($cfg['exec_mode'] ?? 'cronless') !== 'cronless') return;
 
             $pdo->prepare("UPDATE `cm_sync_schedule` SET `last_tick_at` = ? WHERE `id` = 1")->execute([date('Y-m-d H:i:s')]);
+            // v1.10.07 — pipeline del Service SOC: stesso scheduler, worker dedicato (task «soc»), intervallo proprio
+            try {
+                require_once __DIR__ . '/SocSync.php';
+                if (!SyncRunner::isDue($cfg) && SocSync::isDue($pdo)) { self::dispatch($pdo, false, true, 'soc'); return; }
+            } catch (Throwable $e) { /* tabelle SOC assenti: nessuna azione */ }
             if (!SyncRunner::isDue($cfg)) return;
 
             self::dispatch($pdo, false, true);
@@ -68,7 +73,7 @@ final class CronlessScheduler
         return $s;
     }
 
-    /** $task: 'sync' (sincronizzazione) o 'snapshot' (copie delle viste, v1.9.73). */
+    /** $task: 'sync' (sincronizzazione), 'snapshot' (copie delle viste, v1.9.73), 'soc' (pipeline Service SOC, v1.10.07). */
     public static function sign(int $ts, bool $force, string $task = 'sync'): string
     {
         $payload = "cronless|$ts|" . ($force ? '1' : '0') . ($task === 'sync' ? '' : "|$task");
@@ -78,7 +83,7 @@ final class CronlessScheduler
     public static function verify(string $ts, string $force, string $sig, string $task = 'sync'): bool
     {
         if (!ctype_digit($ts) || abs(time() - (int)$ts) > self::TOKEN_TTL) return false;
-        if (!in_array($task, ['sync', 'snapshot'], true)) return false;
+        if (!in_array($task, ['sync', 'snapshot', 'soc'], true)) return false;
         return hash_equals(self::sign((int)$ts, $force === '1', $task), $sig);
     }
 
@@ -172,6 +177,11 @@ final class CronlessScheduler
         if ($task === 'snapshot') {
             require_once __DIR__ . '/PmSnapshot.php';
             PmSnapshot::refresh($pdo, $force);
+            return;
+        }
+        if ($task === 'soc') {                               // v1.10.07 — pipeline Service SOC
+            require_once __DIR__ . '/SocSync.php';
+            SocSync::run($pdo, 'pianificata', $force);
             return;
         }
         require_once __DIR__ . '/SyncRunner.php';
