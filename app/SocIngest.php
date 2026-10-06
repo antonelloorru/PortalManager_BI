@@ -218,9 +218,10 @@ ORDER BY a.id";
         require_once __DIR__ . '/SourceDb.php';
         require_once __DIR__ . '/Env.php';
         $cfgRow = $this->pdo->query("SELECT * FROM cm_soc_source_db WHERE is_active = 1 ORDER BY id DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
-        $batch = $this->openBatch('db', $cfgRow ? ($cfgRow['label'] . ' — ' . $cfgRow['host'] . '/' . $cfgRow['dbname']) : 'DB SOC', $trigger, $userId);
+        $batch = $this->openBatch('db', $cfgRow ? ($cfgRow['label'] . ' — ' . (!empty($cfgRow['use_gestionale']) ? 'server del gestionale' : $cfgRow['host']) . '/' . $cfgRow['dbname']) : 'DB SOC', $trigger, $userId);
         if (!$cfgRow) return $this->closeBatch($batch, 'error', ['message' => 'Connessione al DB SOC non configurata']);
         try {
+            $cfgRow = self::resolveSource($this->pdo, $cfgRow);
             $src = SourceDb::connect(SourceDb::configFromRow($cfgRow));
             [$sql, $params] = self::extractQuery($cfgRow, $days);
             $st = $src->query($sql, $params);
@@ -234,12 +235,49 @@ ORDER BY a.id";
             if (isset($map) && ($miss = array_diff(self::REQUIRED, array_values($map))))
                 throw new RuntimeException('La query non restituisce le colonne: ' . implode(', ', array_map(fn($f) => self::COLS[$f][0], $miss)));
         } catch (Throwable $e) {
-            $this->pdo->prepare("UPDATE cm_soc_source_db SET last_sync_at = NOW(), last_sync_note = ? WHERE id = ?")->execute([mb_substr('Errore: ' . $e->getMessage(), 0, 255), $cfgRow['id']]);
-            return $this->closeBatch($batch, 'error', ['message' => 'DB SOC: ' . $e->getMessage()]);
+            $err = self::connError($this->pdo, $e, $cfgRow);
+            $this->pdo->prepare("UPDATE cm_soc_source_db SET last_sync_at = NOW(), last_sync_note = ? WHERE id = ?")->execute([mb_substr('Errore: ' . $err, 0, 255), $cfgRow['id']]);
+            return $this->closeBatch($batch, 'error', ['message' => 'DB SOC: ' . $err]);
         }
         $res = $this->ingest($batch, 'db', $raw);
         $this->pdo->prepare("UPDATE cm_soc_source_db SET last_sync_at = NOW(), last_sync_note = ? WHERE id = ?")->execute([mb_substr($res['message'], 0, 255), $cfgRow['id']]);
         return $res;
+    }
+
+    /**
+     * v1.10.08 — Parametri effettivi della connessione al DB SOC.
+     * Con `use_gestionale` = 1 driver, host, porta, utente e password sono quelli della «Connessione al
+     * gestionale» (cm_source_db attiva, stessa password cifrata con APP_SECRET, stesso SourceDb::connect):
+     * del DB SOC restano propri solo database, schema, timeout, finestra, prefisso e query.
+     */
+    public static function resolveSource(PDO $pdo, array $row): array
+    {
+        if (empty($row['use_gestionale'])) { $row['cred_origin'] = 'propria'; return $row; }
+        $g = $pdo->query("SELECT * FROM cm_source_db WHERE is_active = 1 ORDER BY id DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+        if (!$g) throw new RuntimeException('Il DB SOC usa server e credenziali della «Connessione al gestionale», che non è configurata o non è attiva.');
+        foreach (['driver', 'host', 'port', 'username', 'password_enc'] as $k) $row[$k] = $g[$k];
+        $row['cred_origin'] = 'gestionale';
+        return $row;
+    }
+
+    /** v1.10.08 — Messaggio d'errore di connessione con l'indicazione utile a risolverlo. */
+    public static function connError(PDO $pdo, Throwable $e, array $row): string
+    {
+        $m = $e->getMessage();
+        $code = $e instanceof PDOException ? (int)($e->errorInfo[1] ?? 0) : 0;
+        if (!$code && preg_match('/\[(\d{4})\]/', $m, $x)) $code = (int)$x[1];
+        $origin = $row['cred_origin'] ?? (!empty($row['use_gestionale']) ? 'gestionale' : 'propria');
+        if ($code === 1045 || $code === 1698) {
+            if ($origin === 'gestionale') return $m . ' — Sono le credenziali della «Connessione al gestionale»: verificarle lì (Test connessione).';
+            $g = null;
+            try { $g = $pdo->query("SELECT username, host FROM cm_source_db WHERE is_active = 1 ORDER BY id DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC); } catch (Throwable $t) {}
+            return $m . ($g ? ' — Se server e credenziali coincidono con quelli del gestionale (' . $g['username'] . '@' . $g['host'] . '), attivare «Usa server e credenziali della Connessione al gestionale».'
+                             : ' — Utente o password errati, oppure utente non abilitato dall\'host del portale.');
+        }
+        if ($code === 1044 || $code === 1049) {
+            return $m . ' — Il login riesce ma il database «' . ($row['dbname'] ?? '') . '» non è accessibile: verificarne il nome oppure concedere GRANT SELECT ON `' . ($row['dbname'] ?? '') . '`.* all\'utente ' . (preg_match("/user '([^']+)'/", $m, $u) ? $u[1] : ($row['username'] ?? '')) . '.';
+        }
+        return $m;
     }
 
     /** Query di estrazione e parametri: ? n.1 = data minima, ? n.2 = prefisso ticket (LIKE). */

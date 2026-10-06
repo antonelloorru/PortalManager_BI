@@ -71,22 +71,29 @@ switch ($action) {
         ];
         $pw = (string)($_POST['password'] ?? '');
         try { $row['password_enc'] = $pw !== '' ? SourceDb::encrypt($pw) : ($cur['password_enc'] ?? ''); } catch (Throwable $e) { $socBack('danger', $e->getMessage()); }
-        if ($row['host'] === '' || $row['dbname'] === '' || $row['username'] === '') $socBack('danger', 'Host, database e utente sono obbligatori.');
+        // v1.10.08 — server e credenziali ereditati dalla Connessione al gestionale: cambia solo il database
+        $row['use_gestionale'] = empty($_POST['use_gestionale']) ? 0 : 1;
+        if ($row['use_gestionale']) {
+            foreach (['host', 'username'] as $k) if ($row[$k] === '') $row[$k] = (string)($cur[$k] ?? '');
+            if ($row['dbname'] === '') $socBack('danger', 'Indicare il nome del database SOC.');
+        } elseif ($row['host'] === '' || $row['dbname'] === '' || $row['username'] === '') $socBack('danger', 'Host, database e utente sono obbligatori.');
         if ($row['extract_sql'] !== null && !preg_match('/^\s*(SELECT|WITH)\b/i', (string)$row['extract_sql'])) $socBack('danger', 'La query di estrazione deve essere una SELECT.');
         if ($action === 'soc_db_save') {
             $cols = array_keys($row);
             if ($cur) $pdo->prepare("UPDATE cm_soc_source_db SET " . implode(', ', array_map(fn($c) => "$c = ?", $cols)) . " WHERE id = ?")->execute([...array_values($row), $cur['id']]);
             else $pdo->prepare("INSERT INTO cm_soc_source_db (" . implode(', ', $cols) . ", created_by) VALUES (" . implode(',', array_fill(0, count($cols) + 1, '?')) . ")")->execute([...array_values($row), $u_id]);
-            write_log('Service SOC', 'info', 'Connessione DB SOC salvata (' . $row['host'] . '/' . $row['dbname'] . ')', $u_id);
+            write_log('Service SOC', 'info', 'Connessione DB SOC salvata (' . ($row['use_gestionale'] ? 'credenziali del gestionale' : $row['host']) . '/' . $row['dbname'] . ')', $u_id);
             $socBack('success', 'Connessione al DB SOC salvata: la pipeline la userà dalla prossima esecuzione.');
         }
         try {
+            $row = SocIngest::resolveSource($pdo, $row);
             $src = SourceDb::connect(SourceDb::configFromRow($row));
-            if ($action === 'soc_db_test') $socBack('success', 'Connessione riuscita: ' . SourceDb::DRIVERS[$row['driver']]['label'] . ' ' . $src->serverVersion());
+            if ($action === 'soc_db_test') $socBack('success', 'Connessione riuscita: ' . SourceDb::DRIVERS[$row['driver']]['label'] . ' ' . $src->serverVersion()
+                . ' — ' . $row['username'] . '@' . $row['host'] . '/' . $row['dbname'] . ($row['cred_origin'] === 'gestionale' ? ' (credenziali del gestionale)' : ''));
             $pv = $ing->previewDb($row, 10);
             $_SESSION['soc_preview'] = $pv;
             $socBack('success', 'Anteprima (ultimi 7 giorni): ' . $pv['count'] . ' eventi, colonne riconosciute: ' . implode(', ', $pv['columns']), ['pv' => 1]);
-        } catch (Throwable $e) { $socBack('danger', 'DB SOC: ' . $e->getMessage()); }
+        } catch (Throwable $e) { $socBack('danger', 'DB SOC: ' . SocIngest::connError($pdo, $e, $row)); }
 
     case 'soc_map_people': case 'soc_map_clients':
         $tbl = $action === 'soc_map_people' ? ['cm_soc_people', 'employee_id', 'employees'] : ['cm_soc_clients', 'client_id', 'clients'];

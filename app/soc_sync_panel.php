@@ -1,6 +1,6 @@
 <?php
 /**
- * app/soc_sync_panel.php — v1.10.07
+ * app/soc_sync_panel.php — v1.10.07 (v1.10.08: credenziali ereditate dalla Connessione al gestionale)
  * Sincronizzazione gestionale › SOC: pipeline unica del Service SOC (cartella di arrivo + DB SOC), configurazione,
  * Unità Organizzativa SOC, abbinamenti, registro. Incluso da sync_commesse.php (header già emesso).
  * Variabili attese: $pdo, $can_run.
@@ -28,6 +28,7 @@ $emps = $pdo->query("SELECT id, CONCAT_WS(' ', last_name, first_name) n, status 
 $clients = $pdo->query("SELECT id, name FROM clients ORDER BY name")->fetchAll(PDO::FETCH_KEY_PAIR);
 $preview = !empty($_GET['pv']) ? ($_SESSION['soc_preview'] ?? null) : null; unset($_SESSION['soc_preview']);
 $drivers = SourceDb::availableDrivers();
+$gest = null; try { $gest = $pdo->query("SELECT driver, host, port, username, dbname, password_enc FROM cm_source_db WHERE is_active = 1 ORDER BY id DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC) ?: null; } catch (Throwable $e) {}
 $sched = $pdo->query("SELECT exec_mode, is_enabled, run_at, last_tick_at FROM cm_sync_schedule WHERE id = 1")->fetch(PDO::FETCH_ASSOC) ?: [];
 $enabled = $S('soc.sync_enabled', '0') === '1'; $interval = (int)$S('soc.interval_min', '60');
 $lastAt = $S('soc.last_run_at'); $dbNow = strtotime((string)$pdo->query("SELECT NOW()")->fetchColumn());
@@ -58,7 +59,7 @@ $root = defined('APP_BASE') ? APP_BASE : dirname(__DIR__);
       ['Ultima esecuzione', $dt($lastAt) . ' ' . $stPill($S('soc.last_status')), h(mb_strimwidth($S('soc.last_note'), 0, 90, '…'))],
       ['Prossima', $nextAt ? ($nextAt <= $dbNow ? 'appena possibile' : $dt($nextAt)) : '—', $enabled ? 'alla prima attività sul portale dopo questo orario' : ''],
       ['Cartella di arrivo', $n(count($pend)) . ' file in attesa', h(str_replace($root . '/', '', SocSync::inbox($pdo)))],
-      ['DB SOC', $dbCfg ? ($dbCfg['is_active'] ? $pill('ATTIVO', '#16a34a') : $pill('DISATTIVO', '#64748b')) : $pill('NON CONFIGURATO', '#d97706'), $dbCfg ? h($dbCfg['host'] . '/' . $dbCfg['dbname'] . ' · ' . $dbCfg['window_days'] . ' gg') : ''],
+      ['DB SOC', $dbCfg ? ($dbCfg['is_active'] ? $pill('ATTIVO', '#16a34a') : $pill('DISATTIVO', '#64748b')) : $pill('NON CONFIGURATO', '#d97706'), $dbCfg ? h((!empty($dbCfg['use_gestionale']) ? ($gest ? $gest['host'] . ' (gestionale)' : 'gestionale non configurato') : $dbCfg['host']) . '/' . $dbCfg['dbname'] . ' · ' . $dbCfg['window_days'] . ' gg') : ''],
       ['Archivio', $n($arch['ticket']) . ' ticket', $n($arch['eventi']) . ' eventi · ' . $dd($arch['dal']) . ' – ' . $dd($arch['al'])],
     ] as [$l, $v, $s]): ?>
       <div style="background:#f8fafc;border-radius:8px;padding:10px"><div style="font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase"><?=h($l)?></div>
@@ -89,18 +90,22 @@ $root = defined('APP_BASE') ? APP_BASE : dirname(__DIR__);
     <p style="font-size:12px;color:var(--muted);margin:0 0 8px">Istanza separata con lo stesso schema del gestionale, utenza di sola lettura, password cifrata con APP_SECRET.
       Ogni esecuzione della pipeline legge gli ultimi <?=$dbCfg ? $n($dbCfg['window_days']) : '30'?> giorni (0 = tutto).
       <?php if ($dbCfg): ?>Ultima lettura: <?=$dt($dbCfg['last_sync_at'])?> — <?=h((string)$dbCfg['last_sync_note'])?><?php endif; ?></p>
-    <?php if ($isSA): $c = $dbCfg ?: ['label' => 'Gestionale SOC', 'driver' => 'mysql', 'host' => '', 'port' => 3306, 'dbname' => '', 'username' => '', 'source_schema' => '', 'timeout' => 10, 'window_days' => 30, 'ticket_prefix' => 'WES_', 'extract_sql' => '', 'is_active' => 1, 'password_enc' => '']; ?>
+    <?php if ($isSA): $c = $dbCfg ?: ['label' => 'Gestionale SOC', 'driver' => 'mysql', 'host' => '', 'port' => 3306, 'dbname' => '', 'username' => '', 'source_schema' => '', 'timeout' => 10, 'window_days' => 30, 'ticket_prefix' => 'WES_', 'extract_sql' => '', 'is_active' => 1, 'password_enc' => '', 'use_gestionale' => $gest ? 1 : 0]; $useG = !empty($c['use_gestionale']); ?>
     <details <?= $dbCfg ? '' : 'open' ?>><summary style="cursor:pointer;font-size:13px;font-weight:700">Connessione (Super Admin)</summary>
       <form method="POST" autocomplete="off" style="margin-top:8px">
         <?= Csrf::field() ?>
+        <label style="font-size:13px;display:block;margin-bottom:6px"><input type="checkbox" name="use_gestionale" value="1" id="socUseG" <?=$useG ? 'checked' : ''?> <?=$gest ? '' : 'disabled'?>>
+          Usa server e credenziali della <b>Connessione al gestionale</b> (cambia solo il database)</label>
+        <p style="font-size:12px;margin:0 0 8px;color:var(--muted)"><?php if ($gest): ?>Gestionale: <code><?=h($gest['username'] . '@' . $gest['host'] . ':' . $gest['port'])?></code> (<?=h(SourceDb::DRIVERS[$gest['driver']]['label'] ?? $gest['driver'])?>, database <code><?=h($gest['dbname'])?></code>, password <?=$gest['password_enc'] ? 'impostata' : 'assente'?>) — stessa logica di connessione (SourceDb, sola lettura, password cifrata con APP_SECRET).
+          <?php else: ?>Connessione al gestionale non configurata: indicare server e credenziali propri.<?php endif; ?></p>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:6px 10px">
           <div class="form-group"><label>Nome</label><input name="label" value="<?=h($c['label'])?>"></div>
-          <div class="form-group"><label>Driver</label><select name="driver"><?php foreach (SourceDb::DRIVERS as $k => $d): ?><option value="<?=$k?>" <?=$c['driver'] === $k ? 'selected' : ''?> <?=isset($drivers[$k]) ? '' : 'disabled'?>><?=h($d['label'])?><?=isset($drivers[$k]) ? '' : ' (non disponibile)'?></option><?php endforeach; ?></select></div>
-          <div class="form-group"><label>Host</label><input name="host" value="<?=h($c['host'])?>" placeholder="10.100.7.65"></div>
-          <div class="form-group"><label>Porta</label><input type="number" name="port" value="<?=(int)$c['port']?>"></div>
+          <div class="form-group"><label>Driver</label><select name="driver" data-own><?php foreach (SourceDb::DRIVERS as $k => $d): ?><option value="<?=$k?>" <?=$c['driver'] === $k ? 'selected' : ''?> <?=isset($drivers[$k]) ? '' : 'disabled'?>><?=h($d['label'])?><?=isset($drivers[$k]) ? '' : ' (non disponibile)'?></option><?php endforeach; ?></select></div>
+          <div class="form-group"><label>Host</label><input name="host" data-own value="<?=h($c['host'])?>" placeholder="10.100.7.65"></div>
+          <div class="form-group"><label>Porta</label><input type="number" name="port" data-own value="<?=(int)$c['port']?>"></div>
           <div class="form-group"><label>Database</label><input name="dbname" value="<?=h($c['dbname'])?>"></div>
-          <div class="form-group"><label>Utente (sola lettura)</label><input name="username" value="<?=h($c['username'])?>"></div>
-          <div class="form-group"><label>Password</label><input type="password" name="password" placeholder="<?=$c['password_enc'] ? '•••••• (vuoto = invariata)' : ''?>" autocomplete="new-password"></div>
+          <div class="form-group"><label>Utente (sola lettura)</label><input name="username" data-own value="<?=h($c['username'])?>"></div>
+          <div class="form-group"><label>Password</label><input type="password" name="password" data-own placeholder="<?=$c['password_enc'] ? '•••••• (vuoto = invariata)' : ''?>" autocomplete="new-password"></div>
           <div class="form-group"><label>Schema (facoltativo)</label><input name="source_schema" value="<?=h((string)$c['source_schema'])?>"></div>
           <div class="form-group"><label>Timeout (s)</label><input type="number" name="timeout" min="3" max="60" value="<?=(int)$c['timeout']?>"></div>
           <div class="form-group"><label>Finestra (giorni, 0 = tutto)</label><input type="number" name="window_days" min="0" value="<?=(int)$c['window_days']?>"></div>
@@ -116,6 +121,7 @@ $root = defined('APP_BASE') ? APP_BASE : dirname(__DIR__);
           <button class="btn btn-sm" name="action" value="soc_db_preview"><i class="fa-solid fa-eye"></i> Anteprima</button>
         </div>
       </form>
+      <script>(function(){var c=document.getElementById('socUseG');if(!c)return;var f=function(){document.querySelectorAll('[data-own]').forEach(function(e){e.readOnly=c.checked;e.style.opacity=c.checked?.45:1;if(e.tagName==='SELECT')e.style.pointerEvents=c.checked?'none':'';});};c.addEventListener('change',f);f();})();</script>
     </details>
     <?php elseif (!$dbCfg): ?><p style="font-size:12px">La connessione al DB SOC è configurata dal Super Admin.</p><?php endif; ?>
     <?php if ($preview): ?>
