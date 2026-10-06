@@ -117,7 +117,11 @@ final class SocSync
             }
             // 2. DB SOC
             if ((int)$pdo->query("SELECT COUNT(*) FROM cm_soc_source_db WHERE is_active = 1")->fetchColumn() > 0) {
-                $r = $ing->importDb($userId, $ing->trigger);
+                // v1.10.10 — rilettura completa una tantum (soc.full_resync = 1, impostato dalla migrazione): porta la
+                // categoria da tt_category anche sugli eventi fuori dalla finestra incrementale
+                $full = self::setting($pdo, 'soc.full_resync', '0') === '1';
+                $r = $ing->importDb($userId, $ing->trigger, $full ? 0 : null);
+                if ($full && ($r['status'] ?? '') !== 'error') self::set($pdo, 'soc.full_resync', '0');
                 $db = $r['ok'] ? 'ok' : 'errore';
                 if (!$r['ok']) $errors++;
                 $tot['new'] += (int)($r['rows_inserted'] ?? 0); $tot['upd'] += (int)($r['rows_updated'] ?? 0); $tot['read'] += (int)($r['rows_read'] ?? 0);

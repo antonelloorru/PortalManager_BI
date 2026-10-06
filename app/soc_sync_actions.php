@@ -92,7 +92,7 @@ switch ($action) {
                 . ' — ' . $row['username'] . '@' . $row['host'] . '/' . $row['dbname'] . ($row['cred_origin'] === 'gestionale' ? ' (credenziali del gestionale)' : ''));
             $pv = $ing->previewDb($row, 10);
             $_SESSION['soc_preview'] = $pv;
-            $socBack('success', 'Anteprima (ultimi 7 giorni): ' . $pv['count'] . ' eventi, colonne riconosciute: ' . implode(', ', $pv['columns']), ['pv' => 1]);
+            $socBack('success', 'Anteprima (ultimi 7 giorni): ' . $pv['count'] . ' eventi, colonne riconosciute: ' . implode(', ', $pv['columns']) . ' · ' . ($pv['note'] ?? ''), ['pv' => 1]);
         } catch (Throwable $e) { $socBack('danger', 'DB SOC: ' . SocIngest::connError($pdo, $e, $row)); }
 
     case 'soc_map_people': case 'soc_map_clients':

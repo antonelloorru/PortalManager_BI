@@ -38,7 +38,7 @@ final class SocModel
         $d = static fn($v) => preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)$v) ? (string)$v : '';
         $s = static fn($k, $max = 190) => mb_substr(trim((string)($q[$k] ?? '')), 0, $max);
         $f = ['from' => $d($q['from'] ?? ''), 'to' => $d($q['to'] ?? ''), 'cliente' => $s('cliente'), 'commessa' => $s('commessa', 60),
-              'categoria' => $s('categoria', 120), 'tec' => $s('tec', 150), 'stato' => in_array($q['stato'] ?? '', ['aperti', 'chiusi', 'presidio'], true) ? $q['stato'] : '',
+              'categoria' => self::listParam($q['categoria'] ?? []), 'tec' => $s('tec', 150), 'stato' => in_array($q['stato'] ?? '', ['aperti', 'chiusi', 'presidio'], true) ? $q['stato'] : '',
               'esito' => $s('esito', 60), 'q' => $s('q', 100), 'contratti' => PmContractFilter::fromRequest($q)];
         if ($f['from'] === '' || $f['to'] === '') {
             $max = null;
@@ -50,6 +50,16 @@ final class SocModel
         if ($f['from'] > $f['to']) [$f['from'], $f['to']] = [$f['to'], $f['from']];
         return $f;
     }
+
+    /** v1.10.10 — Parametro a scelta multipla: array (select multiple) o stringa separata da virgole (link). */
+    public static function listParam($v): array
+    {
+        $v = is_array($v) ? $v : explode(',', (string)$v);
+        $v = array_values(array_unique(array_filter(array_map(fn($x) => mb_substr(trim((string)$x), 0, 120), $v), fn($x) => $x !== '')));
+        return array_slice($v, 0, 50);
+    }
+
+    public const NO_CATEGORY = '(non indicato)';
 
     public function cf(array $f): PmContractFilter
     {
@@ -78,7 +88,13 @@ final class SocModel
         $w = ['1=1']; $a = [];
         if ($f['cliente'] !== '')   { $w[] = 't.client_name = ?'; $a[] = $f['cliente']; }
         if ($f['commessa'] !== '')  { $w[] = 't.soc_contract = ?'; $a[] = $f['commessa']; }
-        if ($f['categoria'] !== '') { $w[] = 't.category = ?'; $a[] = $f['categoria']; }
+        if ($f['categoria']) {                                             // v1.10.10 — scelta multipla; «(non indicato)» = senza categoria
+            $named = array_values(array_filter($f['categoria'], fn($c) => $c !== self::NO_CATEGORY));
+            $or = [];
+            if ($named) { $or[] = 't.category IN (' . implode(',', array_fill(0, count($named), '?')) . ')'; array_push($a, ...$named); }
+            if (in_array(self::NO_CATEGORY, $f['categoria'], true)) $or[] = "COALESCE(t.category, '') = ''";
+            $w[] = '(' . implode(' OR ', $or) . ')';
+        }
         if ($f['tec'] !== '')       { $w[] = "(t.assignee_name = ? OR t.owner_name = ? OR EXISTS (SELECT 1 FROM cm_soc_events fe WHERE fe.ticket_code = t.ticket_code AND fe.author_name = ? AND fe.event_kind IN ('supporto', 'nota')))"; array_push($a, $f['tec'], $f['tec'], $f['tec']); }
         if ($f['esito'] !== '')     { $w[] = 't.resolution = ?'; $a[] = $f['esito']; }
         if ($f['stato'] === 'aperti') $w[] = 't.is_closed = 0';
@@ -288,6 +304,42 @@ final class SocModel
         return $rows;
     }
 
+    /**
+     * v1.10.10 — Ticket del periodo per incaricato e categoria (stessi filtri principali).
+     * @return array{cats:string[], rows:array<int,array{nome:string,tot:int,c:array<string,int>}>}
+     */
+    public function teamCategorie(array $f): array
+    {
+        [$w, $a] = $this->where($f);
+        $r = $this->rows("SELECT COALESCE(NULLIF(t.assignee_name, ''), '(non assegnato)') nome, COALESCE(NULLIF(t.category, ''), '" . self::NO_CATEGORY . "') cat, COUNT(*) n
+                            FROM cm_soc_tickets t WHERE $w GROUP BY nome, cat", $a);
+        $cats = []; $rows = [];
+        foreach ($r as $x) {
+            $cats[$x['cat']] = ($cats[$x['cat']] ?? 0) + (int)$x['n'];
+            $rows[$x['nome']]['nome'] = $x['nome'];
+            $rows[$x['nome']]['c'][$x['cat']] = (int)$x['n'];
+            $rows[$x['nome']]['tot'] = ($rows[$x['nome']]['tot'] ?? 0) + (int)$x['n'];
+        }
+        arsort($cats); $rows = array_values($rows); usort($rows, fn($x, $y) => $y['tot'] <=> $x['tot']);
+        return ['cats' => array_keys($cats), 'tot' => $cats, 'rows' => $rows];
+    }
+
+    /** v1.10.10 — Andamento mensile dei ticket aperti per categoria (stessi filtri principali). */
+    public function trendCategorie(array $f, int $mesi = 12): array
+    {
+        [$w, $a] = $this->where($f, 'none');
+        $end = new DateTimeImmutable(substr($f['to'], 0, 7) . '-01');
+        $start = $end->modify('-' . ($mesi - 1) . ' months');
+        $r = $this->rows("SELECT DATE_FORMAT(t.opened_at, '%Y-%m') ym, COALESCE(NULLIF(t.category, ''), '" . self::NO_CATEGORY . "') cat, COUNT(*) n
+                            FROM cm_soc_tickets t WHERE $w AND t.opened_at BETWEEN ? AND ? GROUP BY ym, cat",
+                         array_merge($a, [$start->format('Y-m-01 00:00:00'), $f['to'] . ' 23:59:59']));
+        $months = []; for ($d = $start; $d <= $end; $d = $d->modify('+1 month')) $months[] = $d->format('Y-m');
+        $m = []; $tot = [];
+        foreach ($r as $x) { $m[$x['cat']][$x['ym']] = (int)$x['n']; $tot[$x['cat']] = ($tot[$x['cat']] ?? 0) + (int)$x['n']; }
+        arsort($tot);
+        return ['months' => $months, 'series' => array_map(fn($c) => ['cat' => $c, 'values' => array_map(fn($ym) => $m[$c][$ym] ?? 0, $months)], array_keys($tot))];
+    }
+
     /* ── clienti e commesse del portale ─────────────────────────────── */
 
     public function clienti(array $f): array
@@ -362,7 +414,9 @@ final class SocModel
                                                UNION SELECT author_name FROM cm_soc_events WHERE event_kind IN ('supporto', 'nota')) x
                                                WHERE n IS NOT NULL AND n <> '' ORDER BY n", []), 'n');
         }
-        return array_column($this->rows("SELECT DISTINCT $c v FROM cm_soc_tickets WHERE $c IS NOT NULL AND $c <> '' ORDER BY v", []), 'v');
+        $v = array_column($this->rows("SELECT DISTINCT $c v FROM cm_soc_tickets WHERE $c IS NOT NULL AND $c <> '' ORDER BY v", []), 'v');
+        if ($col === 'categoria' && (int)$this->rows("SELECT COUNT(*) n FROM cm_soc_tickets WHERE COALESCE(category, '') = ''", [])[0]['n'] > 0) $v[] = self::NO_CATEGORY;
+        return $v;
     }
 
     /* ── ingestion: stato ────────────────────────────────────────────── */

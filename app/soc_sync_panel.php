@@ -111,7 +111,7 @@ $root = defined('APP_BASE') ? APP_BASE : dirname(__DIR__);
           <div class="form-group"><label>Finestra (giorni, 0 = tutto)</label><input type="number" name="window_days" min="0" value="<?=(int)$c['window_days']?>"></div>
           <div class="form-group"><label>Prefisso ticket</label><input name="ticket_prefix" value="<?=h((string)$c['ticket_prefix'])?>" placeholder="WES_"></div>
         </div>
-        <div class="form-group"><label>Query di estrazione (vuota = predefinita)</label>
+        <div class="form-group"><label>Query di estrazione (vuota = predefinita: messaggi tt_article + categoria da tt_ticket.id_tt_category → tt_category, se presenti)</label>
           <textarea name="extract_sql" rows="6" style="font-family:monospace;font-size:11px" placeholder="<?=h(SocIngest::DEFAULT_SQL)?>"><?=h((string)$c['extract_sql'])?></textarea>
           <small style="color:var(--muted)">Solo SELECT, colonne con i nomi delle intestazioni dell'export (alias). Il primo <code>?</code> riceve la data minima della finestra, il secondo il prefisso ticket (LIKE).</small></div>
         <label style="font-size:13px"><input type="checkbox" name="is_active" value="1" <?=$c['is_active'] ? 'checked' : ''?>> Connessione attiva (usata dalla pipeline)</label>

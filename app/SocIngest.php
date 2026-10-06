@@ -64,6 +64,8 @@ ORDER BY a.id";
     /** v1.10.07 — pipeline SocSync: più sorgenti in un'esecuzione, ricostruzione ticket una sola volta alla fine. */
     public bool $deferFinalize = false;
     public string $trigger = 'manuale';
+    /** v1.10.10 — origine della categoria nell'ultima lettura dal DB SOC */
+    public string $schemaNote = '';
 
     public function __construct(private PDO $pdo)
     {
@@ -223,7 +225,8 @@ ORDER BY a.id";
         try {
             $cfgRow = self::resolveSource($this->pdo, $cfgRow);
             $src = SourceDb::connect(SourceDb::configFromRow($cfgRow));
-            [$sql, $params] = self::extractQuery($cfgRow, $days);
+            [$sql, $params] = self::extractQuery($cfgRow, $days, $src);
+            $this->schemaNote = trim((string)($cfgRow['extract_sql'] ?? '')) !== '' ? 'query personalizzata' : self::defaultSql($src)[1];
             $st = $src->query($sql, $params);
             $raw = [];
             while (($r = $st->fetch(PDO::FETCH_ASSOC)) !== false) {
@@ -240,6 +243,10 @@ ORDER BY a.id";
             return $this->closeBatch($batch, 'error', ['message' => 'DB SOC: ' . $err]);
         }
         $res = $this->ingest($batch, 'db', $raw);
+        if ($this->schemaNote !== '') {
+            $res['message'] = ($res['message'] ?? '') . ' · ' . $this->schemaNote;
+            $this->pdo->prepare("UPDATE cm_soc_batches SET message = LEFT(CONCAT(COALESCE(message, ''), ' · ', ?), 1000) WHERE id = ?")->execute([$this->schemaNote, $batch]);
+        }
         $this->pdo->prepare("UPDATE cm_soc_source_db SET last_sync_at = NOW(), last_sync_note = ? WHERE id = ?")->execute([mb_substr($res['message'], 0, 255), $cfgRow['id']]);
         return $res;
     }
@@ -280,10 +287,38 @@ ORDER BY a.id";
         return $m;
     }
 
-    /** Query di estrazione e parametri: ? n.1 = data minima, ? n.2 = prefisso ticket (LIKE). */
-    public static function extractQuery(array $cfg, ?int $days = null): array
+    /**
+     * v1.10.10 — Query predefinita adattata allo schema del DB SOC: la categoria del ticket è in
+     * tt_ticket.id_tt_category → tt_category (tt_article porta solo i messaggi). Le colonne si verificano sulla
+     * sorgente: se tt_ticket o tt_category mancano resta la query base, senza errori. Con una colonna padre in
+     * tt_category la categoria diventa «Padre › Figlia».
+     * @return array{0:string,1:string} [sql, nota]
+     */
+    public static function defaultSql(?SourceDb $src): array
     {
-        $sql = trim((string)($cfg['extract_sql'] ?? '')) ?: self::DEFAULT_SQL;
+        if ($src === null) return [self::DEFAULT_SQL, 'query base'];
+        $cols = static function (string $t) use ($src): array { try { return array_map('strtolower', $src->columnsOf($t)); } catch (Throwable $e) { return []; } };
+        $art = $cols('tt_article'); $tk = $cols('tt_ticket'); $cat = $cols('tt_category');
+        if (!in_array('id_tt_ticket', $art, true) || !in_array('id', $tk, true) || !in_array('id_tt_category', $tk, true)) return [self::DEFAULT_SQL, 'categoria non disponibile: tt_ticket.id_tt_category assente'];
+        $name = null; foreach (['name', 'description', 'title', 'label', 'descrizione', 'nome', 'code'] as $c) if (in_array($c, $cat, true)) { $name = $c; break; }
+        if (!in_array('id', $cat, true) || $name === null) return [self::DEFAULT_SQL, 'categoria non disponibile: tt_category senza colonna descrittiva'];
+        $par = null; foreach (['id_parent', 'parent_id', 'id_tt_category_parent', 'id_tt_category'] as $c) if (in_array($c, $cat, true)) { $par = $c; break; }
+        $q = fn(string $i) => $src->quoteIdent($i);
+        $expr = "NULLIF(TRIM(c.{$q($name)}), '')";
+        $join = "LEFT JOIN tt_ticket tk ON tk.id = a.id_tt_ticket\nLEFT JOIN tt_category c ON c.id = tk.id_tt_category";
+        if ($par !== null) {
+            $expr = "CASE WHEN cp.id IS NULL THEN $expr ELSE CONCAT(TRIM(cp.{$q($name)}), ' › ', TRIM(c.{$q($name)})) END";
+            $join .= "\nLEFT JOIN tt_category cp ON cp.id = c.{$q($par)}";
+        }
+        $sql = str_replace("FROM tt_article a", "    , $expr AS `categoria`\nFROM tt_article a", self::DEFAULT_SQL);
+        $sql = str_replace("LEFT JOIN tt_queue q ON q.id = a.id_tt_queue", "LEFT JOIN tt_queue q ON q.id = a.id_tt_queue\n$join", $sql);
+        return [$sql, "categoria da tt_ticket.id_tt_category → tt_category.$name" . ($par ? " (gerarchia $par)" : '')];
+    }
+
+    /** Query di estrazione e parametri: ? n.1 = data minima, ? n.2 = prefisso ticket (LIKE). */
+    public static function extractQuery(array $cfg, ?int $days = null, ?SourceDb $src = null): array
+    {
+        $sql = trim((string)($cfg['extract_sql'] ?? '')) ?: self::defaultSql($src)[0];
         $days = $days ?? (int)($cfg['window_days'] ?? 30);
         $from = $days > 0 ? date('Y-m-d 00:00:00', strtotime("-$days days")) : '1970-01-01 00:00:00';
         $prefix = trim((string)($cfg['ticket_prefix'] ?? ''));
@@ -297,7 +332,7 @@ ORDER BY a.id";
     {
         require_once __DIR__ . '/SourceDb.php';
         $src = SourceDb::connect(SourceDb::configFromRow($cfgRow));
-        [$sql, $params] = self::extractQuery($cfgRow, 7);
+        [$sql, $params] = self::extractQuery($cfgRow, 7, $src);
         $st = $src->query($sql, $params);
         $out = []; $map = null; $n = 0;
         while (($r = $st->fetch(PDO::FETCH_ASSOC)) !== false) {
@@ -305,7 +340,7 @@ ORDER BY a.id";
             $n++;
             if (count($out) < $limit) { $o = []; foreach ($map as $h => $f) $o[$f] = $r[$h]; $out[] = $this->normalize($o) ?? ['_scartata' => true] + $o; }
         }
-        return ['rows' => $out, 'count' => $n, 'columns' => $map ? array_values($map) : []];
+        return ['rows' => $out, 'count' => $n, 'columns' => $map ? array_values($map) : [], 'note' => trim((string)($cfgRow['extract_sql'] ?? '')) !== '' ? 'query personalizzata' : self::defaultSql($src)[1]];
     }
 
     /** Scrittura degli eventi normalizzati + ricostruzione dei ticket. */

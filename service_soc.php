@@ -59,15 +59,18 @@ if ($ready && ($_GET['export'] ?? '') === 'xlsx' && can('export', 'service_soc.p
             $b['risposta_media_h'] !== null ? (float)$b['risposta_media_h'] : null, $b['chiusura_media_g'] !== null ? (float)$b['chiusura_media_g'] : null, (int)$b['eventi'], (float)$b['ore_moduli'], (float)$b['costo'], (float)$b['ricavo']];
         $w->addSheet($sheet, $r);
     }
-    $r = [['Persona SOC', 'Dipendente', 'Ticket', 'Chiusi nel periodo', 'Aperti', 'Msg supporto', 'Note', 'Risposta media (h)', 'Ore moduli SOC', 'Ore moduli totali', 'Quota SOC %']];
+    $r = [['Persona SOC', 'Dipendente', 'Ticket (incaricato)', 'Chiusi nel periodo', 'Aperti', 'Msg supporto', 'Note', 'Risposta media (h)', 'Ore moduli SOC', 'Ore moduli totali', 'Quota SOC %']];
     foreach ($soc->team($f) as $t) $r[] = [$t['nome'], $t['dipendente'], (int)$t['ticket'], (int)$t['chiusi'], (int)$t['aperti'], $t['msg_supporto'], $t['note'],
         $t['risposta_media_h'] !== null ? (float)$t['risposta_media_h'] : null, $t['ore_soc'], $t['ore_tot'], $t['quota_soc'] !== null ? round($t['quota_soc'], 1) : null];
     $w->addSheet('Team', $r);
+    $tc = $soc->teamCategorie($f); $r = [array_merge(['Incaricato'], $tc['cats'], ['Totale'])];
+    foreach ($tc['rows'] as $x) $r[] = array_merge([$x['nome']], array_map(fn($c) => (int)($x['c'][$c] ?? 0), $tc['cats']), [(int)$x['tot']]);
+    $w->addSheet('Componenti x categoria', $r);
     $r = [['Commessa PM', 'Descrizione', 'Cliente', 'Moduli', 'Ticket', 'Ore', 'Costo (€)', 'Ricavo (€)', 'Tecnici']];
     foreach ($soc->commessePm($f) as $c) $r[] = [$c['codice'], $c['nome'], $c['cliente'], (int)$c['moduli'], (int)$c['ticket'], (float)$c['ore'], (float)$c['costo'], (float)$c['ricavo'], (int)$c['tecnici']];
     $w->addSheet('Commesse PM', $r);
     $w->addSheet('Filtri', [['Filtro', 'Valore'], ['Periodo', $f['from'] . ' → ' . $f['to']], ['Cliente', $f['cliente']], ['Commessa SOC', $f['commessa']],
-        ['Categoria', $f['categoria']], ['Componente', $f['tec']], ['Stato', $f['stato']], ['Esito', $f['esito']], ['Ricerca', $f['q']], ['Contratti', implode(', ', $f['contratti'])]]);
+        ['Categoria', implode(', ', $f['categoria'])], ['Componente', $f['tec']], ['Stato', $f['stato']], ['Esito', $f['esito']], ['Ricerca', $f['q']], ['Contratti', implode(', ', $f['contratti'])]]);
     write_log('Service SOC', 'info', 'Export XLSX ' . $f['from'] . ' → ' . $f['to'], $u_id);
     $w->download('service_soc_' . date('Ymd_Hi') . '.xlsx'); exit;
 }
@@ -77,14 +80,14 @@ if ($ready) {
     if ($tab === 'cruscotto') {
         $trend = $soc->trend($f, 12); $trG = $soc->trendGiornaliero($f);
         $bCat = $soc->breakdown($f, 'categoria'); $bEsito = array_values(array_filter($soc->breakdown($f, 'esito'), fn($r) => $r['k'] !== '(non indicato)'));
-        $bStato = $soc->breakdown($f, 'stato'); $pres = $soc->presidio($f, 20);
+        $bStato = $soc->breakdown($f, 'stato'); $pres = $soc->presidio($f, 20); $trCat = $soc->trendCategorie($f, 12);
     }
     if ($tab === 'ticket' && !$tk) { $order = in_array($_GET['ord'] ?? '', ['recenti', 'vecchi', 'eventi', 'ore'], true) ? $_GET['ord'] : 'recenti'; $list = $soc->tickets($f, 500, $order); $nList = $soc->countTickets($f); }
-    if ($tab === 'team') $team = $soc->team($f);
+    if ($tab === 'team') { $team = $soc->team($f); $tCat = $soc->teamCategorie($f); }
     if ($tab === 'clienti') { $cli = $soc->clienti($f); $bCom = $soc->breakdown($f, 'commessa'); $cpm = $soc->commessePm($f); }
 }
 $qs = function (array $over = []) use ($f, $tab) {
-    $p = array_filter(['tab' => $tab, 'from' => $f['from'], 'to' => $f['to'], 'cliente' => $f['cliente'], 'commessa' => $f['commessa'], 'categoria' => $f['categoria'],
+    $p = array_filter(['tab' => $tab, 'from' => $f['from'], 'to' => $f['to'], 'cliente' => $f['cliente'], 'commessa' => $f['commessa'], 'categoria' => $f['categoria'] ?: null,
                        'tec' => $f['tec'], 'stato' => $f['stato'], 'esito' => $f['esito'], 'q' => $f['q'], 'contratti' => implode(',', $f['contratti'])], fn($v) => $v !== '' && $v !== null);
     return url_safe('service_soc', array_filter(array_merge($p, $over), fn($v) => $v !== null));
 };
@@ -97,6 +100,10 @@ $colStato = fn($s) => match (true) { in_array($s, ['CHIUSO', 'CHIUSO DAL CLIENTE
 $pill = fn($txt, $c) => "<span style='display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:700;background:{$c}1a;color:$c;white-space:nowrap'>" . h((string)$txt) . "</span>";
 $kindLbl = ['supporto' => ['Supporto', '#2563eb'], 'cliente' => ['Cliente', '#f59e0b'], 'nota' => ['Nota interna', '#64748b'], 'apertura' => ['Apertura', '#16a34a'], 'altro' => ['Altro', '#94a3b8']];
 
+// v1.10.10 — un solo blocco filtri (pattern Relazione di Servizio IT): il filtro automatico di footer.php
+// (ListFilter::renderAuto) agganciava una seconda barra client-side (ricerca, filtri per colonna, viste, export)
+// alla tabella più lunga, che filtrava solo le righe a video senza aggiornare indicatori, grafici ed export.
+$GLOBALS['PM_NO_AUTOFILTER'] = true;
 require_once('header.php');
 ?>
 <div style="margin-bottom:12px">
@@ -118,7 +125,7 @@ require_once('header.php');
 <?php else: ?>
 <?= PmContractFilter::banner($f['contratti'], $vCtr, $qs(['contratti' => null, 'contratti_set' => 1]), 'ticket con moduli di intervento sulle commesse selezionate') ?>
 
-<?php $attivi = ($f['cliente'] !== '') + ($f['commessa'] !== '') + ($f['categoria'] !== '') + ($f['tec'] !== '') + ($f['stato'] !== '') + ($f['esito'] !== '') + ($f['q'] !== '') + (count($f['contratti']) > 0); ?>
+<?php $attivi = ($f['cliente'] !== '') + ($f['commessa'] !== '') + (count($f['categoria']) > 0) + ($f['tec'] !== '') + ($f['stato'] !== '') + ($f['esito'] !== '') + ($f['q'] !== '') + (count($f['contratti']) > 0); ?>
 <details class="pm-panel" <?= $attivi > 0 ? 'open' : '' ?>>
   <summary><i class="fa-solid fa-chevron-right pm-chev"></i> Filtri
     <?php if ($attivi > 0): ?><span class="pm-badge"><?=$attivi?></span><?php endif; ?>
@@ -131,7 +138,9 @@ require_once('header.php');
         <div class="form-group"><label>Dal</label><input type="date" name="from" value="<?=h($f['from'])?>"></div>
         <div class="form-group"><label>Al</label><input type="date" name="to" value="<?=h($f['to'])?>"></div></div></div>
       <div class="pm-group"><h4>Selezione</h4><div class="pm-grid-auto">
-        <?php foreach (['cliente' => 'Cliente', 'commessa' => 'Commessa SOC', 'categoria' => 'Categoria', 'tec' => 'Componente (responsabile o incaricato)', 'esito' => 'Esito'] as $k => $l): ?>
+        <div class="form-group"><label>Categoria</label><select name="categoria[]" multiple class="pm-ms" data-placeholder="— tutte —" data-allow-clear>
+          <?php foreach ($soc->valori('categoria') as $v): ?><option value="<?=h($v)?>" <?=in_array($v, $f['categoria'], true) ? 'selected' : ''?>><?=h($v)?></option><?php endforeach; ?></select></div>
+        <?php foreach (['cliente' => 'Cliente', 'commessa' => 'Commessa SOC', 'tec' => 'Componente (incaricato, responsabile o autore)', 'esito' => 'Esito'] as $k => $l): ?>
           <div class="form-group"><label><?=h($l)?></label><select name="<?=$k?>" class="pm-ms"><option value="">— tutti —</option>
             <?php foreach ($soc->valori($k) as $v): ?><option value="<?=h($v)?>" <?=$f[$k] === $v ? 'selected' : ''?>><?=h($v)?></option><?php endforeach; ?></select></div>
         <?php endforeach; ?>
@@ -195,14 +204,33 @@ require_once('header.php');
     </div>
   </div>
 
+  <?php $catPal = ['#2563eb', '#16a34a', '#f59e0b', '#dc2626', '#7c3aed', '#0891b2', '#db2777', '#65a30d', '#ea580c', '#475569'];
+        $catTop = array_slice($bCat, 0, 12); ?>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(520px,1fr));gap:14px;margin-bottom:14px">
+    <div class="card" style="padding:14px 16px">
+      <h3 style="font-size:14px;margin:0 0 6px"><i class="fa-solid fa-tags"></i> Ticket per categoria — periodo <?=$dd($f['from'])?> – <?=$dd($f['to'])?></h3>
+      <?= $catTop ? PmCharts::groupedBars(array_map(fn($r) => mb_strimwidth($r['k'], 0, 18, '…'), $catTop), [
+            ['label' => 'Ticket del periodo', 'color' => '#2563eb', 'values' => array_map(fn($r) => (int)$r['attivi'], $catTop)],
+            ['label' => 'Chiusi', 'color' => '#16a34a', 'values' => array_map(fn($r) => (int)$r['chiusi'], $catTop)],
+            ['label' => 'Ancora aperti', 'color' => '#f59e0b', 'values' => array_map(fn($r) => (int)$r['ancora_aperti'], $catTop)]], ['height' => 220]) : '<p style="font-size:12px;color:var(--muted)">Nessun dato.</p>' ?>
+    </div>
+    <div class="card" style="padding:14px 16px">
+      <h3 style="font-size:14px;margin:0 0 6px"><i class="fa-solid fa-chart-column"></i> Ticket aperti per mese e categoria</h3>
+      <?php $trSeries = array_slice($trCat['series'], 0, 9);
+            if (count($trCat['series']) > 9) $trSeries[] = ['cat' => 'Altre', 'values' => array_map(fn(...$v) => array_sum($v), ...array_column(array_slice($trCat['series'], 9), 'values'))]; ?>
+      <?= $trSeries ? PmCharts::groupedBars(array_map(fn($ym) => substr($ym, 5) . '/' . substr($ym, 2, 2), $trCat['months']),
+            array_map(fn($x, $i) => ['label' => $x['cat'], 'color' => $catPal[$i % count($catPal)], 'values' => $x['values']], $trSeries, array_keys($trSeries)), ['height' => 220, 'stacked' => true]) : '<p style="font-size:12px;color:var(--muted)">Nessun dato.</p>' ?>
+    </div>
+  </div>
+
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:14px;margin-bottom:14px">
     <?php foreach ([['Per categoria', $bCat, 'categoria'], ['Esito dei ticket chiusi', $bEsito, 'esito'], ['Stato attuale', $bStato, null]] as [$tt, $rows, $fk]): ?>
       <div class="card" style="padding:14px 16px;overflow-x:auto">
         <h3 style="font-size:14px;margin:0 0 8px"><?=h($tt)?></h3>
-        <table class="data-table" style="width:100%;font-size:12px"><thead><tr><th></th><th style="text-align:right" title="Ticket di cui è incaricato (fra parentesi: incaricato dedotto dai messaggi)">Incaricato</th><th style="text-align:right" title="Ticket su cui ha scritto risposte o note">Seguiti</th><th style="text-align:right">Chiusi</th><th style="text-align:right">Risposta media</th><th style="text-align:right">Ore moduli</th></tr></thead><tbody>
+        <table class="data-table" style="width:100%;font-size:12px"><thead><tr><th></th><th style="text-align:right">Ticket</th><th style="text-align:right">Chiusi</th><th style="text-align:right">Risposta media</th><th style="text-align:right">Ore moduli</th></tr></thead><tbody>
         <?php if (!$rows): ?><tr><td colspan="5" style="color:var(--muted)">Nessun dato.</td></tr><?php endif; ?>
         <?php foreach ($rows as $r): ?><tr>
-          <td><?= $fk ? '<a href="' . $qs([$fk => $r['k']]) . '">' . h($r['k']) . '</a>' : $pill($r['k'], $colStato($r['k'])) ?></td>
+          <td><?= $fk ? '<a href="' . $qs([$fk => $fk === 'categoria' ? [$r['k']] : $r['k']]) . '">' . h($r['k']) . '</a>' : $pill($r['k'], $colStato($r['k'])) ?></td>
           <td style="text-align:right"><?=$n($r['attivi'])?></td><td style="text-align:right"><?=$n($r['chiusi'])?></td>
           <td style="text-align:right"><?=$r['risposta_media_h'] === null ? '—' : $n1($r['risposta_media_h']) . ' h'?></td><td style="text-align:right"><?=$n1($r['ore_moduli'])?></td></tr><?php endforeach; ?>
         </tbody></table>
@@ -294,6 +322,22 @@ require_once('header.php');
       <td style="text-align:right"><?=$n1($t['ore_soc'])?></td><td style="text-align:right"><?=$n1($t['ore_tot'])?></td><td style="text-align:right"><?=$t['quota_soc'] === null ? '—' : $n1($t['quota_soc']) . '%'?></td></tr>
     <?php endforeach; ?></tbody></table>
   </div>
+  <?php if ($tCat['rows']): $cats = array_slice($tCat['cats'], 0, 12); $altre = array_slice($tCat['cats'], 12); ?>
+  <div class="card" style="padding:14px 16px;overflow-x:auto;margin-top:14px">
+    <h3 style="font-size:14px;margin:0 0 4px"><i class="fa-solid fa-tags"></i> Ticket per componente e categoria</h3>
+    <p style="font-size:11px;color:var(--muted);margin:0 0 8px">Ticket del periodo per incaricato e categoria (tt_ticket → tt_category), con gli stessi filtri principali. Clic sul numero → elenco dei ticket.</p>
+    <table class="data-table" style="width:100%;font-size:12px"><thead><tr><th>Incaricato</th>
+      <?php foreach ($cats as $c): ?><th style="text-align:right"><a href="<?=$qs(['categoria' => [$c]])?>"><?=h($c)?></a></th><?php endforeach; ?>
+      <?php if ($altre): ?><th style="text-align:right">Altre</th><?php endif; ?><th style="text-align:right">Totale</th></tr></thead><tbody>
+      <?php foreach ($tCat['rows'] as $r): ?><tr><td><?=h($r['nome'])?></td>
+        <?php foreach ($cats as $c): $v = $r['c'][$c] ?? 0; ?><td style="text-align:right"><?= $v ? '<a href="' . $qs(['tab' => 'ticket', 'categoria' => [$c], 'tec' => $r['nome'][0] === '(' ? null : $r['nome']]) . '">' . $n($v) . '</a>' : '<span style="color:#cbd5e1">·</span>' ?></td><?php endforeach; ?>
+        <?php if ($altre): ?><td style="text-align:right"><?=$n(array_sum(array_intersect_key($r['c'], array_flip($altre))))?></td><?php endif; ?>
+        <td style="text-align:right;font-weight:700"><?=$n($r['tot'])?></td></tr><?php endforeach; ?>
+      <tr style="font-weight:700;background:#f8fafc"><td>Totale</td><?php foreach ($cats as $c): ?><td style="text-align:right"><?=$n($tCat['tot'][$c])?></td><?php endforeach; ?>
+        <?php if ($altre): ?><td style="text-align:right"><?=$n(array_sum(array_intersect_key($tCat['tot'], array_flip($altre))))?></td><?php endif; ?><td style="text-align:right"><?=$n(array_sum($tCat['tot']))?></td></tr>
+    </tbody></table>
+  </div>
+  <?php endif; ?>
 <?php endif; ?>
 
 <?php if ($tab === 'clienti' && $ready): ?>
