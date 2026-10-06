@@ -25,6 +25,26 @@ $u_id = (int)$_SESSION['user_id'];
 $sd = new SdModel($pdo);
 $f  = $sd->normFilters($_GET);
 
+// v1.10.12 — report DOCX / XLSX / CSV / PDF dal solo filtro principale: generale, del componente filtrato o
+// uno per componente (ZIP) quando non è attivo il filtro «Componente del team»
+require_once(__DIR__ . '/app/SdReport.php');
+$repFmt = (string)($_GET['rep'] ?? '');
+if (isset(PmReport::FORMATS[$repFmt]) && can('export', 'service_desk.php')) {
+    @set_time_limit(0);
+    $base = 'service_desk_' . $f['from'] . '_' . $f['to'];
+    try {
+        if (!empty($_GET['rep_zip']) && $f['tec'] === '') {
+            $items = SdReport::tecnici($sd, $f);
+            write_log('Projects', 'info', 'Report Service Desk per componente ' . strtoupper($repFmt) . ' (ZIP, ' . count($items) . ') ' . $f['from'] . ' → ' . $f['to'], $u_id);
+            PmReport::bundle($repFmt, $items, fn($k) => SdReport::build($sd, ['tec' => (string)$k] + $f, $repFmt), $base . '_componenti');
+        }
+        write_log('Projects', 'info', 'Report Service Desk ' . strtoupper($repFmt) . ($f['tec'] !== '' ? ' componente ' . $f['tec'] : ' generale') . ' ' . $f['from'] . ' → ' . $f['to'], $u_id);
+        SdReport::build($sd, $f, $repFmt)->send($repFmt, $base . ($f['tec'] !== '' ? '_' . $f['tec'] : '_generale'));
+    } catch (Throwable $e) {
+        $repErr = $e->getMessage();
+    }
+}
+
 // ── dati ────────────────────────────────────────────────────────────────────
 // Ogni blocco e' protetto singolarmente: se il modulo ticket non e' ancora
 // sincronizzato, la pagina deve spiegarlo invece di produrre un errore.
@@ -1352,13 +1372,16 @@ $colClasse = [
         <button class="btn btn-primary btn-sm"><i class="fa-solid fa-filter"></i> Applica</button>
         <a class="btn btn-sm" href="<?=url_safe('service_desk', ['contratti_set' => 1])?>">Azzera</a>
         <a class="btn btn-sm" href="<?=$qs(['export'=>'xlsx'])?>">
-          <i class="fa-solid fa-file-excel"></i> XLSX</a>
+          <i class="fa-solid fa-file-excel"></i> Dati XLSX</a>
         <a class="btn btn-sm" href="<?=$qs(['print'=>'1'])?>" target="_blank">
-          <i class="fa-solid fa-print"></i> <?= $tec !== '' ? 'Report personale' : 'Report generale' ?></a>
+          <i class="fa-solid fa-print"></i> Stampa <?= $tec !== '' ? 'report personale' : 'report generale' ?></a>
       </div>
     </form>
   </div>
 </details>
+
+<?php if (!empty($repErr)): ?><div class="alert alert-danger">Report non generato: <?=h($repErr)?></div><?php endif; ?>
+<?= PmReport::toolbar($qs, SdReport::tecnici($sd, $f), $tec !== '', 'tec', 'componente', can('export', 'service_desk.php')) ?>
 
 <!-- ── i quattro indicatori ─────────────────────────────────────────────── -->
 <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px">

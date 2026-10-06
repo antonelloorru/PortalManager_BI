@@ -42,6 +42,22 @@ $tk = $ticketCode !== '' ? $soc->ticket($ticketCode) : null;
 if ($tk) $tab = 'ticket';
 
 
+// v1.10.12 — report DOCX / XLSX / CSV / PDF dal solo filtro principale: generale, del componente filtrato o
+// uno per componente (ZIP) quando non è attivo il filtro «Componente»
+require_once(__DIR__ . '/app/SocReport.php');
+$repFmt = (string)($_GET['rep'] ?? '');
+if ($ready && isset(PmReport::FORMATS[$repFmt]) && can('export', 'service_soc.php')) {
+    @set_time_limit(0);
+    $base = 'service_soc_' . $f['from'] . '_' . $f['to'];
+    if (!empty($_GET['rep_zip']) && $f['tec'] === '') {
+        $items = SocReport::tecnici($soc, $f);
+        write_log('Service SOC', 'info', 'Report per componente ' . strtoupper($repFmt) . ' (ZIP, ' . count($items) . ' componenti) ' . $f['from'] . ' → ' . $f['to'], $u_id);
+        PmReport::bundle($repFmt, $items, fn($k) => SocReport::build($pdo, $soc, ['tec' => (string)$k] + $f, $repFmt), $base . '_componenti');
+    }
+    write_log('Service SOC', 'info', 'Report ' . strtoupper($repFmt) . ($f['tec'] !== '' ? ' componente ' . $f['tec'] : ' generale') . ' ' . $f['from'] . ' → ' . $f['to'], $u_id);
+    SocReport::build($pdo, $soc, $f, $repFmt)->send($repFmt, $base . ($f['tec'] !== '' ? '_' . $f['tec'] : '_generale'));
+}
+
 // export XLSX: perimetro e filtri della pagina
 if ($ready && ($_GET['export'] ?? '') === 'xlsx' && can('export', 'service_soc.php')) {
     require_once(__DIR__ . '/app/XlsxWriter.php');
@@ -179,11 +195,13 @@ require_once('header.php');
       <div class="pm-actions">
         <button class="btn btn-primary btn-sm"><i class="fa-solid fa-filter"></i> Applica</button>
         <a class="btn btn-sm" href="<?=url_safe('service_soc', ['tab' => $tab, 'contratti_set' => 1])?>">Azzera</a>
-        <?php if (can('export', 'service_soc.php')): ?><a class="btn btn-sm" href="<?=$qs(['export' => 'xlsx'])?>"><i class="fa-solid fa-file-excel"></i> XLSX</a><?php endif; ?>
+        <?php if (can('export', 'service_soc.php')): ?><a class="btn btn-sm" href="<?=$qs(['export' => 'xlsx'])?>"><i class="fa-solid fa-file-excel"></i> Dati XLSX</a><?php endif; ?>
       </div>
     </form>
   </div>
 </details>
+
+<?= PmReport::toolbar($qs, SocReport::tecnici($soc, $f), $f['tec'] !== '', 'tec', 'componente', can('export', 'service_soc.php')) ?>
 
 <!-- indicatori -->
 <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:14px">

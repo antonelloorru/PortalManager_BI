@@ -23,6 +23,23 @@ $imp   = new DgbImporter($pdo);
 $f     = DgbModel::normFilters($_GET);
 $f['contratti'] = PmContractFilter::canonical($pdo, $f['contratti']);   // v1.9.78 — link storici contract=<id>
 $vCtr  = $model->valoriContratti();   // v1.9.78 — filtro globale Codice Contratto / PM Project
+
+// v1.10.12 — report DOCX / XLSX / CSV / PDF dal solo filtro principale: generale, dell'incaricato filtrato o
+// uno per incaricato (ZIP) quando il filtro «Incaricato» non è su una sola persona
+require_once(__DIR__ . '/app/DgbReport.php');
+$repFmt = (string)($_GET['rep'] ?? '');
+if (isset(PmReport::FORMATS[$repFmt]) && can('export', 'dgb_activities.php')) {
+    @set_time_limit(0);
+    $base = 'dgb_attivita_' . ($f['from'] ?: 'inizio') . '_' . ($f['to'] ?: 'oggi');
+    if (!empty($_GET['rep_zip']) && count($f['operators']) !== 1) {
+        $items = DgbReport::tecnici($model, $f);
+        write_log('DGB', 'info', 'Report per incaricato ' . strtoupper($repFmt) . ' (ZIP, ' . count($items) . ' incaricati)', $u_id);
+        PmReport::bundle($repFmt, $items, fn($k) => DgbReport::build($pdo, $model, ['operators' => [(int)$k], 'operator' => (int)$k] + $f, $repFmt, $vCtr), $base . '_incaricati');
+    }
+    write_log('DGB', 'info', 'Report ' . strtoupper($repFmt) . (count($f['operators']) === 1 ? ' incaricato #' . $f['operators'][0] : ' generale'), $u_id);
+    $one = count($f['operators']) === 1 ? '_' . ($model->operatoriPerimetro(['operators' => []] + $f)[(string)$f['operators'][0]] ?? $f['operators'][0]) : '_generale';
+    DgbReport::build($pdo, $model, $f, $repFmt, $vCtr)->send($repFmt, $base . $one);
+}
 /** v1.9.78 — foglio "Filtri" negli export XLSX: il file dichiara il proprio perimetro. */
 $dgbFiltriSheet = function () use ($f, $vCtr): array {
     $r = [['Parametro', 'Valore']];
@@ -328,26 +345,10 @@ $anomRiep = []; $anomRighe = []; $anomTecnici = []; $anomTot = 0;
 // (WTS-REP) va spostato sul contratto operativo collegato.
 $impRighe = []; $impRiep = [];
 $f0 = $f;   // filtri della pagina (contratto) per le anomalie
-$anomF = [
-    'tipo'    => trim($_GET['atipo'] ?? ''),
-    'tecnico' => trim($_GET['atec'] ?? ''),
-    'sev'     => trim($_GET['asev'] ?? ''),
-    'dal'     => preg_match('/^\d{4}-\d{2}-\d{2}$/', $_GET['adal'] ?? '') ? $_GET['adal'] : '',
-    'al'      => preg_match('/^\d{4}-\d{2}-\d{2}$/', $_GET['aal'] ?? '')  ? $_GET['aal']  : '',
-];
-$anomAttivi = count(array_filter($anomF, fn($v) => $v !== ''));
-
-/** Clausola WHERE delle anomalie: unica sorgente per video ed export. */
-$anomWhere = function (array $f) use ($model, $f0): array {
-    $w = ['1=1']; $a = [];
-    if ($f['tipo']    !== '') { $w[] = 'tipo = ?';          $a[] = $f['tipo']; }
-    if ($f['sev']     !== '') { $w[] = 'severita = ?';      $a[] = $f['sev']; }
-    if ($f['tecnico'] !== '') { $w[] = 'tecnico LIKE ?';    $a[] = '%' . $f['tecnico'] . '%'; }
-    if ($f['dal']     !== '') { $w[] = 'giorno >= ?';       $a[] = $f['dal']; }
-    if ($f['al']      !== '') { $w[] = 'giorno <= ?';       $a[] = $f['al']; }
-    // v1.9.78 — filtro contratto: giorni-operatore con attività sui contratti selezionati
-    return [implode(' AND ', $w) . $model->ctrOperatoreGiorno($f0, 'operator_id', 'giorno', $a), $a];
-};
+// v1.10.12 — nessun blocco filtri proprio: le anomalie ereditano il filtro principale (periodo, incaricati,
+// contratti) tramite DgbModel::anomalieWhere(); tipo e severità sono colonne e riepilogo, non filtri
+$anomWhere = fn(array $ff): array => $model->anomalieWhere($ff);
+$anomF = $f;
 $anomOrder = " ORDER BY FIELD(severita,'alta','media'), giorno DESC, ore DESC";
 $anomCols  = ['Severita', 'Tipo', 'Tecnico', 'Giorno', 'Ore', 'Righe', 'Commesse coinvolte', 'Rilievo', 'Dettaglio'];
 /** Riga nel formato dell'export: stesse colonne e stessi valori del video. */
@@ -400,21 +401,12 @@ if ($tab === 'anomalie' && ($anomExp === 'xlsx' || $anomExp === 'csv')) {
 
 if ($tab === 'anomalie') {
     try {
-        if ($model->cf($f)->active()) {
-            // v1.9.78 — riepilogo ricalcolato sulle sole segnalazioni dei contratti selezionati
-            $ar = []; $wr = '1=1' . $model->ctrOperatoreGiorno($f, 'operator_id', 'giorno', $ar);
-            $stR = $pdo->prepare("SELECT tipo, severita, COUNT(*) AS segnalazioni, COUNT(DISTINCT operator_id) AS tecnici_coinvolti,
-                                         ROUND(SUM(ore), 2) AS ore_coinvolte, MIN(giorno) AS dal, MAX(giorno) AS al
-                                    FROM v_dgb_anomalie_orario WHERE $wr GROUP BY tipo, severita
-                                   ORDER BY FIELD(severita,'alta','media'), tipo");
-            $stR->execute($ar); $anomRiep = $stR->fetchAll(PDO::FETCH_ASSOC); $stR->closeCursor();
-        } else {
-        $anomRiep = $pdo->query("SELECT * FROM v_dgb_anomalie_riepilogo ORDER BY FIELD(severita,'alta','media'), tipo")
-                        ->fetchAll(PDO::FETCH_ASSOC);
-        }
-        $anomTecnici = $pdo->query("SELECT DISTINCT tecnico FROM v_dgb_anomalie_orario
-                                     WHERE tecnico IS NOT NULL AND tecnico <> '' ORDER BY tecnico")
-                           ->fetchAll(PDO::FETCH_COLUMN);
+        [$wr, $ar] = $model->anomalieWhere($f);   // v1.10.12 — riepilogo sullo stesso perimetro dell'elenco
+        $stR = $pdo->prepare("SELECT tipo, severita, COUNT(*) AS segnalazioni, COUNT(DISTINCT operator_id) AS tecnici_coinvolti,
+                                     ROUND(SUM(ore), 2) AS ore_coinvolte, MIN(giorno) AS dal, MAX(giorno) AS al
+                                FROM v_dgb_anomalie_orario WHERE $wr GROUP BY tipo, severita
+                               ORDER BY FIELD(severita,'alta','media'), tipo");
+        $stR->execute($ar); $anomRiep = $stR->fetchAll(PDO::FETCH_ASSOC); $stR->closeCursor();
         [$wA, $aA] = $anomWhere($anomF);
         // il conteggio totale e' separato dall'elenco: serve a dire quante righe
         // l'export produrrebbe, che con il limite a video non coinciderebbe
@@ -586,8 +578,8 @@ $qs = function (array $over = []) use ($f, $tab, $gran, $month) {
     <p style="color:var(--muted);font-size:13px">Gerarchia pianificazione → attività → incaricati dai modelli DogoBit: SLA d'innesco, consuntivo vs pianificato, distribuzione carico sede/remoto e data quality.</p>
   </div>
   <div style="display:flex;gap:8px">
-    <a class="btn btn-success btn-sm" href="<?=$qs(['export'=>'xlsx'])?>"><i class="fa-solid fa-file-excel"></i> XLSX</a>
-    <a class="btn btn-primary btn-sm" href="<?=$qs(['export'=>'csv'])?>"><i class="fa-solid fa-file-csv"></i> CSV</a>
+    <a class="btn btn-success btn-sm" href="<?=$qs(['export'=>'xlsx'])?>" title="Elenco attività (dati)"><i class="fa-solid fa-file-excel"></i> Dati XLSX</a>
+    <a class="btn btn-primary btn-sm" href="<?=$qs(['export'=>'csv'])?>" title="Elenco attività (dati)"><i class="fa-solid fa-file-csv"></i> Dati CSV</a>
   </div>
 </div>
 <?= $msg ?>
@@ -601,13 +593,13 @@ $qs = function (array $over = []) use ($f, $tab, $gran, $month) {
     // nessuno saprebbe di doverla aprire
     $nAlta = 0;
     try {
-        $aN = []; $wN = "severita='alta'" . $model->ctrOperatoreGiorno($f, 'operator_id', 'giorno', $aN);   // v1.9.78
+        [$wN, $aN] = $model->anomalieWhere($f); $wN = "severita='alta' AND " . $wN;   // v1.10.12 — filtro principale
         $stN = $pdo->prepare("SELECT COUNT(*) FROM v_dgb_anomalie_orario WHERE $wN"); $stN->execute($aN);
         $nAlta = (int)$stN->fetchColumn();
     }
     catch (Throwable $e) { $nAlta = 0; }
   ?>
-  <a class="btn btn-sm <?=$tab==='anomalie'?'btn-primary':''?>" href="<?=url_safe('dgb_activities',['tab'=>'anomalie'])?>">
+  <a class="btn btn-sm <?=$tab==='anomalie'?'btn-primary':''?>" href="<?=url_safe('dgb_activities', array_merge(DgbModel::query($f), ['tab'=>'anomalie']))?>">
     Anomalie orarie
     <?php if ($nAlta > 0): ?>
       <span style="background:#dc2626;color:#fff;border-radius:9px;padding:0 6px;font-size:10px;font-weight:700;margin-left:4px"><?=$nAlta?></span>
@@ -621,191 +613,7 @@ $qs = function (array $over = []) use ($f, $tab, $gran, $month) {
         $tab === 'anomalie' ? 'anomalie orarie dei giorni-operatore con attività sui contratti; imputazioni sulla commessa errata o suggerita' : '') ?>
 <?php endif; ?>
 
-<?php if ($tab === 'anomalie'): ?>
-
-<div class="card" style="margin-bottom:14px">
-  <div class="card-header"><span class="card-title"><i class="fa-solid fa-triangle-exclamation"></i> Anomalie di imputazione oraria</span></div>
-  <p style="font-size:12px;color:var(--muted);margin:4px 0 10px">
-    Controlli sulla coerenza delle ore imputate. Sono segnalazioni da verificare, non errori accertati:
-    il portale non conosce il contesto di ogni intervento.
-  </p>
-
-  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px">
-    <?php foreach ($anomRiep as $r):
-      $alta = $r['severita'] === 'alta';
-      $lbl = $r['tipo'] === 'ore_duplicate' ? 'Ore identiche su più commesse' : 'Ore giornaliere fuori scala';
-    ?>
-      <a href="<?=url_safe('dgb_activities', array_merge(array_filter(['tab'=>'anomalie','atec'=>$anomF['tecnico'],'adal'=>$anomF['dal'],'aal'=>$anomF['al']], fn($v)=>$v!==''), ['atipo'=>$r['tipo']]))?>"
-         style="border:1px solid #e2e8f0;border-left:4px solid <?=$alta?'#dc2626':'#f59e0b'?>;border-radius:8px;padding:11px;text-decoration:none;color:inherit;display:block">
-        <div style="font-size:21px;font-weight:800;color:<?=$alta?'#dc2626':'#f59e0b'?>"><?=(int)$r['segnalazioni']?></div>
-        <div style="font-size:11px;font-weight:700;color:#475569"><?=h($lbl)?></div>
-        <div style="font-size:10px;color:var(--muted);margin-top:3px">
-          severità <?=h($r['severita'])?> · <?=(int)$r['tecnici_coinvolti']?> tecnici ·
-          <?=number_format((float)$r['ore_coinvolte'],0,',','.')?> h
-        </div>
-      </a>
-    <?php endforeach; ?>
-    <?php if (!$anomRiep): ?>
-      <div style="padding:14px;color:#15803d;font-size:13px"><i class="fa-solid fa-circle-check"></i> Nessuna anomalia rilevata.</div>
-    <?php endif; ?>
-  </div>
-
-</div>
-
-<?php if ($impRighe): ?>
-<div class="card" style="margin-bottom:14px;border-left:4px solid #dc2626">
-  <div class="card-header">
-    <span class="card-title"><i class="fa-solid fa-file-circle-xmark"></i> Interventi imputati al contratto sbagliato</span>
-    <span style="background:#dc2626;color:#fff;border-radius:10px;padding:1px 8px;font-size:11px;font-weight:700;margin-left:8px"><?=count($impRighe)?></span>
-  </div>
-  <p style="font-size:12px;color:var(--muted);margin:4px 0 10px">
-    I contratti di sola <strong>disponibilità</strong> — come WTS-REP, la reperibilità a canone — non devono
-    ricevere moduli di intervento: il canone remunera l'essere reperibili, non l'intervento. Quando la chiamata
-    arriva, il modulo appartiene al contratto operativo collegato (WTS-CC o WTS-CSS).
-  </p>
-  <div style="overflow-x:auto">
-    <table class="data-table" style="width:100%;font-size:12px">
-      <thead><tr>
-        <th>Rapporto</th><th>Data</th><th>Tecnico</th><th style="text-align:right">Ore</th>
-        <th>Commessa errata</th><th>Cliente</th><th>Da spostare su</th><th>Alternative</th>
-      </tr></thead>
-      <tbody>
-      <?php foreach ($impRighe as $r): ?>
-        <tr>
-          <td><code><?=h($r['codice_rapporto'])?></code></td>
-          <td><?= $r['data_rapporto'] ? date('d/m/Y', strtotime($r['data_rapporto'])) : '—' ?></td>
-          <td><?=h($r['tecnico'] ?: '—')?></td>
-          <td style="text-align:right"><?=number_format((float)$r['ore'],2,',','.')?></td>
-          <td><code style="color:#dc2626"><?=h($r['commessa_errata'])?></code>
-              <span style="font-size:10px;color:var(--muted)"><?=h($r['linea_errata'])?></span></td>
-          <td><?=h(mb_strimwidth((string)$r['cliente'],0,26,'…'))?></td>
-          <td><?php if ($r['commessa_suggerita']): ?>
-                <code style="color:#16a34a"><?=h($r['commessa_suggerita'])?></code>
-              <?php else: ?>
-                <span style="color:var(--muted);font-size:11px">nessuna candidata</span>
-              <?php endif; ?></td>
-          <td style="font-size:11px"><?php
-              $nc = (int)$r['commesse_candidate'];
-              if ($nc === 1)      echo '<span style="color:#16a34a">unica</span>';
-              elseif ($nc > 1)    echo '<span style="color:#f59e0b">' . $nc . ' possibili</span>';
-              else                echo '<span style="color:var(--muted)">—</span>';
-            ?></td>
-        </tr>
-      <?php endforeach; ?>
-      </tbody>
-    </table>
-  </div>
-  <p style="color:var(--muted);font-size:11px;margin-top:8px">
-    La commessa suggerita è scelta fra quelle dello <strong>stesso cliente</strong> con linea ammessa e attive
-    alla data dell'intervento, preferendo le aperte. Dove le alternative sono più d'una il suggerimento è
-    indicativo: la scelta va fatta da chi conosce l'intervento. La correzione si esegue sul gestionale.
-  </p>
-</div>
-<?php endif; ?>
-
-<div class="card" style="margin-bottom:14px">
-  <div class="card-header">
-    <span class="card-title"><i class="fa-solid fa-filter"></i> Filtri</span>
-    <?php if ($anomAttivi): ?>
-      <span style="background:#3b82f6;color:#fff;border-radius:10px;padding:1px 8px;font-size:11px;font-weight:700;margin-left:8px"><?=$anomAttivi?> attiv<?=$anomAttivi==1?'o':'i'?></span>
-    <?php endif; ?>
-  </div>
-  <form method="get" style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;align-items:end">
-    <?= route_slug_field() ?>
-    <input type="hidden" name="tab" value="anomalie">
-    <div class="form-group" style="margin:0"><label>Tecnico</label>
-      <input type="text" name="atec" list="anom_tec_dl" value="<?=h($anomF['tecnico'])?>" placeholder="nome o parte">
-      <datalist id="anom_tec_dl">
-        <?php foreach ($anomTecnici as $t): ?><option value="<?=h($t)?>"><?php endforeach; ?>
-      </datalist></div>
-    <div class="form-group" style="margin:0"><label>Tipo di anomalia</label>
-      <select name="atipo">
-        <option value="">— tutte —</option>
-        <option value="ore_duplicate"   <?=$anomF['tipo']==='ore_duplicate'?'selected':''?>>Ore identiche su più commesse</option>
-        <option value="ore_giornaliere" <?=$anomF['tipo']==='ore_giornaliere'?'selected':''?>>Ore giornaliere fuori scala</option>
-      </select></div>
-    <div class="form-group" style="margin:0"><label>Severità</label>
-      <select name="asev">
-        <option value="">— tutte —</option>
-        <option value="alta"  <?=$anomF['sev']==='alta'?'selected':''?>>Alta</option>
-        <option value="media" <?=$anomF['sev']==='media'?'selected':''?>>Media</option>
-      </select></div>
-    <div class="form-group" style="margin:0"><label>Dal giorno</label>
-      <input type="date" name="adal" value="<?=h($anomF['dal'])?>"></div>
-    <div class="form-group" style="margin:0"><label>Al giorno</label>
-      <input type="date" name="aal" value="<?=h($anomF['al'])?>"></div>
-    <div style="grid-column:1/-1;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-      <button class="btn btn-primary btn-sm"><i class="fa-solid fa-magnifying-glass"></i> Applica</button>
-      <?php if ($anomAttivi): ?>
-        <a class="btn btn-sm" href="<?=url_safe('dgb_activities',['tab'=>'anomalie'])?>"><i class="fa-solid fa-eraser"></i> Azzera</a>
-      <?php endif; ?>
-      <span style="color:var(--muted);font-size:12px;margin-left:auto">
-        <strong><?=number_format($anomTot,0,',','.')?></strong> segnalazioni corrispondono ai filtri
-      </span>
-      <?php
-        // gli export riportano i filtri correnti: il file deve contenere
-        // esattamente ciò che si sta guardando
-        $aqs = fn(array $over = []) => url_safe('dgb_activities', array_merge(
-            array_filter([
-                'tab' => 'anomalie', 'atipo' => $anomF['tipo'], 'atec' => $anomF['tecnico'],
-                'asev' => $anomF['sev'], 'adal' => $anomF['dal'], 'aal' => $anomF['al'],
-                'contratti' => implode(',', $f['contratti']),
-            ], fn($v) => $v !== ''), $over));
-      ?>
-      <a class="btn btn-success btn-sm" href="<?=$aqs(['aexport'=>'xlsx'])?>"><i class="fa-solid fa-file-excel"></i> Esporta XLSX</a>
-      <a class="btn btn-sm" href="<?=$aqs(['aexport'=>'csv'])?>"><i class="fa-solid fa-file-csv"></i> Esporta CSV</a>
-    </div>
-  </form>
-  <p style="color:var(--muted);font-size:11px;margin-top:8px">
-    L'export riporta le stesse colonne della tabella e <strong>tutte</strong> le righe che soddisfano i filtri,
-    non le sole 500 mostrate a video.
-  </p>
-</div>
-
-<?php if ($anomRighe): ?>
-<div class="card" style="overflow-x:auto">
-  <div class="card-header">
-    <span class="card-title"><i class="fa-solid fa-list"></i> Segnalazioni</span>
-    <span style="color:var(--muted);font-size:11px;margin-left:auto">
-      <?=number_format(count($anomRighe),0,',','.')?> di <?=number_format($anomTot,0,',','.')?> righe<?= $anomTot > count($anomRighe) ? ' (prime 500 a video)' : '' ?>
-    </span>
-  </div>
-  <table class="data-table" style="width:100%;font-size:12px">
-    <thead><tr>
-      <th style="width:70px">Severità</th><th>Tipo</th><th>Tecnico</th><th>Giorno</th>
-      <th style="text-align:right">Ore</th><th style="text-align:right">Righe</th>
-      <th style="text-align:right">Commesse</th><th>Rilievo</th><th>Dettaglio</th>
-    </tr></thead>
-    <tbody>
-    <?php foreach ($anomRighe as $r): ?>
-      <tr>
-        <td><span style="color:<?=$r['severita']==='alta'?'#dc2626':'#f59e0b'?>;font-weight:700;font-size:11px"><?=h($r['severita'])?></span></td>
-        <td style="font-size:11px;color:var(--muted)"><?=h($r['tipo'])?></td>
-        <td><?=h($r['tecnico'] ?: '—')?></td>
-        <td><?= $r['giorno'] ? date('d/m/Y', strtotime($r['giorno'])) : '—' ?></td>
-        <td style="text-align:right;font-weight:600"><?=number_format((float)$r['ore'],2,',','.')?></td>
-        <td style="text-align:right"><?=(int)$r['righe']?></td>
-        <td style="text-align:right"><?=(int)$r['commesse_distinte']?></td>
-        <td style="font-size:11px"><?=h($r['descrizione'])?></td>
-        <td style="font-size:11px;color:var(--muted)"><?=h($r['dettaglio'] ?? '—')?></td>
-      </tr>
-    <?php endforeach; ?>
-    </tbody>
-  </table>
-  <p style="color:var(--muted);font-size:11px;margin-top:8px">
-    <strong>Ore identiche su più commesse</strong>: lo stesso tecnico ha imputato la stessa quantità di ore a
-    commesse diverse nello stesso giorno e con lo stesso orario di inizio. È il segno tipico della compilazione
-    per copia, ma può essere legittimo quando un intervento serve davvero più commesse in parallelo.<br>
-    <strong>Ore giornaliere fuori scala</strong>: oltre 24 ore in un giorno è un errore certo; fra 12 e 24 è da
-    verificare, perché una giornata lunga con reperibilità notturna è possibile.
-  </p>
-</div>
-<?php endif; ?>
-
-<?php endif; ?>
-
-<?php if ($tab === 'analisi'): ?>
-
+<?php if ($tab === 'analisi' || $tab === 'anomalie'): /* v1.10.12 — un solo filtro principale per Analisi e Anomalie */ ?>
 <?php
   // v1.9.97 — pannello filtri uniformato alla Relazione di Servizio IT (multi-select con ricerca)
   $attivi = DgbModel::activeCount($f);
@@ -836,6 +644,7 @@ $qs = function (array $over = []) use ($f, $tab, $gran, $month) {
     <form method="get">
       <?= route_slug_field() ?>
       <input type="hidden" name="gran" value="<?=h($gran)?>"><input type="hidden" name="month" value="<?=h($month)?>">
+      <?php if ($tab !== 'analisi'): ?><input type="hidden" name="tab" value="<?=h($tab)?>"><?php endif; ?>
 
       <?php // v1.9.98 — stessi gruppi, campi e logica di selezione della Relazione di Servizio IT ?>
       <div class="pm-group">
@@ -906,11 +715,154 @@ $qs = function (array $over = []) use ($f, $tab, $gran, $month) {
 
       <div class="pm-actions">
         <button class="btn btn-primary btn-sm"><i class="fa-solid fa-filter"></i> Applica</button>
-        <a class="btn btn-sm" href="<?=url_safe('dgb_activities', ['contratti_set' => 1])?>">Azzera</a>
+        <a class="btn btn-sm" href="<?=url_safe('dgb_activities', array_filter(['contratti_set' => 1, 'tab' => $tab !== 'analisi' ? $tab : '']))?>">Azzera</a>
       </div>
     </form>
   </div>
 </details>
+
+<?php if (!$f['from'] && !$f['to'] && $tab === 'anomalie'): ?><div class="alert alert-info" style="font-size:12px">Nessun periodo nel filtro principale: le anomalie sono mostrate su tutto lo storico.</div><?php endif; ?>
+<?= PmReport::toolbar($qs, DgbReport::tecnici($model, $f), count($f['operators']) === 1, 'operator', 'incaricato', can('export', 'dgb_activities.php')) ?>
+<?php endif; ?>
+
+<?php if ($tab === 'anomalie'): ?>
+
+<div class="card" style="margin-bottom:14px">
+  <div class="card-header"><span class="card-title"><i class="fa-solid fa-triangle-exclamation"></i> Anomalie di imputazione oraria</span></div>
+  <p style="font-size:12px;color:var(--muted);margin:4px 0 10px">
+    Controlli sulla coerenza delle ore imputate. Sono segnalazioni da verificare, non errori accertati:
+    il portale non conosce il contesto di ogni intervento.
+  </p>
+
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px">
+    <?php foreach ($anomRiep as $r):
+      $alta = $r['severita'] === 'alta';
+      $lbl = $r['tipo'] === 'ore_duplicate' ? 'Ore identiche su più commesse' : 'Ore giornaliere fuori scala';
+    ?>
+      <div style="border:1px solid #e2e8f0;border-left:4px solid <?=$alta?'#dc2626':'#f59e0b'?>;border-radius:8px;padding:11px">
+        <div style="font-size:21px;font-weight:800;color:<?=$alta?'#dc2626':'#f59e0b'?>"><?=(int)$r['segnalazioni']?></div>
+        <div style="font-size:11px;font-weight:700;color:#475569"><?=h($lbl)?></div>
+        <div style="font-size:10px;color:var(--muted);margin-top:3px">
+          severità <?=h($r['severita'])?> · <?=(int)$r['tecnici_coinvolti']?> tecnici ·
+          <?=number_format((float)$r['ore_coinvolte'],0,',','.')?> h
+        </div>
+      </div>
+    <?php endforeach; ?>
+    <?php if (!$anomRiep): ?>
+      <div style="padding:14px;color:#15803d;font-size:13px"><i class="fa-solid fa-circle-check"></i> Nessuna anomalia rilevata.</div>
+    <?php endif; ?>
+  </div>
+
+</div>
+
+<?php if ($impRighe): ?>
+<div class="card" style="margin-bottom:14px;border-left:4px solid #dc2626">
+  <div class="card-header">
+    <span class="card-title"><i class="fa-solid fa-file-circle-xmark"></i> Interventi imputati al contratto sbagliato</span>
+    <span style="background:#dc2626;color:#fff;border-radius:10px;padding:1px 8px;font-size:11px;font-weight:700;margin-left:8px"><?=count($impRighe)?></span>
+  </div>
+  <p style="font-size:12px;color:var(--muted);margin:4px 0 10px">
+    I contratti di sola <strong>disponibilità</strong> — come WTS-REP, la reperibilità a canone — non devono
+    ricevere moduli di intervento: il canone remunera l'essere reperibili, non l'intervento. Quando la chiamata
+    arriva, il modulo appartiene al contratto operativo collegato (WTS-CC o WTS-CSS).
+  </p>
+  <div style="overflow-x:auto">
+    <table class="data-table" style="width:100%;font-size:12px">
+      <thead><tr>
+        <th>Rapporto</th><th>Data</th><th>Tecnico</th><th style="text-align:right">Ore</th>
+        <th>Commessa errata</th><th>Cliente</th><th>Da spostare su</th><th>Alternative</th>
+      </tr></thead>
+      <tbody>
+      <?php foreach ($impRighe as $r): ?>
+        <tr>
+          <td><code><?=h($r['codice_rapporto'])?></code></td>
+          <td><?= $r['data_rapporto'] ? date('d/m/Y', strtotime($r['data_rapporto'])) : '—' ?></td>
+          <td><?=h($r['tecnico'] ?: '—')?></td>
+          <td style="text-align:right"><?=number_format((float)$r['ore'],2,',','.')?></td>
+          <td><code style="color:#dc2626"><?=h($r['commessa_errata'])?></code>
+              <span style="font-size:10px;color:var(--muted)"><?=h($r['linea_errata'])?></span></td>
+          <td><?=h(mb_strimwidth((string)$r['cliente'],0,26,'…'))?></td>
+          <td><?php if ($r['commessa_suggerita']): ?>
+                <code style="color:#16a34a"><?=h($r['commessa_suggerita'])?></code>
+              <?php else: ?>
+                <span style="color:var(--muted);font-size:11px">nessuna candidata</span>
+              <?php endif; ?></td>
+          <td style="font-size:11px"><?php
+              $nc = (int)$r['commesse_candidate'];
+              if ($nc === 1)      echo '<span style="color:#16a34a">unica</span>';
+              elseif ($nc > 1)    echo '<span style="color:#f59e0b">' . $nc . ' possibili</span>';
+              else                echo '<span style="color:var(--muted)">—</span>';
+            ?></td>
+        </tr>
+      <?php endforeach; ?>
+      </tbody>
+    </table>
+  </div>
+  <p style="color:var(--muted);font-size:11px;margin-top:8px">
+    La commessa suggerita è scelta fra quelle dello <strong>stesso cliente</strong> con linea ammessa e attive
+    alla data dell'intervento, preferendo le aperte. Dove le alternative sono più d'una il suggerimento è
+    indicativo: la scelta va fatta da chi conosce l'intervento. La correzione si esegue sul gestionale.
+  </p>
+</div>
+<?php endif; ?>
+
+<div class="card" style="margin-bottom:14px">
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <span style="font-size:12px"><strong><?=number_format($anomTot,0,',','.')?></strong> segnalazioni nel perimetro del <strong>filtro principale</strong>
+      (periodo <?= h(($f['from'] ? date('d/m/Y', strtotime($f['from'])) : '…') . ' – ' . ($f['to'] ? date('d/m/Y', strtotime($f['to'])) : '…')) ?><?= $f['operators'] ? ', incaricati selezionati' : '' ?><?= $f['contratti'] ? ', contratti selezionati' : '' ?>)</span>
+    <a class="btn btn-success btn-sm" style="margin-left:auto" href="<?=$qs(['aexport'=>'xlsx'])?>"><i class="fa-solid fa-file-excel"></i> Esporta XLSX</a>
+    <a class="btn btn-sm" href="<?=$qs(['aexport'=>'csv'])?>"><i class="fa-solid fa-file-csv"></i> Esporta CSV</a>
+  </div>
+  <p style="color:var(--muted);font-size:11px;margin:8px 0 0">
+    Un solo blocco filtri: periodo (giorno), incaricato e contratto del pannello in alto valgono per elenco, riepilogo, export e report.
+    L'export riporta le stesse colonne della tabella e <strong>tutte</strong> le righe, non le sole 500 mostrate a video.
+  </p>
+</div>
+
+<?php if ($anomRighe): ?>
+<div class="card" style="overflow-x:auto">
+  <div class="card-header">
+    <span class="card-title"><i class="fa-solid fa-list"></i> Segnalazioni</span>
+    <span style="color:var(--muted);font-size:11px;margin-left:auto">
+      <?=number_format(count($anomRighe),0,',','.')?> di <?=number_format($anomTot,0,',','.')?> righe<?= $anomTot > count($anomRighe) ? ' (prime 500 a video)' : '' ?>
+    </span>
+  </div>
+  <table class="data-table" style="width:100%;font-size:12px">
+    <thead><tr>
+      <th style="width:70px">Severità</th><th>Tipo</th><th>Tecnico</th><th>Giorno</th>
+      <th style="text-align:right">Ore</th><th style="text-align:right">Righe</th>
+      <th style="text-align:right">Commesse</th><th>Rilievo</th><th>Dettaglio</th>
+    </tr></thead>
+    <tbody>
+    <?php foreach ($anomRighe as $r): ?>
+      <tr>
+        <td><span style="color:<?=$r['severita']==='alta'?'#dc2626':'#f59e0b'?>;font-weight:700;font-size:11px"><?=h($r['severita'])?></span></td>
+        <td style="font-size:11px;color:var(--muted)"><?=h($r['tipo'])?></td>
+        <td><?=h($r['tecnico'] ?: '—')?></td>
+        <td><?= $r['giorno'] ? date('d/m/Y', strtotime($r['giorno'])) : '—' ?></td>
+        <td style="text-align:right;font-weight:600"><?=number_format((float)$r['ore'],2,',','.')?></td>
+        <td style="text-align:right"><?=(int)$r['righe']?></td>
+        <td style="text-align:right"><?=(int)$r['commesse_distinte']?></td>
+        <td style="font-size:11px"><?=h($r['descrizione'])?></td>
+        <td style="font-size:11px;color:var(--muted)"><?=h($r['dettaglio'] ?? '—')?></td>
+      </tr>
+    <?php endforeach; ?>
+    </tbody>
+  </table>
+  <p style="color:var(--muted);font-size:11px;margin-top:8px">
+    <strong>Ore identiche su più commesse</strong>: lo stesso tecnico ha imputato la stessa quantità di ore a
+    commesse diverse nello stesso giorno e con lo stesso orario di inizio. È il segno tipico della compilazione
+    per copia, ma può essere legittimo quando un intervento serve davvero più commesse in parallelo.<br>
+    <strong>Ore giornaliere fuori scala</strong>: oltre 24 ore in un giorno è un errore certo; fra 12 e 24 è da
+    verificare, perché una giornata lunga con reperibilità notturna è possibile.
+  </p>
+</div>
+<?php endif; ?>
+
+<?php endif; ?>
+
+<?php if ($tab === 'analisi'): ?>
+
 
 <!-- KPI cards -->
 <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:14px">

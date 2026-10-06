@@ -489,6 +489,32 @@ final class DgbModel
         return $out;
     }
 
+    /**
+     * v1.10.12 — Clausola delle anomalie orarie (v_dgb_anomalie_orario) dal SOLO filtro principale: periodo
+     * (giorno), incaricati (operator_id), contratti (giorni-operatore con attività sui contratti). Unica per
+     * pagina, export e report: sostituisce il blocco filtri proprio della scheda (atec/atipo/asev/adal/aal).
+     * @return array{0:string,1:array}
+     */
+    public function anomalieWhere(array $f): array
+    {
+        $w = ['1=1']; $a = [];
+        if (($f['from'] ?? '') !== '') { $w[] = 'giorno >= ?'; $a[] = $f['from']; }
+        if (($f['to'] ?? '') !== '')   { $w[] = 'giorno <= ?'; $a[] = $f['to']; }
+        if (!empty($f['operators'])) { $w[] = 'operator_id IN (' . implode(',', array_fill(0, count($f['operators']), '?')) . ')'; array_push($a, ...array_map('intval', $f['operators'])); }
+        return [implode(' AND ', $w) . $this->ctrOperatoreGiorno($f, 'operator_id', 'giorno', $a), $a];
+    }
+
+    /** v1.10.12 — Incaricati con allocazioni nel perimetro del filtro principale: id operatore → nome (report per tecnico). */
+    public function operatoriPerimetro(array $f): array
+    {
+        [$w, $args] = $this->whereDetail($f);
+        try {
+            $st = $this->pdo->prepare("SELECT ao.id_operator, " . self::dimSql('incaricato') . " AS n " . self::AGG_FROM . " WHERE $w GROUP BY ao.id_operator, n ORDER BY n");
+            $st->execute($args);
+            return array_map('strval', $st->fetchAll(PDO::FETCH_KEY_PAIR));
+        } catch (Throwable $e) { return []; }
+    }
+
     /** v1.9.98 — totale del dettaglio aggregato (stesso perimetro, nessun raggruppamento). */
     public function aggregaTotale(array $f): array
     {
