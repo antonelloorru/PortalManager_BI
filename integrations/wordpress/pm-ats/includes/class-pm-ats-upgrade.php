@@ -38,6 +38,13 @@ final class PM_ATS_Upgrade
 
         // impostazioni: aggiunge le chiavi nuove con il valore predefinito, conserva quelle esistenti
         $cur = get_option(PM_ATS_Settings::OPTION, []);
+        // v1.3.1 (schema 4): la pagina posizioni adotta il layout «Lavora con noi» (elenco + modulo a destra).
+        // Una sola volta, solo se era rimasto un layout precedente; si può tornare a griglia/lista in Impostazioni › Aspetto.
+        $prevSchema = (int)get_option(self::OPT_SETTINGS, 0);
+        if (is_array($cur) && $prevSchema > 0 && $prevSchema < 4 && in_array($cur['layout'] ?? 'grid', ['grid', 'list'], true)) {
+            $cur['layout'] = 'accordion';
+            if (class_exists('PM_ATS_Log')) PM_ATS_Log::add('upgrade', 200, 'layout pagina posizioni → Lavora con noi (elenco + modulo a destra)');
+        }
         if (is_array($cur)) update_option(PM_ATS_Settings::OPTION, array_merge(PM_ATS_Settings::defaults(), $cur));
         update_option(self::OPT_SETTINGS, PM_ATS_SETTINGS_VERSION);
 

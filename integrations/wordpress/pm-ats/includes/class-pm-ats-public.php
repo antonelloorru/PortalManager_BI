@@ -20,6 +20,8 @@ final class PM_ATS_Public
     {
         add_shortcode('pm_ats_jobs', [self::class, 'scJobs']);
         add_shortcode('pm_ats_apply', [self::class, 'scApply']);
+        // v1.3.1 — pagina «Lavora con noi» (elenco + modulo a destra) indipendente dall'impostazione del layout
+        add_shortcode('pm_ats_lavora_con_noi', static fn($atts) => self::scJobs(['layout' => 'accordion'] + (array)$atts));
         add_shortcode('pm_ats_count', static fn() => (string)PM_ATS_Jobs::count());
         add_filter('the_content', [self::class, 'singleContent'], 20);
         add_action('wp_head', [self::class, 'head'], 5);
@@ -44,7 +46,7 @@ final class PM_ATS_Public
         if (is_singular(PM_ATS_Jobs::CPT)) self::enqueue();
         // v1.3.0 — pagina con lo shortcode: stili nell'<head> (niente cambio di stile visibile al caricamento)
         $po = is_singular() ? get_post() : null;
-        if ($po && (has_shortcode((string)$po->post_content, 'pm_ats_jobs') || has_shortcode((string)$po->post_content, 'pm_ats_apply'))) self::enqueue();
+        if ($po && preg_match('/\[pm_ats_(jobs|apply|lavora_con_noi)\b/', (string)$po->post_content)) { self::enqueue(); wp_enqueue_style('pm-ats-wt'); }
     }
 
     public static function enqueue(): void
@@ -171,9 +173,11 @@ final class PM_ATS_Public
             $pos = [];
             foreach ($res['items'] as $p) $pos[(int)$p->ID] = get_the_title($p);
             wp_enqueue_style('pm-ats-wt');
+            $atts = (array)$atts;
             $hero = isset($atts['hero']) ? $atts['hero'] !== '0' : !empty($s['wt_hero']);
+            $mode = in_array($atts['elenco'] ?? '', ['link', 'accordion'], true) ? $atts['elenco'] : (string)$s['wt_list_mode'];
             return self::render('jobs-accordion.php', [
-                'jobs' => $res['items'], 'settings' => $s, 'hero' => $hero, 'closed_notice' => !empty($_GET['pm_ats_closed']),
+                'jobs' => $res['items'], 'settings' => $s, 'hero' => $hero, 'closed_notice' => !empty($_GET['pm_ats_closed']), 'mode' => $mode,
                 'form' => self::form(0, '', $pos ?: [0 => __('Candidatura spontanea', 'pm-ats')]),
             ]);
         }

@@ -35,7 +35,8 @@ final class PM_ATS_Settings
             'color_border'       => '#e5e7eb',
             'radius'             => 10,
             'font_family'        => '',
-            'layout'             => 'grid',        // grid | list | accordion (v1.3.0: riferimento «Lavora con noi»)
+            'layout'             => 'accordion',   // accordion = «Lavora con noi» (predefinito dalla 1.3.1) | grid | list
+            'wt_list_mode'       => 'link',        // v1.3.1: link = elenco con titolo cliccabile → scheda | accordion = dettaglio a fisarmonica
             // v1.3.0 — layout «accordion» (riferimento wetechs.it/lavora-con-noi)
             'color_title'        => '#234d85',     // titoli, voci della fisarmonica
             'color_accent'       => '#ec7f31',     // evidenza nel titolo, riquadro del modulo
@@ -82,7 +83,7 @@ final class PM_ATS_Settings
         'pagina'      => ['list_page_id', 'jobs_slug', 'auto_form', 'allow_spontaneous', 'phone_required', 'show_salary', 'privacy_url', 'privacy_version',
                           'cv_types', 'cv_max_mb', 'rate_per_day', 'min_fill_seconds', 'notify_email', 'confirm_candidate'],
         'aspetto'     => ['color_primary', 'color_primary_text', 'color_text', 'color_muted', 'color_card', 'color_border', 'radius', 'font_family', 'layout', 'per_page', 'custom_css',
-                          'color_title', 'color_accent', 'wt_hero', 'wt_hero_title', 'wt_hero_image', 'wt_title', 'wt_intro', 'wt_list_title', 'wt_form_title'],
+                          'color_title', 'color_accent', 'wt_list_mode', 'wt_hero', 'wt_hero_title', 'wt_hero_image', 'wt_title', 'wt_intro', 'wt_list_title', 'wt_form_title'],
         'dati'        => ['company_name', 'company_logo', 'purge_after_ack', 'retention_synced', 'retention_pending', 'remove_on_uninstall'],
     ];
     public const CHECKBOXES = ['auto_form', 'allow_spontaneous', 'phone_required', 'show_salary', 'confirm_candidate', 'purge_after_ack', 'remove_on_uninstall', 'wt_hero'];
@@ -152,7 +153,8 @@ final class PM_ATS_Settings
         if ($o['color_primary'] === '') $o['color_primary'] = $d['color_primary'];
         $o['radius']            = max(0, min(30, (int)($in['radius'] ?? 10)));
         $o['font_family']       = preg_replace('/[^A-Za-z0-9 ,\'"-]/', '', (string)($in['font_family'] ?? ''));
-        $o['layout']            = in_array($in['layout'] ?? '', ['grid', 'list', 'accordion'], true) ? $in['layout'] : 'grid';
+        $o['layout']            = in_array($in['layout'] ?? '', ['grid', 'list', 'accordion'], true) ? $in['layout'] : 'accordion';
+        $o['wt_list_mode']      = in_array($in['wt_list_mode'] ?? '', ['link', 'accordion'], true) ? $in['wt_list_mode'] : 'link';
         foreach (['color_title', 'color_accent'] as $k) $o[$k] = (string)(sanitize_hex_color((string)($in[$k] ?? '')) ?? '') ?: $d[$k];
         $o['wt_hero']           = empty($in['wt_hero']) ? 0 : 1;
         $o['wt_hero_image']     = esc_url_raw((string)($in['wt_hero_image'] ?? ''));

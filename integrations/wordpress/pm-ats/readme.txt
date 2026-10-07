@@ -3,7 +3,7 @@ Contributors: portalmanager
 Requires at least: 6.0
 Tested up to: 6.8
 Requires PHP: 8.0
-Stable tag: 1.3.0
+Stable tag: 1.3.1
 License: Proprietary
 
 Pubblica sul sito le posizioni aperte gestite in PortalManager e raccoglie le candidature con CV.
@@ -62,6 +62,9 @@ X-PM-Signature = hex(HMAC-SHA256(segreto, METODO\nROTTA\nTIMESTAMP\nNONCE\nsha25
 
 == Upgrade Notice ==
 
+= 1.3.1 =
+La pagina posizioni passa al layout «Lavora con noi»: elenco con titoli cliccabili a sinistra e modulo di candidatura a destra. Nuovo shortcode [pm_ats_lavora_con_noi].
+
 = 1.3.0 =
 Ordine vincolante delle sezioni della Job Description e nuovo layout «Fisarmonica con modulo a lato» (Lavora con noi). Le copie dei template nel tema vanno aggiornate (job-single.php, apply-form.php).
 
@@ -76,6 +79,12 @@ Configurazione guidata, impostazioni a schede, codice di connessione per PortalM
 Le installazioni 1.0.x già configurate non devono ripetere la configurazione.
 
 == Changelog ==
+
+= 1.3.1 =
+* Layout «Lavora con noi»: elenco delle posizioni con titolo cliccabile che apre la scheda, modulo di candidatura nella colonna destra.
+* Layout predefinito «Lavora con noi»; all'aggiornamento sostituisce una sola volta griglia/lista (ripristinabili in Impostazioni › Aspetto).
+* Shortcode [pm_ats_lavora_con_noi] (attributi hero="0|1", elenco="link|accordion").
+* Due colonne secondo la larghezza del contenitore (riga/colonna Divi), senza forzare la larghezza dello schermo.
 
 = 1.3.0 =
 * Struttura vincolante della Job Description: Chi siamo, Informazioni sull'offerta, Competenze, Costituisce titolo preferenziale, Cosa offriamo (PM_ATS_Jobs::STRUCTURE / sections() / sectionsHtml()) su scheda, elenco, anteprima, estratto e dati strutturati.

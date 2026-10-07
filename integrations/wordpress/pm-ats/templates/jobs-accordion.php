@@ -1,17 +1,18 @@
 <?php
 /**
- * Elenco posizioni a fisarmonica con modulo di candidatura a lato — layout di riferimento «Lavora con noi»
- * (pagina wetechs.it/lavora-con-noi: sezione di testata, «Unisciti a …», «Posizioni Aperte», «Compila il form»).
+ * Pagina «Lavora con noi» (layout di riferimento wetechs.it/lavora-con-noi): a sinistra «Unisciti a …», introduzione e
+ * l'ELENCO delle posizioni aperte (titolo cliccabile → scheda della posizione), a destra il modulo di candidatura
+ * («Compila il form», con scelta della posizione o candidatura spontanea).
  * Sovrascrivibile in <tema>/pm-ats/jobs-accordion.php
- * @version 1.3.0
- * Variabili: $jobs (WP_Post[]), $settings, $hero (bool), $form (HTML del modulo con scelta della posizione), $closed_notice
- * Corrispondenza con le classi del riferimento (Divi): sezione et_pb_section → .pm-ats-wt-hero / .pm-ats-wt-body,
- * colonne et_pb_column_1_2 → .pm-ats-wt-col, et_pb_accordion → .pm-ats-wt-accordion, et_pb_toggle → .pm-ats-wt-item,
- * et_pb_toggle_title → .pm-ats-wt-toggle, close-tab → .pm-ats-wt-close, et_pb_toggle_content → .pm-ats-wt-content,
- * form-single-column → .pm-ats-wt-form. Classi proprie (prefisso pm-ats-wt) per non attivare gli script del tema.
+ * @version 1.3.1
+ * Variabili: $jobs (WP_Post[]), $settings, $hero (bool), $form (HTML del modulo), $closed_notice, $mode ('link' | 'accordion')
+ * Corrispondenza con le classi del riferimento (Divi): et_pb_section → .pm-ats-wt-hero / .pm-ats-wt-body,
+ * et_pb_column_1_2 → .pm-ats-wt-col, et_pb_accordion_item / et_pb_toggle → .pm-ats-wt-item, et_pb_toggle_title → .pm-ats-wt-title,
+ * form-single-column → .pm-ats-form. Classi proprie (prefisso pm-ats-wt) per non attivare gli script del tema.
  */
 defined('ABSPATH') || exit;
 $s = $settings;
+$mode = $mode ?? 'link';
 // «Unisciti a {We}Tech's!»: il testo fra parentesi graffe è evidenziato con il colore d'accento
 $title = preg_replace('/\{([^{}]+)\}/', '<span class="pm-ats-wt-accent">$1</span>', esc_html((string)$s['wt_title']));
 ?>
@@ -32,6 +33,15 @@ $title = preg_replace('/\{([^{}]+)\}/', '<span class="pm-ats-wt-accent">$1</span
 
         <?php if (!$jobs): ?>
           <p class="pm-ats-count"><?php esc_html_e('Al momento non ci sono posizioni aperte.', 'pm-ats'); ?></p>
+        <?php elseif ($mode === 'link'): ?>
+        <ul class="pm-ats-wt-list">
+          <?php foreach ($jobs as $p): $job = PM_ATS_Jobs::data($p->ID); $chips = PM_ATS_Public::chips($job); ?>
+          <li class="pm-ats-wt-item pm-ats-wt-item-link">
+            <h5 class="pm-ats-wt-title"><a class="pm-ats-wt-link" href="<?php echo esc_url(get_permalink($p)); ?>"><?php echo esc_html(get_the_title($p)); ?></a></h5>
+            <?php if ($chips): ?><p class="pm-ats-wt-meta"><?php echo esc_html(implode(' · ', $chips)); ?></p><?php endif; ?>
+          </li>
+          <?php endforeach; ?>
+        </ul>
         <?php else: ?>
         <div class="pm-ats-wt-accordion" data-pm-ats-accordion>
           <?php foreach ($jobs as $p): $job = PM_ATS_Jobs::data($p->ID); $cid = 'pm-ats-job-' . (int)$p->ID; ?>

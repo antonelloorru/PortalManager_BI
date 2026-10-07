@@ -275,9 +275,12 @@ final class PM_ATS_Admin
               <tr><th><?php esc_html_e('Arrotondamento', 'pm-ats'); ?></th><td><input type="number" min="0" max="30" name="<?php echo $f('radius'); ?>" value="<?php echo (int)$s['radius']; ?>" class="small-text"> px</td></tr>
               <tr><th><?php esc_html_e('Font', 'pm-ats'); ?></th><td><?php $txt('font_family', 'text', 'placeholder="es. Poppins, sans-serif"'); ?><p class="description"><?php esc_html_e('Vuoto (come testo e colori vuoti) = ereditato dal tema.', 'pm-ats'); ?></p></td></tr>
               <tr><th><?php esc_html_e('Elenco', 'pm-ats'); ?></th><td><select name="<?php echo $f('layout'); ?>"><option value="grid" <?php selected($s['layout'], 'grid'); ?>><?php esc_html_e('Griglia di schede', 'pm-ats'); ?></option><option value="list" <?php selected($s['layout'], 'list'); ?>><?php esc_html_e('Lista', 'pm-ats'); ?></option>
-                <option value="accordion" <?php selected($s['layout'], 'accordion'); ?>><?php esc_html_e('Fisarmonica con modulo a lato (Lavora con noi)', 'pm-ats'); ?></option></select>
+                <option value="accordion" <?php selected($s['layout'], 'accordion'); ?>><?php esc_html_e('Lavora con noi: elenco posizioni e modulo a destra', 'pm-ats'); ?></option></select>
                 <input type="number" min="1" max="100" name="<?php echo $f('per_page'); ?>" value="<?php echo (int)$s['per_page']; ?>" class="small-text"> <?php esc_html_e('per pagina', 'pm-ats'); ?></td></tr>
-              <tr><th colspan="2"><h3 style="margin:8px 0 0"><?php esc_html_e('Layout «Fisarmonica con modulo a lato»', 'pm-ats'); ?></h3></th></tr>
+              <tr><th colspan="2"><h3 style="margin:8px 0 0"><?php esc_html_e('Layout «Lavora con noi»', 'pm-ats'); ?></h3></th></tr>
+              <tr><th><?php esc_html_e('Elenco posizioni', 'pm-ats'); ?></th><td><select name="<?php echo $f('wt_list_mode'); ?>">
+                <option value="link" <?php selected($s['wt_list_mode'], 'link'); ?>><?php esc_html_e('Titolo cliccabile che apre la scheda della posizione', 'pm-ats'); ?></option>
+                <option value="accordion" <?php selected($s['wt_list_mode'], 'accordion'); ?>><?php esc_html_e('Dettaglio a fisarmonica nella pagina', 'pm-ats'); ?></option></select></td></tr>
               <?php foreach (['color_title' => __('Colore titoli', 'pm-ats'), 'color_accent' => __('Colore d\'accento (evidenza, riquadro modulo)', 'pm-ats')] as $k => $l): ?>
                 <tr><th><?php echo esc_html($l); ?></th><td><input type="text" class="pm-ats-color" name="<?php echo $f($k); ?>" value="<?php echo esc_attr($s[$k]); ?>"></td></tr>
               <?php endforeach; ?>

@@ -5,12 +5,25 @@ Versioning semantico `MAJOR.MINOR.PATCH`. Allineati a ogni rilascio: header `Ver
 
 | Costante | Valore | Significato |
 |---|---|---|
-| PM_ATS_VERSION | 1.3.0 | versione del plugin |
+| PM_ATS_VERSION | 1.3.1 | versione del plugin |
 | PM_ATS_API_VERSION | 1 | protocollo REST `pm-ats/v1` (cambia solo con modifiche incompatibili) |
 | PM_ATS_DB_VERSION | 1 | schema tabelle `pm_ats_applications`, `pm_ats_log` |
-| PM_ATS_SETTINGS_VERSION | 3 | schema dell'opzione `pm_ats_settings` |
+| PM_ATS_SETTINGS_VERSION | 4 | schema dell'opzione `pm_ats_settings` |
 | PM_ATS_TEMPLATE_VERSION | 1.3.0 | template sovrascrivibili dal tema |
-| PM_ATS_MIN_PM | 1.10.19 | PortalManager minimo per tutte le funzioni |
+| PM_ATS_MIN_PM | 1.10.20 | PortalManager minimo per tutte le funzioni |
+
+## 1.3.1 — 2026-10-07 (PortalManager v1.10.20)
+- **Pagina «Lavora con noi» come nell'esempio**:
+  - a sinistra «Unisciti a WeTech's!», introduzione e «Posizioni Aperte» come **elenco con titolo cliccabile** (`<a>` alla scheda, tutta la casella cliccabile, freccia ›, sede · modalità · contratto sotto il titolo);
+  - a destra «Compila il form» con il modulo di candidatura (scelta posizione o spontanea).
+  - Il dettaglio a fisarmonica resta disponibile (`wt_list_mode = accordion`).
+- **Layout predefinito «Lavora con noi»** (`layout = accordion`). Schema impostazioni 4: all'aggiornamento una griglia/lista rimasta dalla configurazione precedente passa una sola volta al nuovo layout, con riga nel registro; si può ripristinare in Impostazioni › Aspetto.
+- Nuovo shortcode **`[pm_ats_lavora_con_noi]`**, indipendente dall'impostazione; attributi `hero="0|1"`, `elenco="link|accordion"`.
+- **Colonne**:
+  - il blocco occupa la larghezza del contenitore (riga o colonna Divi), senza forzare 100vw;
+  - le due colonne si affiancano o impilano secondo la larghezza del contenitore (container query a 760 px) e dello schermo (980 px);
+  - regole con priorità alta contro gli stili di colonna/lista del tema.
+- Stili caricati nell'`<head>` di ogni pagina che contiene uno shortcode pm-ats.
 
 ## 1.3.0 — 2026-10-07 (PortalManager v1.10.19)
 Due interventi separati:

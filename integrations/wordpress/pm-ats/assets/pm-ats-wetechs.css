@@ -1,4 +1,4 @@
-/*! PortalManager ATS — pm-ats-wetechs.css · @version 1.3.0 */
+/*! PortalManager ATS — pm-ats-wetechs.css · @version 1.3.1 */
 /* Layout «Fisarmonica con modulo a lato» — replica della pagina di riferimento wetechs.it/lavora-con-noi (tema Divi):
    valori misurati sulla pagina (colori, font, dimensioni, raggi, spaziature). Classi proprie .pm-ats-wt-* (nessuna classe
    Divi, per non attivare gli script del tema). Colori: --pm-ats-title (#234d85) e --pm-ats-accent (#ec7f31) dalle
@@ -7,8 +7,10 @@
   --wt-head:'Montserrat',Helvetica,Arial,Lucida,sans-serif;--wt-body:'Mulish',Helvetica,Arial,Lucida,sans-serif;
   font-family:var(--wt-body);font-size:16px;line-height:1.8;color:var(--wt-text)}
 .pm-ats-wt .pm-ats-wt-row{width:80%;max-width:1280px;margin:0 auto}
-/* a tutta larghezza anche dentro i contenitori stretti dei temi (come le sezioni Divi); niente scorrimento orizzontale */
-.pm-ats.pm-ats-wt{width:100vw!important;max-width:none!important;position:relative;left:50%;right:50%;margin-left:-50vw!important;margin-right:-50vw!important;overflow-x:clip}
+/* v1.3.1 — occupa la larghezza del contenitore in cui è inserito (riga Divi, colonna, blocco): nessuna forzatura alla larghezza dello schermo.
+   Le due colonne (elenco | modulo) dipendono dalla larghezza del contenitore (container query), non dello schermo. */
+.pm-ats.pm-ats-wt{width:100%;max-width:none!important;container-type:inline-size;container-name:pmatswt}
+.pm-ats-wt .pm-ats-wt-body .pm-ats-wt-row{width:100%;max-width:1280px}
 /* testata (et_pb_section_0) */
 .pm-ats-wt-hero{background-image:linear-gradient(1deg,#00457a 4%,rgba(255,255,255,0) 64%),var(--pm-ats-wt-hero-img,none);background-color:#fff;
   background-size:cover;background-position:center bottom 21%;padding:56px 0}
@@ -17,8 +19,20 @@
 /* corpo a due colonne (et_pb_section_1 / et_pb_row_1 / et_pb_column_1_2) */
 .pm-ats-wt-body{background:#fff;padding:56px 0}
 .pm-ats-wt-body .pm-ats-wt-row{padding:28px 0}
-.pm-ats-wt-cols{display:flex;gap:5.5%;align-items:flex-start}
-.pm-ats-wt-col{flex:0 0 47.25%;min-width:0}
+.pm-ats-wt .pm-ats-wt-cols{display:flex!important;flex-direction:row!important;flex-wrap:nowrap;gap:5.5%;align-items:flex-start}
+.pm-ats-wt .pm-ats-wt-col{flex:0 0 47.25%;width:47.25%;max-width:47.25%;min-width:0;float:none;margin:0}
+/* elenco posizioni con titolo cliccabile (v1.3.1) */
+.pm-ats-wt .pm-ats-wt-list{list-style:none!important;margin:0;padding:0!important}
+.pm-ats-wt .pm-ats-wt-list>li{list-style:none!important;margin:0 0 30px}
+.pm-ats-wt .pm-ats-wt-item-link{position:relative;padding:0;transition:background-color .2s,border-color .2s}
+.pm-ats-wt .pm-ats-wt-item-link .pm-ats-wt-title{padding:0}
+.pm-ats-wt .pm-ats-wt-link{display:block;padding:20px 50px 20px 20px;color:var(--wt-title)!important;text-decoration:none!important;font:inherit}
+.pm-ats-wt .pm-ats-wt-link::after{content:"";position:absolute;inset:0}
+.pm-ats-wt .pm-ats-wt-item-link .pm-ats-wt-title::after{content:"\203A";font-size:26px;color:#9aa5b5;right:20px}
+.pm-ats-wt .pm-ats-wt-item-link:hover,.pm-ats-wt .pm-ats-wt-item-link:focus-within{background:#fff;border-color:var(--wt-title)}
+.pm-ats-wt .pm-ats-wt-item-link:hover .pm-ats-wt-title::after{color:var(--wt-accent)}
+.pm-ats-wt .pm-ats-wt-link:focus-visible{outline:2px solid var(--wt-accent);outline-offset:-4px;border-radius:10px}
+.pm-ats-wt .pm-ats-wt-meta{margin:-12px 50px 0 20px;padding:0 0 16px;font-size:13px;line-height:1.5;color:#777}
 .pm-ats-wt .pm-ats-wt-h2{font-family:var(--wt-head);font-weight:700;font-size:48px;line-height:1.3;color:var(--wt-title);margin:0 0 30px;padding:0 0 10px}
 .pm-ats-wt .pm-ats-wt-accent{color:var(--wt-accent)}
 .pm-ats-wt-intro{font-family:var(--wt-head);line-height:1.9;margin:0 0 30px}
@@ -74,10 +88,18 @@ body .pm-ats-wt .pm-ats-form button.pm-ats-btn:hover,body .pm-ats-wt .pm-ats-for
 .pm-ats-wt .pm-ats-alert{border-radius:10px}
 /* scheda singola con lo stesso stile (layout accordion attivo) */
 .pm-ats-single .pm-ats-section-title{font-family:'Montserrat',Helvetica,Arial,sans-serif;color:var(--pm-ats-title,#234d85);border-bottom-color:var(--pm-ats-accent,#ec7f31)}
+/* contenitore stretto (colonna del tema, tablet): elenco sopra, modulo sotto */
+@container pmatswt (max-width:760px){
+  .pm-ats-wt .pm-ats-wt-cols{display:block!important}
+  .pm-ats-wt .pm-ats-wt-col{width:100%;max-width:100%}
+  .pm-ats-wt .pm-ats-wt-col-form{margin-top:30px}
+  .pm-ats-wt .pm-ats-wt-h2{font-size:28px}
+  .pm-ats-wt .pm-ats-grid{grid-template-columns:1fr}
+}
 /* tablet / mobile (punti di rottura Divi: 980px, 767px) */
 @media (max-width:980px){
-  .pm-ats-wt-cols{display:block}
-  .pm-ats-wt-col{width:100%}
+  .pm-ats-wt .pm-ats-wt-cols{display:block!important}
+  .pm-ats-wt .pm-ats-wt-col{width:100%;max-width:100%}
   .pm-ats-wt-col-form{margin-top:30px}
   .pm-ats-wt .pm-ats-wt-h1{font-size:56px}
   .pm-ats-wt .pm-ats-wt-h2{font-size:28px;margin-bottom:16px}

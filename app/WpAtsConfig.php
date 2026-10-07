@@ -21,7 +21,7 @@ final class WpAtsConfig
     /** Plugin minimo funzionante (sincronizzazione base). */
     public const PLUGIN_BASE = '1.0.0';
     /** v1.10.16 — plugin consigliato: la 1.1.0 conta come fallimenti anche le chiamate riuscite (blocco 429 dopo 20 chiamate). */
-    public const PLUGIN_RECOMMENDED = '1.3.0';   // v1.10.19: struttura vincolante della Job Description e layout Lavora con noi
+    public const PLUGIN_RECOMMENDED = '1.3.1';   // v1.10.20: elenco posizioni con titoli cliccabili e modulo a destra (Lavora con noi)
     /** Protocollo REST supportato (pm-ats/v1). */
     public const API_VERSION = '1';
 
