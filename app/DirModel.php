@@ -80,6 +80,12 @@ final class DirModel
         return PmContractFilter::options($this->pdo, "SELECT `commessa` AS code FROM `{$this->v['v_cm_dir_commessa']}`");
     }
 
+    /** v1.10.15 — clausola del filtro principale (alias c = v_cm_dir_commessa) per i report per tipologia. */
+    public function whereSql(array $f): array { return $this->where($f); }
+
+    /** v1.10.15 — nome effettivo (snapshot o vista) di v_cm_dir_commessa. */
+    public function viewCommessa(): string { return $this->v['v_cm_dir_commessa']; }
+
     /** Clausola condivisa da quadro, elenchi ed export. */
     private function where(array $f): array
     {

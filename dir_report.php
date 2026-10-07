@@ -1,6 +1,6 @@
 <?php
 /**
- * dir_report.php — Report direzionale commesse e schede commerciale (v1.8.94)
+ * dir_report.php — Report direzionale commesse e schede commerciale (v1.10.15: schede per tipologia ACM, WTS-CSS, WTS-CC, WTS-MEG, NV_, Moduli)
  *
  * Una sola pagina per due destinazioni: senza `agente` mostra il quadro
  * complessivo con il confronto fra agenti; con `agente` diventa la scheda
@@ -13,6 +13,7 @@ require_once('access_control.php');
 require_once('functions.php');
 require_once(__DIR__ . '/app/DirModel.php');
 require_once(__DIR__ . '/app/AlertEngine.php');
+require_once(__DIR__ . '/app/DirTipologie.php');   // v1.10.15 — analisi per tipologia di commessa
 
 if (!can('view', 'dir_report.php')) { redirect('manage_projects'); }
 $u_id = (int)$_SESSION['user_id'];
@@ -20,10 +21,16 @@ $u_id = (int)$_SESSION['user_id'];
 $dm = new DirModel($pdo);
 $f  = $dm->normFilters($_GET);
 $ag = $f['agente'];
+// v1.10.15 — schede per tipologia (ACM, WTS-CSS, WTS-CC, WTS-MEG, NV_, Moduli): stesso filtro principale
+$tab = (string)($_GET['tab'] ?? '');
+if (!isset(DirTipologie::TABS[$tab])) $tab = '';
+$x = DirTipologie::normExtra($_GET, $pdo);
 
 $pronto = true; $errore = '';
 try {
     $q     = $dm->quadro($f);
+    $att = $cmm = $trend = $gMod = $gLin = $gSta = $agenti = [];
+    if ($tab === '') {   // v1.10.15 — il portafoglio si calcola solo nella sua scheda
     $att   = $dm->attenzione($f, 200);
     $cmm   = $dm->commesse($f, 500);
     $trend = $dm->andamento($f, 12);
@@ -31,12 +38,13 @@ try {
     $gLin  = $dm->perDimensione($f, 'linea_servizio', 10);
     $gSta  = $dm->perDimensione($f, 'stato');
     $agenti = $ag === '' ? $dm->agenti($f) : [];
+    }
     $per   = $ag !== '' ? $dm->perimetro($ag, $f) : [];
     $vAg   = $dm->elencoAgenti();
     $vSta  = $dm->valori('stato');
     $vLin  = $dm->valori('linea_servizio');
     $vCtr  = $dm->valoriContratti();   // v1.9.78 — filtro globale contratto
-    $comp  = $dm->competenza($f);      // v1.9.94 — ordini cliente per competenza (pro-rata mensile)
+    $comp  = $tab === '' ? $dm->competenza($f) : ['periodo' => ['da' => null, 'a' => null], 'anni' => [], 'commesse' => [], 'totale' => 0];   // v1.9.94
     // v1.8.95 — stato dell'alerting, mostrato solo nella vista direzionale:
     // e' configurazione di sistema, non informazione operativa per l'agente
     $alert = $ag === '' ? (new AlertEngine($pdo))->stato() : [];
@@ -75,8 +83,36 @@ $periodoTxt = ($f['from'] !== '' || $f['to'] !== '')
     ? 'dal ' . ($f['from'] !== '' ? date('d/m/Y', strtotime($f['from'])) : 'inizio') . ' al ' . ($f['to'] !== '' ? date('d/m/Y', strtotime($f['to'])) : 'fine')
     : 'intera durata delle commesse';
 
+// ── v1.10.15 — schede per tipologia: report HTML (vista e stampa) e file DOCX / XLSX / CSV / PDF ──
+$tipRep = null;
+if ($pronto && $tab !== '') {
+    $ft = [];
+    $ft[] = 'Perimetro: ' . ['aperte' => 'solo commesse aperte', 'tutte' => 'tutte le commesse', 'ricavo' => 'solo a ricavo'][$f['solo']];
+    if ($ag !== '')           $ft[] = 'Commerciale: ' . $ag;
+    if ($f['cliente'] !== '') $ft[] = 'Cliente: ' . $f['cliente'];
+    if ($f['q'] !== '')       $ft[] = 'Ricerca: ' . $f['q'];
+    foreach (['stato' => 'Stato', 'linee' => 'Linee', 'aziende' => 'Aziende'] as $k => $l) if ($f[$k]) $ft[] = $l . ': ' . implode(', ', $f[$k]);
+    if ($f['contratti'])      $ft[] = 'Contratto: ' . implode(', ', $f['contratti']);
+    $ft[] = 'Commesse attive: ' . $periodoTxt;
+    if ($tab === 'acm') { $ft[] = 'Tolleranza In-Line ±' . number_format($x['toll'], 1, ',', '.') . '%'; if ($x['esito']) $ft[] = 'Esito: ' . implode(', ', array_map(fn($e) => DirTipologie::ESITI[$e], $x['esito'])); }
+    try {
+        $tipRep = (new DirTipologie($pdo, $dm))->build($tab, $f, $x, implode(' · ', $ft));
+    } catch (Throwable $e) { $pronto = false; $errore = $e->getMessage(); }
+    $repFmt = (string)($_GET['rep'] ?? '');
+    if ($tipRep && isset(PmReport::FORMATS[$repFmt])) {
+        if (!can('export', 'dir_report.php')) { http_response_code(403); exit('Permesso di export mancante.'); }
+        write_log('Projects', 'info', 'Export report direzionale ' . DirTipologie::TABS[$tab] . ' (' . $repFmt . ')' . ($ag !== '' ? " ($ag)" : ''), $u_id);
+        $tipRep->send($repFmt, 'report_direzionale_' . $tab . ($ag !== '' ? '_' . $ag : '') . '_' . date('Y-m-d'));
+    }
+    if ($tipRep && ($_GET['print'] ?? '') === '1') {
+        write_log('Projects', 'info', 'Stampa report direzionale ' . DirTipologie::TABS[$tab] . ($ag !== '' ? " ($ag)" : ''), $u_id);
+        echo $tipRep->toHtml(true);
+        exit;
+    }
+}
+
 // ── export XLSX ─────────────────────────────────────────────────────────────
-if ($pronto && ($_GET['export'] ?? '') === 'xlsx') {
+if ($pronto && $tab === '' && ($_GET['export'] ?? '') === 'xlsx') {
     require_once(__DIR__ . '/app/XlsxWriter.php');
     $w = new XlsxWriter();
 
@@ -175,7 +211,7 @@ $barre = function (array $dati, string $campo, array $colori, int $w = 460) use 
 };
 
 // ── report di stampa ────────────────────────────────────────────────────────
-if ($pronto && ($_GET['print'] ?? '') === '1') {
+if ($pronto && $tab === '' && ($_GET['print'] ?? '') === '1') {
     write_log('Projects', 'info', 'Stampa report direzionale' . ($ag !== '' ? " ($ag)" : ''), $u_id);
     include(__DIR__ . '/app/dir_report_print.php');
     exit;
@@ -187,10 +223,12 @@ if ($pronto && ($_GET['print'] ?? '') === '1') {
 $GLOBALS['PM_NO_AUTOFILTER'] = true;
 require_once('header.php');
 
-$qs = function (array $over = []) use ($f) {
+$qs = function (array $over = []) use ($f, $tab, $x) {
     $p = ['agente' => $f['agente'], 'solo' => $f['solo'],
-          'q' => $f['q'], 'cliente' => $f['cliente'], 'from' => $f['from'], 'to' => $f['to']];
+          'q' => $f['q'], 'cliente' => $f['cliente'], 'from' => $f['from'], 'to' => $f['to'], 'tab' => $tab];
     foreach (['stato','linee','aziende','contratti'] as $k) if (!empty($f[$k])) $p[$k] = implode(',', $f[$k]);
+    if ($x['esito']) $p['esito'] = implode(',', $x['esito']);   // v1.10.15 — parametri della scheda ACM
+    if (isset($_GET['toll']) && $_GET['toll'] !== '') $p['toll'] = (string)$x['toll'];
     return url_safe('dir_report', array_merge(array_filter($p, fn($v) => $v !== '' && $v !== []), $over));
 };
 ?>
@@ -233,7 +271,7 @@ $qs = function (array $over = []) use ($f) {
   $attivi = ($ag !== '') + ($f['q'] !== '') + ($f['cliente'] !== '')
           + (count($f['stato']) > 0) + (count($f['linee']) > 0)
           + (count($f['aziende']) > 0) + ($f['solo'] !== 'aperte') + (count($f['contratti']) > 0)
-          + ($f['from'] !== '' || $f['to'] !== '');
+          + ($f['from'] !== '' || $f['to'] !== '') + ($tab === 'acm' && $x['esito'] ? 1 : 0);
 ?>
 <details class="pm-panel" <?= $attivi > 0 ? 'open' : '' ?>>
   <summary>
@@ -244,6 +282,7 @@ $qs = function (array $over = []) use ($f) {
   <div class="pm-panel-body">
     <form method="get">
       <?= route_slug_field() ?>
+      <?php if ($tab !== ''): ?><input type="hidden" name="tab" value="<?=h($tab)?>"><?php endif; ?>
 
       <div class="pm-group">
         <h4>Contratto</h4>
@@ -306,17 +345,59 @@ $qs = function (array $over = []) use ($f) {
         </div>
       </div>
 
+      <?php if ($tab === 'acm'): ?>
+      <div class="pm-group">
+        <h4>Performance ACM <span class="pm-multi">(scheda ACM)</span></h4>
+        <div class="pm-grid-auto">
+          <div class="form-group"><label>Esito <span class="pm-multi">(multipla)</span></label>
+            <select name="esito[]" multiple size="4">
+              <?php foreach (DirTipologie::ESITI as $k => $l): ?>
+                <option value="<?=h($k)?>" <?=in_array($k, $x['esito'], true) ? 'selected' : ''?>><?=h($l)?></option>
+              <?php endforeach; ?></select></div>
+          <div class="form-group"><label>Tolleranza In-Line (± %)</label>
+            <input type="number" name="toll" min="0" max="50" step="0.5" value="<?=h((string)$x['toll'])?>">
+            <small style="color:var(--muted)">consumo a listino entro 100% ± tolleranza = In-Line</small></div>
+        </div>
+      </div>
+      <?php endif; ?>
+
       <div class="pm-actions">
         <button class="btn btn-primary btn-sm"><i class="fa-solid fa-filter"></i> Applica</button>
-        <a class="btn btn-sm" href="<?=url_safe('dir_report', ['contratti_set' => 1])?>">Azzera</a>
+        <a class="btn btn-sm" href="<?=url_safe('dir_report', array_filter(['contratti_set' => 1, 'tab' => $tab]))?>">Azzera</a>
+        <?php if ($tab === ''): ?>
         <a class="btn btn-sm" href="<?=$qs(['export'=>'xlsx'])?>">
           <i class="fa-solid fa-file-excel"></i> XLSX</a>
         <a class="btn btn-sm" href="<?=$qs(['print'=>'1'])?>" target="_blank">
           <i class="fa-solid fa-print"></i> <?= $ag !== '' ? 'Scheda di stampa' : 'Report di stampa' ?></a>
+        <?php endif; ?>
       </div>
     </form>
   </div>
 </details>
+
+<?php // ── v1.10.15 — schede: portafoglio + analisi per tipologia ───────────── ?>
+<div class="pm-tabs" style="display:flex;flex-wrap:wrap;gap:4px;border-bottom:2px solid #e2e8f0;margin:0 0 12px">
+  <?php foreach (['' => 'Portafoglio'] + DirTipologie::TABS as $k => $l): $on = $k === $tab; ?>
+    <a href="<?=$qs(['tab' => $k === '' ? null : $k, 'esito' => null, 'toll' => null])?>" style="padding:7px 13px;font-size:12px;font-weight:700;text-decoration:none;border-radius:6px 6px 0 0;margin-bottom:-2px;
+       border:2px solid <?=$on ? '#e2e8f0' : 'transparent'?>;border-bottom-color:<?=$on ? 'var(--card-bg,#fff)' : 'transparent'?>;background:<?=$on ? 'var(--card-bg,#fff)' : 'transparent'?>;color:<?=$on ? '#1e293b' : '#64748b'?>"><?=h($l)?></a>
+  <?php endforeach; ?>
+</div>
+
+<?php if ($tab !== '' && $tipRep): ?>
+  <?php if (can('export', 'dir_report.php')): ?>
+  <div class="pm-report-bar" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 0 12px">
+    <span style="font-size:12px;font-weight:700;color:#334155"><i class="fa-solid fa-file-export"></i> Report <?=h(DirTipologie::TABS[$tab])?>:</span>
+    <?php foreach (['docx' => 'fa-file-word', 'xlsx' => 'fa-file-excel', 'csv' => 'fa-file-csv', 'pdf' => 'fa-file-pdf'] as $fm => $ic): ?>
+      <a class="btn btn-sm" href="<?=$qs(['rep' => $fm])?>"><i class="fa-solid <?=$ic?>"></i> <?=PmReport::FORMATS[$fm]?></a>
+    <?php endforeach; ?>
+    <a class="btn btn-sm" href="<?=$qs(['print' => '1'])?>" target="_blank"><i class="fa-solid fa-print"></i> Stampa</a>
+  </div>
+  <?php else: ?>
+  <div style="margin:0 0 12px"><a class="btn btn-sm" href="<?=$qs(['print' => '1'])?>" target="_blank"><i class="fa-solid fa-print"></i> Stampa</a></div>
+  <?php endif; ?>
+  <div class="card" style="padding:14px 16px"><?= $tipRep->toHtml(false, 1500) ?></div>
+  <?php require_once('footer.php'); exit; ?>
+<?php endif; ?>
 
 <?php // ── v1.8.95 — stato dell'alerting ─────────────────────────────────── ?>
 <?php if ($alert): ?>

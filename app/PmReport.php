@@ -233,6 +233,88 @@ final class PmReport
         return (string)$s;
     }
 
+    /**
+     * v1.10.15 — HTML: stesso contenuto dei file, per la vista a schermo ($standalone=false: frammento)
+     * e per la stampa ($standalone=true: pagina completa che apre la finestra di stampa).
+     */
+    public function toHtml(bool $standalone = false, int $maxRows = 0): string
+    {
+        $h = static fn($s) => htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8');
+        $c = static fn($x) => '#' . ltrim((string)$x, '#');
+        $o = '<div class="pm-rep">';
+        if ($standalone) $o .= '<h1>' . $h($this->title) . '</h1>' . ($this->subtitle !== '' ? '<div class="pm-rep-meta">' . $h($this->subtitle) . '</div>' : '');
+        $bars = function (array $rows, string $unit, string $color) use ($h, $c): string {
+            $max = 0.0; foreach ($rows as $r) $max = max($max, abs((float)$r[1]));
+            $dec = self::barDec($rows); $o = '<div class="pm-rep-bars">';
+            foreach ($rows as $r) {
+                $w = $max > 0 ? round(abs((float)$r[1]) / $max * 100, 2) : 0;
+                $o .= '<div class="pm-rep-bar"><span class="l" title="' . $h($r[0]) . '">' . $h($r[0]) . '</span><span class="t"><i style="width:' . $w . '%;background:' . $c($color) . '"></i></span><span class="v">'
+                    . $h($r[2] ?? (self::fmt((float)$r[1], $dec) . ($unit !== '' ? ' ' . $unit : ''))) . '</span></div>';
+            }
+            return $o . '</div>';
+        };
+        foreach ($this->blocks as $b) {
+            switch ($b[0]) {
+                case 'meta': $o .= '<div class="pm-rep-meta">' . $h($b[1]) . '</div>'; break;
+                case 'note': $o .= '<div class="pm-rep-note">' . $h($b[1]) . '</div>'; break;
+                case 'box':  $o .= '<div class="pm-rep-box">' . $h($b[1]) . '</div>'; break;
+                case 'para': $o .= '<p>' . $h($b[1]) . '</p>'; break;
+                case 'h':    $l = min(4, max(2, (int)$b[2] + 1)); $o .= "<h$l>" . $h($b[1]) . "</h$l>"; break;
+                case 'br':   $o .= '<div class="pm-rep-br"></div>'; break;
+                case 'kpi':
+                    $o .= '<div class="pm-rep-kpi">';
+                    foreach ($b[1] as $k) $o .= '<div style="border-top-color:' . $c($k['color'] ?? '334155') . '"><b style="color:' . $c($k['color'] ?? '334155') . '">' . $h($k['value']) . '</b><span>' . $h($k['label']) . '</span>' . (!empty($k['sub']) ? '<small>' . $h($k['sub']) . '</small>' : '') . '</div>';
+                    $o .= '</div>'; break;
+                case 'bars': $o .= '<div class="pm-rep-chart"><h4>' . $h($b[1]) . '</h4>' . $bars($b[2], $b[3], $b[4]) . '</div>'; break;
+                case 'stacked':
+                    $max = 0.0; foreach ($b[2] as $r) $max = max($max, array_sum(array_map('floatval', $r[1])));
+                    $o .= '<div class="pm-rep-chart"><h4>' . $h($b[1]) . '</h4><div class="pm-rep-leg">';
+                    foreach ($b[3] as $g) $o .= '<span><i style="background:' . $c($g['color']) . '"></i>' . $h($g['label']) . '</span>';
+                    $o .= '</div><div class="pm-rep-bars">';
+                    foreach ($b[2] as $r) {
+                        $o .= '<div class="pm-rep-bar"><span class="l" title="' . $h($r[0]) . '">' . $h($r[0]) . '</span><span class="t">';
+                        foreach (array_values($r[1]) as $i => $v) if ((float)$v > 0 && $max > 0) $o .= '<i style="width:' . round((float)$v / $max * 100, 2) . '%;background:' . $c($b[3][$i]['color'] ?? '94A3B8') . '" title="' . $h(($b[3][$i]['label'] ?? '') . ': ' . self::fmt((float)$v)) . '"></i>';
+                        $o .= '</span><span class="v">' . $h($r[2] ?? self::fmt(array_sum(array_map('floatval', $r[1])))) . '</span></div>';
+                    }
+                    $o .= '</div></div>'; break;
+                case 'table':
+                    if ($b[1] !== '' && empty($b[4]['notitle'])) $o .= '<h3>' . $h($b[1]) . ' <small>(' . count($b[3]) . ' righe)</small></h3>';
+                    if (!$b[3]) { $o .= '<div class="pm-rep-note">Nessun dato.</div>'; break; }
+                    $right = array_flip(self::rightCols($b[2], $b[3], $b[4]));
+                    $rows = $maxRows > 0 && count($b[3]) > $maxRows ? array_slice($b[3], 0, $maxRows) : $b[3];
+                    $tot = !empty($b[4]['total']);
+                    if ($tot && $rows !== $b[3]) $rows[] = end($b[3]);
+                    $o .= '<div class="pm-rep-tw"><table class="data-table pm-rep-t" data-pm-nofilter><thead><tr>';
+                    foreach ($b[2] as $i => $x) $o .= '<th' . (isset($right[$i]) ? ' class="r"' : '') . '>' . $h($x) . '</th>';
+                    $o .= '</tr></thead><tbody>';
+                    $n = count($rows);
+                    foreach ($rows as $ri => $r) {
+                        $o .= '<tr' . ($tot && $ri === $n - 1 ? ' class="tot"' : '') . '>';
+                        foreach (self::fmtRow($r, $b[4]) as $i => $v) $o .= '<td' . (isset($right[$i]) ? ' class="r"' : '') . '>' . $h($v) . '</td>';
+                        $o .= '</tr>';
+                    }
+                    $o .= '</tbody></table></div>';
+                    if (count($rows) < count($b[3])) $o .= '<div class="pm-rep-note">Mostrate ' . ($maxRows) . ' righe su ' . count($b[3]) . ': stampa ed export le contengono tutte.</div>';
+                    break;
+            }
+        }
+        $o .= '</div>';
+        $css = '.pm-rep h1{font-size:19px;margin:0 0 4px}.pm-rep h3{font-size:14px;margin:16px 0 6px}.pm-rep h3 small{font-weight:400;color:#64748b}.pm-rep h4{font-size:12px;margin:0 0 6px;color:#334155}'
+             . '.pm-rep-meta{font-size:11px;color:#64748b;margin-bottom:6px}.pm-rep-note{font-size:11px;color:#475569;background:#f8fafc;border-left:3px solid #cbd5e1;padding:6px 10px;margin:6px 0 10px}.pm-rep-box{border:1px solid #bfdbfe;background:#eff6ff;padding:8px 10px;font-size:12px;margin:6px 0}'
+             . '.pm-rep-kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:8px 0 12px}.pm-rep-kpi>div{border:1px solid #e2e8f0;border-top:3px solid;border-radius:8px;padding:9px;text-align:center;background:#fff}'
+             . '.pm-rep-kpi b{display:block;font-size:17px}.pm-rep-kpi span{display:block;font-size:10px;font-weight:700;text-transform:uppercase;color:#334155}.pm-rep-kpi small{display:block;font-size:10px;color:#64748b}'
+             . '.pm-rep-chart{border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;margin:0 0 10px;background:#fff;break-inside:avoid}.pm-rep-bar{display:flex;align-items:center;gap:8px;font-size:11px;margin:2px 0}'
+             . '.pm-rep-bar .l{flex:0 0 230px;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#334155}.pm-rep-bar .t{flex:1;display:flex;height:12px;background:#f1f5f9;border-radius:2px;overflow:hidden}.pm-rep-bar .t i{display:block;height:100%}'
+             . '.pm-rep-bar .v{flex:0 0 90px;color:#64748b}.pm-rep-leg{display:flex;flex-wrap:wrap;gap:10px;font-size:11px;margin-bottom:6px}.pm-rep-leg i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}'
+             . '.pm-rep-tw{overflow-x:auto}.pm-rep-t{width:100%;font-size:11px;border-collapse:collapse}.pm-rep-t th,.pm-rep-t td{padding:3px 6px;border-bottom:1px solid #e2e8f0;vertical-align:top}.pm-rep-t th{background:#f1f5f9;text-align:left;white-space:nowrap}'
+             . '.pm-rep-t .r{text-align:right;white-space:nowrap}.pm-rep-t tr.tot td{font-weight:700;background:#f8fafc}.pm-rep-br{height:0}';
+        if (!$standalone) return '<style>' . $css . '</style>' . $o;
+        return '<!doctype html><html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' . $h($this->title) . '</title><style>'
+             . 'body{font-family:Segoe UI,Arial,sans-serif;color:#0f172a;margin:18px;background:#fff}' . $css
+             . '.pm-rep-br{page-break-after:always}@page{size:A4 ' . ($this->orientation === 'L' ? 'landscape' : 'portrait') . ';margin:12mm}@media print{.pm-rep-t thead{display:table-header-group}.pm-rep-t tr{break-inside:avoid}.noprint{display:none}}'
+             . '</style></head><body><div class="noprint" style="margin-bottom:10px"><button onclick="window.print()">Stampa</button></div>' . $o . '<script>window.addEventListener("load",function(){setTimeout(function(){window.print()},300)})</script></body></html>';
+    }
+
     /** Scrive il report nel formato richiesto. */
     public function writeToFile(string $fmt, string $path): void
     {
