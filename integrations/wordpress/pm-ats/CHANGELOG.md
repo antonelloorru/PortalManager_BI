@@ -5,12 +5,20 @@ Versioning semantico `MAJOR.MINOR.PATCH`. Allineati a ogni rilascio: header `Ver
 
 | Costante | Valore | Significato |
 |---|---|---|
-| PM_ATS_VERSION | 1.3.1 | versione del plugin |
+| PM_ATS_VERSION | 1.3.2 | versione del plugin |
 | PM_ATS_API_VERSION | 1 | protocollo REST `pm-ats/v1` (cambia solo con modifiche incompatibili) |
 | PM_ATS_DB_VERSION | 1 | schema tabelle `pm_ats_applications`, `pm_ats_log` |
-| PM_ATS_SETTINGS_VERSION | 4 | schema dell'opzione `pm_ats_settings` |
+| PM_ATS_SETTINGS_VERSION | 5 | schema dell'opzione `pm_ats_settings` |
 | PM_ATS_TEMPLATE_VERSION | 1.3.0 | template sovrascrivibili dal tema |
 | PM_ATS_MIN_PM | 1.10.20 | PortalManager minimo per tutte le funzioni |
+
+## 1.3.2 — 2026-10-07 (PortalManager v1.10.21)
+- **Nessuna colonna laterale del tema** nelle pagine del plugin: scheda della posizione, archivio, pagina elenco impostata e ogni pagina con `[pm_ats_jobs]`, `[pm_ats_apply]` o `[pm_ats_lavora_con_noi]`. Prima, su Divi, compariva a destra la barra con i widget «Articoli recenti».
+  - **Divi**: `get_post_metadata` restituisce `_et_pb_page_layout = et_no_sidebar` per quelle pagine, senza scrivere nel database. Il tema non stampa `#sidebar` e il contenuto occupa tutta la larghezza.
+  - **Altri temi**: `is_active_sidebar` = false, quindi le aree widget non vengono stampate.
+  - **Classe `pm-ats-no-sidebar`**: rimuove `et_right_sidebar`/`et_left_sidebar` e aggiunge una regola CSS di riserva che nasconde `#sidebar`/`.widget-area` e porta `#left-area` al 100%.
+  - Opzione `hide_sidebar` (predefinita attiva) in Impostazioni › Aspetto.
+- Scheda posizione su Divi senza la riga autore/data/categorie del modello articolo.
 
 ## 1.3.1 — 2026-10-07 (PortalManager v1.10.20)
 - **Pagina «Lavora con noi» come nell'esempio**:

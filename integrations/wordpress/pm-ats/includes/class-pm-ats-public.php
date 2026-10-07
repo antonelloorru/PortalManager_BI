@@ -27,6 +27,10 @@ final class PM_ATS_Public
         add_action('wp_head', [self::class, 'head'], 5);
         add_action('template_redirect', [self::class, 'redirectArchive']);
         add_action('template_redirect', [self::class, 'preview'], 0);   // v1.2.0
+        // v1.3.2 — pagine del plugin senza barra laterale del tema (es. Divi «Articoli recenti» a destra)
+        add_filter('get_post_metadata', [self::class, 'diviLayout'], 10, 4);
+        add_filter('is_active_sidebar', [self::class, 'noSidebar'], 10, 2);
+        add_filter('body_class', [self::class, 'bodyClass'], 99);
         add_action('wp_enqueue_scripts', [self::class, 'register']);
         add_action('admin_post_nopriv_pm_ats_apply', [self::class, 'handle']);
         add_action('admin_post_pm_ats_apply', [self::class, 'handle']);
@@ -146,6 +150,51 @@ final class PM_ATS_Public
 <main class="pm-ats-preview-main"><h1 class="pm-ats-preview-title"><?php echo esc_html($job['title']); ?></h1><?php echo $body; // phpcs:ignore ?></main>
 <?php wp_footer(); ?></body></html><?php
         exit;
+    }
+
+    /* ── pagine senza barra laterale (v1.3.2) ───────────────────────── */
+
+    /** Scheda di una posizione o pagina elenco/«Lavora con noi» (pagina impostata o con uno shortcode pm-ats). */
+    public static function isPluginPage(?int $postId = null): bool
+    {
+        if (!PM_ATS_Settings::get('hide_sidebar')) return false;
+        if ($postId === null) {
+            if (is_admin() || !did_action('wp')) return false;
+            if (is_singular(PM_ATS_Jobs::CPT) || is_post_type_archive(PM_ATS_Jobs::CPT)) return true;
+            if (!is_singular()) return false;
+            $postId = (int)get_queried_object_id();
+        }
+        if ($postId <= 0) return false;
+        if (get_post_type($postId) === PM_ATS_Jobs::CPT) return true;
+        if ($postId === (int)PM_ATS_Settings::get('list_page_id')) return true;
+        static $sc = [];
+        if (!isset($sc[$postId])) $sc[$postId] = (bool)preg_match('/\[pm_ats_(jobs|apply|lavora_con_noi)\b/', (string)get_post_field('post_content', $postId));
+        return $sc[$postId];
+    }
+
+    /**
+     * Divi: layout di pagina «senza barra laterale» (meta _et_pb_page_layout) per le pagine del plugin, senza modificare il
+     * database: il tema legge il meta e non stampa la colonna con i widget (Articoli recenti, Progetti…).
+     */
+    public static function diviLayout($value, $objectId, $metaKey, $single)
+    {
+        if ($metaKey !== '_et_pb_page_layout' || is_admin() || !self::isPluginPage((int)$objectId)) return $value;
+        return $single ? 'et_no_sidebar' : ['et_no_sidebar'];
+    }
+
+    /** Altri temi: nessuna area widget attiva nelle pagine del plugin (la colonna laterale non viene stampata). */
+    public static function noSidebar($active, $index)
+    {
+        return $active && self::isPluginPage() ? false : $active;
+    }
+
+    public static function bodyClass(array $c): array
+    {
+        if (!self::isPluginPage()) return $c;
+        $c = array_values(array_diff($c, ['et_right_sidebar', 'et_left_sidebar', 'has-sidebar', 'right-sidebar', 'left-sidebar', 'sidebar-right', 'sidebar-left']));
+        $c[] = 'pm-ats-no-sidebar';
+        if (!in_array('et_full_width_page', $c, true) && wp_get_theme()->get_template() === 'Divi') $c[] = 'et_no_sidebar';
+        return $c;
     }
 
     public static function head(): void

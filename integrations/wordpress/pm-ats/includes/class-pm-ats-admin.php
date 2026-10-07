@@ -277,6 +277,7 @@ final class PM_ATS_Admin
               <tr><th><?php esc_html_e('Elenco', 'pm-ats'); ?></th><td><select name="<?php echo $f('layout'); ?>"><option value="grid" <?php selected($s['layout'], 'grid'); ?>><?php esc_html_e('Griglia di schede', 'pm-ats'); ?></option><option value="list" <?php selected($s['layout'], 'list'); ?>><?php esc_html_e('Lista', 'pm-ats'); ?></option>
                 <option value="accordion" <?php selected($s['layout'], 'accordion'); ?>><?php esc_html_e('Lavora con noi: elenco posizioni e modulo a destra', 'pm-ats'); ?></option></select>
                 <input type="number" min="1" max="100" name="<?php echo $f('per_page'); ?>" value="<?php echo (int)$s['per_page']; ?>" class="small-text"> <?php esc_html_e('per pagina', 'pm-ats'); ?></td></tr>
+              <tr><th><?php esc_html_e('Barra laterale del tema', 'pm-ats'); ?></th><td><?php $chk('hide_sidebar', __('Nascondi la colonna laterale del tema (widget, articoli recenti) nelle pagine delle posizioni e «Lavora con noi»', 'pm-ats')); ?></td></tr>
               <tr><th colspan="2"><h3 style="margin:8px 0 0"><?php esc_html_e('Layout «Lavora con noi»', 'pm-ats'); ?></h3></th></tr>
               <tr><th><?php esc_html_e('Elenco posizioni', 'pm-ats'); ?></th><td><select name="<?php echo $f('wt_list_mode'); ?>">
                 <option value="link" <?php selected($s['wt_list_mode'], 'link'); ?>><?php esc_html_e('Titolo cliccabile che apre la scheda della posizione', 'pm-ats'); ?></option>
