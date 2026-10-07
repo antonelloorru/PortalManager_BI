@@ -1381,7 +1381,7 @@ $colClasse = [
 </details>
 
 <?php if (!empty($repErr)): ?><div class="alert alert-danger">Report non generato: <?=h($repErr)?></div><?php endif; ?>
-<?= PmReport::toolbar($qs, SdReport::tecnici($sd, $f), $tec !== '', 'tec', 'componente', can('export', 'service_desk.php')) ?>
+<?= PmReport::toolbar($qs, SdReport::tecnici($sd, $f), $tec !== '', 'tec', 'componente', can('export', 'service_desk.php'), ['Stampa' => ['print' => '1']]) ?>
 
 <!-- ── i quattro indicatori ─────────────────────────────────────────────── -->
 <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px">

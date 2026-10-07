@@ -48,6 +48,28 @@ final class PmReport
         return $this;
     }
 
+    /** v1.10.13 — paragrafo con stile (size in half-point DOCX, color, bold). */
+    public function para(string $t, array $o = []): self { $this->blocks[] = ['para', $t, $o]; return $this; }
+
+    /**
+     * v1.10.13 — barre impilate: righe [etichetta, [valori per segmento], testo]; segmenti [label, color].
+     */
+    public function stacked(string $title, array $rows, array $segs): self
+    {
+        if ($rows) $this->blocks[] = ['stacked', $title, $rows, $segs];
+        return $this;
+    }
+
+    /** Stringa numerica all'italiana («1.234,5», «12», «-3,25») → numero; altrimenti invariata (XLSX). */
+    public static function itNum($v)
+    {
+        if (!is_string($v)) return $v;
+        $t = trim($v);
+        if ($t === '' || !preg_match('/^-?\d{1,3}(\.\d{3})*(,\d+)?$|^-?\d+(,\d+)?$/', $t)) return $v;
+        $n = str_replace(',', '.', str_replace('.', '', $t));
+        return str_contains($n, '.') ? (float)$n : (int)$n;
+    }
+
     // ── formattazione ────────────────────────────────────────────────
     private static function fmt($v, int $dec = 1): string
     {
@@ -100,14 +122,16 @@ final class PmReport
                 case 'h':    $d->heading($b[1], $b[2]); break;
                 case 'br':   $d->pageBreak(); break;
                 case 'kpi':  $d->kpi(array_map(fn($c) => ['color' => ltrim($c['color'] ?? '334155', '#')] + $c, $b[1])); break;
+                case 'para': $d->paragraph($b[1], $b[2]); break;
+                case 'stacked': if ($b[1] !== '') $d->heading($b[1], 3); $d->stackedbars($b[2], array_map(fn($g) => ['label' => $g['label'], 'color' => ltrim($g['color'], '#')], $b[3])); break;
                 case 'table':
-                    if ($b[1] !== '') $d->heading($b[1], 2);
+                    if ($b[1] !== '' && empty($b[4]['notitle'])) $d->heading($b[1], 2);
                     if (!$b[3]) { $d->note('Nessun dato.'); break; }
                     $d->table($b[2], array_map(fn($r) => self::fmtRow($r, $b[4]), $b[3]), ['right' => self::rightCols($b[2], $b[3], $b[4])]);
                     break;
                 case 'bars':
                     $dec = self::barDec($b[2]);
-                    $d->bars(array_map(fn($r) => [(string)$r[0], (float)$r[1], self::fmt((float)$r[1], $dec) . ($b[3] !== '' ? ' ' . $b[3] : '')], $b[2]), ['title' => $b[1], 'color' => ltrim($b[4], '#')]);
+                    $d->bars(array_map(fn($r) => [(string)$r[0], (float)$r[1], $r[2] ?? (self::fmt((float)$r[1], $dec) . ($b[3] !== '' ? ' ' . $b[3] : ''))], $b[2]), ['title' => $b[1], 'color' => ltrim($b[4], '#')]);
                     break;
             }
         }
@@ -127,14 +151,16 @@ final class PmReport
                 case 'h':    $p->heading($b[1], $b[2]); break;
                 case 'br':   $p->pageBreak(); break;
                 case 'kpi':  $p->kpi($b[1]); break;
+                case 'para': $p->paragraph($b[1], ['size' => isset($b[2]['size']) ? $b[2]['size'] / 2 : 9, 'bold' => !empty($b[2]['bold']), 'color' => $b[2]['color'] ?? '334155']); break;
+                case 'stacked': $p->stackedbars($b[2], $b[3], ['title' => $b[1]]); break;
                 case 'table':
-                    if ($b[1] !== '') $p->heading($b[1], 2);
+                    if ($b[1] !== '' && empty($b[4]['notitle'])) $p->heading($b[1], 2);
                     if (!$b[3]) { $p->note('Nessun dato.'); break; }
                     $p->table($b[2], array_map(fn($r) => self::fmtRow($r, $b[4]), $b[3]), ['right' => self::rightCols($b[2], $b[3], $b[4]), 'total' => !empty($b[4]['total'])]);
                     break;
                 case 'bars':
                     $dec = self::barDec($b[2]);
-                    $p->bars(array_map(fn($r) => [(string)$r[0], (float)$r[1], self::fmt((float)$r[1], $dec) . ($b[3] !== '' ? ' ' . $b[3] : '')], $b[2]), ['title' => $b[1], 'color' => $b[4]]);
+                    $p->bars(array_map(fn($r) => [(string)$r[0], (float)$r[1], $r[2] ?? (self::fmt((float)$r[1], $dec) . ($b[3] !== '' ? ' ' . $b[3] : ''))], $b[2]), ['title' => $b[1], 'color' => $b[4]]);
                     break;
             }
         }
@@ -147,18 +173,32 @@ final class PmReport
         $w = new XlsxWriter();
         $sum = [[$this->title], [$this->subtitle]];
         foreach ($this->blocks as $b) {
-            if ($b[0] === 'meta' || $b[0] === 'box' || $b[0] === 'note') $sum[] = [$b[1]];
+            if ($b[0] === 'meta' || $b[0] === 'box' || $b[0] === 'note' || $b[0] === 'para') $sum[] = [$b[1]];
             if ($b[0] === 'kpi') { $sum[] = []; $sum[] = ['Indicatore', 'Valore', 'Dettaglio']; foreach ($b[1] as $c) $sum[] = [$c['label'], $c['value'], $c['sub'] ?? '']; $sum[] = []; }
         }
         $w->addSheet('Riepilogo', $sum);
         $used = ['riepilogo' => 1];
+        // tabelle raggruppate (opzione group = [sezione, gruppo]) con la stessa intestazione → un solo foglio
+        $merged = []; $blocks = [];
         foreach ($this->blocks as $b) {
-            if ($b[0] !== 'table' && $b[0] !== 'bars') continue;
+            if ($b[0] === 'table' && !empty($b[4]['group'])) {
+                $key = $b[4]['group'][0] . '|' . implode('|', $b[2]);
+                $rows = array_map(fn($r) => array_merge([$b[4]['group'][1]], array_values($r)), $b[3]);
+                if (isset($merged[$key])) { $blocks[$merged[$key]][3] = array_merge($blocks[$merged[$key]][3], $rows); continue; }
+                $merged[$key] = count($blocks);
+                $blocks[] = ['table', $b[4]['group'][0], array_merge(['Gruppo'], $b[2]), $rows, ['right' => []]];
+                continue;
+            }
+            $blocks[] = $b;
+        }
+        foreach ($blocks as $b) {
+            if ($b[0] !== 'table' && $b[0] !== 'bars' && $b[0] !== 'stacked') continue;
             $name = trim(preg_replace('/[\\\\\/\?\*\[\]:]+/', ' ', $b[1])) ?: 'Tabella';
             $name = mb_substr($name, 0, 28); $base = $name; $k = 2;
             while (isset($used[mb_strtolower($name)])) $name = mb_substr($base, 0, 25) . ' ' . $k++;
             $used[mb_strtolower($name)] = 1;
-            if ($b[0] === 'table') $w->addSheet($name, array_merge([$b[2]], array_map(fn($r) => array_map(fn($v) => $v === null ? '' : $v, array_values($r)), $b[3])));
+            if ($b[0] === 'table') $w->addSheet($name, array_merge([$b[2]], array_map(fn($r) => array_map(fn($v) => $v === null ? '' : self::itNum($v), array_values($r)), $b[3])));
+            elseif ($b[0] === 'stacked') $w->addSheet($name, array_merge([array_merge(['Voce'], array_column($b[3], 'label'), ['Totale'])], array_map(fn($r) => array_merge([(string)$r[0]], array_map('floatval', $r[1]), [array_sum($r[1])]), $b[2])));
             else $w->addSheet($name, array_merge([['Voce', 'Valore' . ($b[3] !== '' ? " ({$b[3]})" : '')]], array_map(fn($r) => [(string)$r[0], (float)$r[1]], $b[2])));
         }
         return $w;
@@ -172,7 +212,11 @@ final class PmReport
         if ($this->subtitle !== '') fputcsv($fh, [$this->subtitle], ';', '"');
         foreach ($this->blocks as $b) {
             switch ($b[0]) {
-                case 'meta': case 'box': case 'note': fputcsv($fh, [$b[1]], ';', '"'); break;
+                case 'meta': case 'box': case 'note': case 'para': fputcsv($fh, [$b[1]], ';', '"'); break;
+                case 'stacked':
+                    fwrite($fh, "\r\n"); fputcsv($fh, ['# ' . ($b[1] !== '' ? $b[1] : 'Grafico')], ';', '"'); fputcsv($fh, array_merge(['Voce'], array_column($b[3], 'label'), ['Totale']), ';', '"');
+                    foreach ($b[2] as $r) fputcsv($fh, array_map(fn($v) => is_float($v) ? str_replace('.', ',', (string)round($v, 4)) : (string)$v, array_merge([(string)$r[0]], array_map('floatval', $r[1]), [(float)array_sum($r[1])])), ';', '"');
+                    break;
                 case 'h': fwrite($fh, "\r\n"); fputcsv($fh, ['## ' . $b[1]], ';', '"'); break;
                 case 'kpi': fwrite($fh, "\r\n"); fputcsv($fh, ['Indicatore', 'Valore', 'Dettaglio'], ';', '"'); foreach ($b[1] as $c) fputcsv($fh, [$c['label'], $c['value'], $c['sub'] ?? ''], ';', '"'); break;
                 case 'table':
@@ -264,13 +308,13 @@ final class PmReport
      * Barra degli export + report per tecnico (HTML). $url(array $extra) costruisce il link con il filtro principale.
      * $techs = [valore filtro => etichetta]; vuoto o $techActive = true → nessun elenco per tecnico.
      */
-    public static function toolbar(callable $url, array $techs, bool $techActive, string $techParam, string $techLabel = 'tecnico', bool $canExport = true): string
+    public static function toolbar(callable $url, array $techs, bool $techActive, string $techParam, string $techLabel = 'tecnico', bool $canExport = true, array $rowLinks = []): string
     {
         if (!$canExport) return '';
         $h = static fn($s) => htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8');
         $ico = ['docx' => 'fa-file-word', 'xlsx' => 'fa-file-excel', 'csv' => 'fa-file-csv', 'pdf' => 'fa-file-pdf'];
         $o = '<div class="pm-report-bar" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 0 12px">'
-           . '<span style="font-size:12px;font-weight:700;color:#334155"><i class="fa-solid fa-file-export"></i> Report ' . ($techActive ? 'del ' . $h($techLabel) . ' selezionato' : 'generale') . ':</span>';
+           . '<span style="font-size:12px;font-weight:700;color:#334155"><i class="fa-solid fa-file-export"></i> Report ' . ($techActive ? '(' . $h($techLabel) . ' selezionato)' : 'generale') . ':</span>';
         foreach (self::FORMATS as $f => $l) $o .= '<a class="btn btn-sm" href="' . $url(['rep' => $f]) . '"><i class="fa-solid ' . $ico[$f] . '"></i> ' . $l . '</a>';
         $o .= '</div>';
         if ($techActive || !$techs) return $o;
@@ -278,11 +322,13 @@ final class PmReport
             . ' <span class="pm-hint">' . count($techs) . ' risorse nel perimetro del filtro · stesso contenuto del report generale, limitato alla risorsa</span></summary>'
             . '<div class="pm-panel-body"><div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px"><span style="font-size:12px">Tutti (ZIP, un file per risorsa):</span>';
         foreach (self::FORMATS as $f => $l) $o .= '<a class="btn btn-sm btn-primary" href="' . $url(['rep' => $f, 'rep_zip' => 1]) . '"><i class="fa-solid fa-file-zipper"></i> ' . $l . '</a>';
-        $o .= '</div><table class="data-table" data-pm-nofilter style="width:100%;font-size:12px"><thead><tr><th>' . $h(ucfirst($techLabel)) . '</th><th>Report</th><th>Vista</th></tr></thead><tbody>';
+        $o .= '</div><table class="data-table" data-pm-nofilter style="width:100%;font-size:12px"><thead><tr><th>' . $h(ucfirst($techLabel)) . '</th><th>Report</th><th>Vista / stampa</th></tr></thead><tbody>';
         foreach ($techs as $v => $lbl) {
             $o .= '<tr><td>' . $h($lbl) . '</td><td style="white-space:nowrap">';
             foreach (self::FORMATS as $f => $l) $o .= '<a href="' . $url(['rep' => $f, $techParam => $v]) . '" style="margin-right:8px"><i class="fa-solid ' . $ico[$f] . '"></i> ' . $l . '</a>';
-            $o .= '</td><td><a href="' . $url([$techParam => $v]) . '">apri con il filtro →</a></td></tr>';
+            $o .= '</td><td><a href="' . $url([$techParam => $v]) . '">apri con il filtro →</a>';
+            foreach ($rowLinks as $lbl => $extra) $o .= ' · <a target="_blank" href="' . $url(array_merge($extra, [$techParam => $v])) . '"><i class="fa-solid fa-print"></i> ' . $h($lbl) . '</a>';
+            $o .= '</td></tr>';
         }
         return $o . '</tbody></table></div></details>';
     }

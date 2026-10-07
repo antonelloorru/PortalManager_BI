@@ -206,6 +206,33 @@ final class PdfWriter
         return $this;
     }
 
+    /**
+     * v1.10.13 — barre orizzontali impilate: righe [etichetta, [valori per segmento], testo]; segmenti [label, color].
+     */
+    public function stackedbars(array $rows, array $segs, array $o = []): self
+    {
+        if (!$rows) return $this;
+        if (($o['title'] ?? '') !== '') $this->heading((string)$o['title'], 3);
+        $max = max(array_map(fn($r) => array_sum(array_map('floatval', $r[1])), $rows)) ?: 1.0;
+        $lw = 120.0; $bw = $this->W - 2 * self::M - $lw - 70; $h = 11.0;
+        foreach ($rows as $r) {
+            $this->space($h + 2);
+            $this->text(self::M, $this->y - 8, self::fit((string)$r[0], $lw - 6, 7.5, false), 7.5, false, [0x33, 0x41, 0x55]);
+            $x = self::M + $lw;
+            foreach (array_values($r[1]) as $i => $v) {
+                $len = $bw * max(0.0, (float)$v) / $max; if ($len <= 0) continue;
+                $this->rect($x, $this->y - $h + 2, $len, $h - 3, self::rgb($segs[$i]['color'] ?? '94A3B8')); $x += $len;
+            }
+            $this->text($x + 4, $this->y - 8, (string)($r[2] ?? ''), 7.5, true, [0x33, 0x41, 0x55]);
+            $this->y -= $h + 1;
+        }
+        // legenda
+        $this->space(12); $x = self::M + $lw;
+        foreach ($segs as $g) { $this->rect($x, $this->y - 8, 9, 6, self::rgb($g['color'])); $this->text($x + 12, $this->y - 8, (string)$g['label'], 7, false, [0x64, 0x74, 0x8B]); $x += 24 + $this->sw((string)$g['label'], 7, false); }
+        $this->y -= 16;
+        return $this;
+    }
+
     // ── output ────────────────────────────────────────────────────────
     public function output(): string
     {
