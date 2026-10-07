@@ -66,7 +66,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     if ($s === 4) {
         $err = WpAtsConfig::save($pdo, ['push_on_change' => $_POST['push_on_change'] ?? '', 'pull_batch' => $_POST['pull_batch'] ?? 20, 'timeout' => $_POST['timeout'] ?? 20,
-                                        'verify_tls' => $_POST['verify_tls'] ?? '', 'ca_file' => $_POST['ca_file'] ?? '', 'proxy' => $_POST['proxy'] ?? '']);
+                                        'verify_tls' => $_POST['verify_tls'] ?? '', 'ca_file' => $_POST['ca_file'] ?? '', 'proxy' => $_POST['proxy'] ?? '', 'resolve_ip' => $_POST['resolve_ip'] ?? '']);
         if ($err) $go(4, 'danger', implode(' · ', $err));
         $go(5);
     }
@@ -160,6 +160,7 @@ require_once('header.php');
         <div class="form-group"><label>Timeout (s)</label><input type="number" name="timeout" min="5" max="120" value="<?= (int)$cfg['wpats.timeout'] ?>"></div>
         <div class="form-group"><label>File CA (opzionale)</label><input type="text" name="ca_file" value="<?= $h($cfg['wpats.ca_file']) ?>" placeholder="P:\xampp\apache\bin\curl-ca-bundle.crt"></div>
         <div class="form-group"><label>Proxy in uscita (opzionale)</label><input type="text" name="proxy" value="<?= $h($cfg['wpats.proxy']) ?>" placeholder="proxy.azienda.local:8080"></div>
+        <div class="form-group"><label>IP forzato (opzionale)</label><input type="text" name="resolve_ip" value="<?= $h($cfg['wpats.resolve_ip']) ?>" placeholder="IP interno del server web (NAT hairpin)"></div>
       </div>
       <label style="font-size:13px;display:block"><input type="checkbox" name="push_on_change" value="1" <?= $cfg['wpats.push_on_change'] === '1' ? 'checked' : '' ?>> Invia subito le posizioni a ogni modifica</label>
       <label style="font-size:13px;display:block"><input type="checkbox" name="verify_tls" value="1" <?= $cfg['wpats.verify_tls'] !== '0' ? 'checked' : '' ?>> Verifica certificato TLS (disattivare solo per prove)</label>

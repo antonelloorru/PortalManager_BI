@@ -80,6 +80,11 @@ final class WpAtsConfig
             if ($ca !== '' && !is_file($ca)) $err[] = 'File CA non trovato: ' . $ca;
             $kv['wpats.ca_file'] = $ca;
         }
+        if (array_key_exists('resolve_ip', $in)) {   // v1.10.17
+            $ri = trim((string)$in['resolve_ip']);
+            if ($ri !== '' && !filter_var($ri, FILTER_VALIDATE_IP)) $err[] = 'IP forzato non valido';
+            $kv['wpats.resolve_ip'] = $ri;
+        }
         if (array_key_exists('proxy', $in)) {
             $proxy = trim((string)$in['proxy']);
             if ($proxy !== '' && !preg_match('#^(https?://)?[A-Za-z0-9.\-\[\]:]+(:\d{2,5})?$#', $proxy)) $err[] = 'Proxy non valido';

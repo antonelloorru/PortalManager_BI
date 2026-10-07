@@ -44,6 +44,7 @@ final class WpAtsDiag
         $tls = str_starts_with(strtolower($base), 'https') ? ' · TLS ok' : ' · HTTP in chiaro';
         if ($root['error'] || ($root['status'] >= 300 && $root['status'] < 400)) {
             $add('ko', '3 Trasporto / TLS', $a['code'], $a['cause'] . ' (' . $c->restRoot() . ')', $a['fix']);
+            if (in_array((int)($root['errno'] ?? 0), [7, 28], true)) foreach (self::network($base, $ips, $c) as $x) $add(...$x);   // v1.10.17
             return self::out(false, $a['code'] . ' — ' . $a['cause'] . ($a['fix'] !== '' ? ' → ' . $a['fix'] : ''), $steps);
         }
         $restOk = $root['status'] === 200 && is_array($root['json']);
@@ -70,6 +71,61 @@ final class WpAtsDiag
             'scarto fra PortalManager e il sito (intestazione Date); tolleranza della firma ±300 s', abs($drift) > 60 ? 'sincronizzare l\'orologio (w32tm /resync, NTP)' : '');
         $ok = $r['status'] === 200 && !empty($r['json']['ok']);
         return self::out($ok, $ok ? 'Handshake riuscito' : WpAtsClient::describe($r), $steps);
+    }
+
+    /**
+     * v1.10.17 — Analisi di rete quando la connessione non si stabilisce: porte 443/80 per ogni IP risolto, IP privati
+     * (DNS interno), host alternativo con/senza «www», proxy del sistema (variabili d'ambiente, WinHTTP).
+     * @return array<int,array{0:string,1:string,2:string,3:string,4:string}>
+     */
+    public static function network(string $base, array $ips, WpAtsClient $c): array
+    {
+        $out = [];
+        $u = parse_url($base);
+        $host = (string)($u['host'] ?? '');
+        $port = (int)($u['port'] ?? (strtolower((string)($u['scheme'] ?? 'https')) === 'https' ? 443 : 80));
+        $tcp = static function (string $ip, int $p): array {
+            $t0 = microtime(true);
+            $fp = @fsockopen(str_contains($ip, ':') ? "[$ip]" : $ip, $p, $en, $es, 5);
+            $ms = (int)round((microtime(true) - $t0) * 1000);
+            if ($fp) { fclose($fp); return [true, "aperta ($ms ms)"]; }
+            return [false, ($en === 110 || $en === 10060 || $ms >= 4900 ? 'nessuna risposta' : 'rifiutata') . " ($ms ms)"];
+        };
+        $priv = static fn(string $ip) => !filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE);
+        $test = $c->resolveIp() !== '' ? [$c->resolveIp()] : $ips;
+        $open = false; $p80 = false; $det = [];
+        foreach (array_slice($test, 0, 3) as $ip) {
+            [$o, $t] = $tcp($ip, $port); [$o80, $t80] = $port !== 80 ? $tcp($ip, 80) : [false, ''];
+            $open = $open || $o; $p80 = $p80 || $o80;
+            $det[] = "$ip" . ($priv($ip) ? ' (privato)' : '') . ": $port $t" . ($t80 !== '' ? " · 80 $t80" : '');
+        }
+        $fix = $open ? 'la porta risponde a livello TCP: verificare proxy/ispezione TLS o aumentare il timeout'
+             : ($p80 ? "la porta 80 risponde ma la $port no: HTTPS non pubblicato su questo indirizzo o filtrato dal firewall"
+                     : 'nessuna porta risponde da questo server: firewall in uscita o proxy obbligatorio; se il sito è ospitato nella rete aziendale (NAT hairpin) impostare «IP forzato» con l\'IP interno del server web');
+        $out[] = [$open ? 'warn' : 'ko', '3b Rete', 'TCP ' . ($open ? 'aperta' : 'chiusa'), implode(' · ', $det) . ($c->resolveIp() !== '' ? ' — IP forzato' : ''), $fix];
+
+        // host alternativo con/senza www: spesso solo uno dei due è pubblicato
+        $alt = str_starts_with($host, 'www.') ? substr($host, 4) : 'www.' . $host;
+        if (!filter_var($host, FILTER_VALIDATE_IP)) {
+            $aips = gethostbynamel($alt) ?: [];
+            if ($aips) {
+                [$ao, $at] = $tcp($aips[0], $port);
+                $out[] = [$ao ? 'warn' : 'ko', '3c Host alternativo', $alt, $alt . ' → ' . implode(', ', array_slice($aips, 0, 3)) . " · $port $at",
+                          $ao ? 'questo host risponde: verificare se il WordPress con il plugin è su ' . $alt . ' (URL API indicato nel plugin, Impostazioni › Connessione)' : ''];
+            }
+        }
+
+        // proxy del sistema: PHP/cURL NON usa le impostazioni proxy di Windows/browser
+        $px = [];
+        foreach (['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'ALL_PROXY'] as $k) if (($v = getenv($k)) !== false && $v !== '') $px[] = "$k=$v";
+        if (PHP_OS_FAMILY === 'Windows' && function_exists('shell_exec')) {
+            $w = (string)@shell_exec('netsh winhttp show proxy 2>NUL');
+            if (preg_match('/(?:Server proxy|Proxy Server\(s\))\s*:\s*(\S+)/i', $w, $m)) $px[] = 'WinHTTP ' . $m[1];
+        }
+        $out[] = [$px && $c->proxy() === '' ? 'warn' : 'ok', '3d Proxy', $c->proxy() !== '' ? 'impostato' : ($px ? 'di sistema' : 'nessuno'),
+                  ($c->proxy() !== '' ? 'PortalManager usa ' . $c->proxy() : 'PortalManager non usa proxy') . ($px ? ' · sistema: ' . implode(', ', $px) : ''),
+                  $px && $c->proxy() === '' ? 'il server esce tramite proxy: indicarlo in Impostazioni › Rete › Proxy in uscita (PHP non usa il proxy di Windows/browser)' : ''];
+        return $out;
     }
 
     private static function drift(string $date): ?int

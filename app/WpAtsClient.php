@@ -25,14 +25,15 @@ final class WpAtsClient
         private bool $verifyTls,
         private int $timeout,
         private string $caFile,
-        private string $proxy
+        private string $proxy,
+        private string $resolveIp = ''   // v1.10.17 — IP forzato per il nome host (NAT hairpin / DNS interno)
     ) {}
 
     /** Valori wpats.* da app_settings. */
     public static function settings(PDO $pdo): array
     {
         $d = ['wpats.enabled' => '0', 'wpats.base_url' => '', 'wpats.client_id' => 'portalmanager', 'wpats.verify_tls' => '1',
-              'wpats.timeout' => '20', 'wpats.ca_file' => '', 'wpats.proxy' => '', 'wpats.push_on_change' => '1', 'wpats.pull_batch' => '20'];
+              'wpats.timeout' => '20', 'wpats.ca_file' => '', 'wpats.proxy' => '', 'wpats.push_on_change' => '1', 'wpats.pull_batch' => '20', 'wpats.resolve_ip' => ''];
         try {
             foreach ($pdo->query("SELECT setting_key, setting_value FROM app_settings WHERE setting_key LIKE 'wpats.%'")->fetchAll(PDO::FETCH_KEY_PAIR) as $k => $v)
                 $d[$k] = (string)$v;
@@ -54,7 +55,7 @@ final class WpAtsClient
         $sec = self::secret();
         if ($base === null || $sec === '' || trim($s['wpats.client_id']) === '') return null;
         return new self($base, trim($s['wpats.client_id']), $sec, $s['wpats.verify_tls'] !== '0',
-            $timeout ?? max(5, min(120, (int)$s['wpats.timeout'])), trim($s['wpats.ca_file']), trim($s['wpats.proxy']));
+            $timeout ?? max(5, min(120, (int)$s['wpats.timeout'])), trim($s['wpats.ca_file']), trim($s['wpats.proxy']), trim($s['wpats.resolve_ip']));
     }
 
     /** Accetta l'URL del sito, di /wp-json o dell'API; restituisce la base dell'API pm-ats/v1 o null. */
@@ -136,6 +137,8 @@ final class WpAtsClient
     public function clientId(): string { return $this->clientId; }
     public function verifiesTls(): bool { return $this->verifyTls; }
     public function caFile(): string { return $this->caFile; }
+    public function resolveIp(): string { return $this->resolveIp; }
+    public function proxy(): string { return $this->proxy; }
 
     private function exec(string $method, string $url, array $hdr, ?string $body): array
     {
@@ -159,6 +162,13 @@ final class WpAtsClient
         if ($this->verifyTls && $ca === '' && PHP_OS_FAMILY === 'Windows' && defined('CURLOPT_SSL_OPTIONS') && defined('CURLSSLOPT_NATIVE_CA'))
             $opt[CURLOPT_SSL_OPTIONS] = CURLSSLOPT_NATIVE_CA;
         if ($this->proxy !== '') $opt[CURLOPT_PROXY] = $this->proxy;
+        // v1.10.17 — IP forzato: si collega all'IP indicato mantenendo nome host, SNI e verifica del certificato
+        if ($this->resolveIp !== '' && filter_var($this->resolveIp, FILTER_VALIDATE_IP)) {
+            $p = parse_url($url);
+            $port = (int)($p['port'] ?? (strtolower($p['scheme'] ?? 'https') === 'https' ? 443 : 80));
+            $ip = str_contains($this->resolveIp, ':') ? '[' . $this->resolveIp . ']' : $this->resolveIp;
+            $opt[CURLOPT_RESOLVE] = [($p['host'] ?? '') . ':' . $port . ':' . $ip];
+        }
         curl_setopt_array($ch, $opt);
         $t0 = microtime(true);
         $raw = curl_exec($ch);
@@ -207,6 +217,12 @@ final class WpAtsClient
         if (!empty($r['error'])) {
             $n = (int)($r['errno'] ?? 0);
             [$c, $f] = self::CURL[$n] ?? ['errore di rete', ''];
+            if (($n === 60 || $n === 51) && preg_match('/subject name|does not match/i', (string)$r['error']))
+                [$c, $f] = ['il certificato del sito non corrisponde al nome host dell\'URL', 'usare nell\'URL il nome presente nel certificato (es. con/senza www), non l\'indirizzo IP'];
+            // v1.10.17 — cURL 28 in fase di connessione: la porta non risponde (non è lentezza del sito)
+            if ($n === 28 && preg_match('/Failed to connect|Connection timed out|connect/i', (string)$r['error']))
+                [$c, $f] = ['connessione TCP non stabilita: nessuna risposta dalla porta del sito',
+                            'il pacchetto non arriva al sito (non è un problema di timeout): firewall in uscita, proxy aziendale obbligatorio, NAT hairpin se il sito è nella stessa rete, sito non raggiungibile su questa porta — vedere il passo «3b Rete»'];
             return ['code' => 'cURL ' . $n, 'origin' => in_array($n, [35, 51, 58, 60, 77], true) ? 'tls' : 'rete', 'cause' => $c . ': ' . $r['error'], 'fix' => $f, 'data' => []];
         }
         if ($st >= 300 && $st < 400) {

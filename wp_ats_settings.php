@@ -21,7 +21,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     Csrf::verify();
     $act = (string)($_POST['action'] ?? '');
     if ($act === 'save') {
-        $in = ['base_url' => $_POST['base_url'] ?? '', 'client_id' => $_POST['client_id'] ?? '', 'ca_file' => $_POST['ca_file'] ?? '', 'proxy' => $_POST['proxy'] ?? '',
+        $in = ['base_url' => $_POST['base_url'] ?? '', 'client_id' => $_POST['client_id'] ?? '', 'ca_file' => $_POST['ca_file'] ?? '', 'proxy' => $_POST['proxy'] ?? '', 'resolve_ip' => $_POST['resolve_ip'] ?? '',
                'timeout' => $_POST['timeout'] ?? 20, 'pull_batch' => $_POST['pull_batch'] ?? 20,
                'verify_tls' => $_POST['verify_tls'] ?? '', 'push_on_change' => $_POST['push_on_change'] ?? '', 'enabled' => $_POST['enabled'] ?? ''];
         $secret = trim((string)($_POST['secret'] ?? ''));
@@ -115,6 +115,8 @@ require_once('header.php');
         <div class="form-group"><label>File CA (opzionale)</label><input type="text" name="ca_file" value="<?= $h($cfg['wpats.ca_file']) ?>" placeholder="P:\xampp\apache\bin\curl-ca-bundle.crt">
           <small style="color:var(--muted)">Solo se PHP non trova i certificati («SSL certificate problem»).</small></div>
         <div class="form-group"><label>Proxy in uscita (opzionale)</label><input type="text" name="proxy" value="<?= $h($cfg['wpats.proxy']) ?>" placeholder="proxy.azienda.local:8080"></div>
+        <div class="form-group"><label>IP forzato (opzionale)</label><input type="text" name="resolve_ip" value="<?= $h($cfg['wpats.resolve_ip']) ?>" placeholder="es. 10.0.0.25">
+          <small style="color:var(--muted)">Collega il nome host a questo IP (stesso certificato): per sito nella rete aziendale (NAT hairpin) o DNS interno.</small></div>
         <div class="form-group"><label>Timeout (s)</label><input type="number" name="timeout" min="5" max="120" value="<?= (int)$cfg['wpats.timeout'] ?>"></div>
       </div>
       <label style="font-size:13px;display:block"><input type="checkbox" name="verify_tls" value="1" <?= $cfg['wpats.verify_tls'] !== '0' ? 'checked' : '' ?>> Verifica certificato TLS (disattivare solo per prove)</label>
