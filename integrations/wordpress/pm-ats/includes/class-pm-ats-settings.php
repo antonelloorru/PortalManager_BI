@@ -178,6 +178,16 @@ final class PM_ATS_Settings
         return get_option(self::SECRET_OPTION) ? 'database' : 'none';
     }
 
+    /**
+     * v1.1.1 — impronta del segreto (12 hex di SHA-256 con prefisso fisso): identica a quella mostrata da PortalManager
+     * (WpAtsClient::fingerprint), per verificare che i due lati usino lo stesso segreto senza mostrarlo.
+     */
+    public static function fingerprint(?string $secret = null): string
+    {
+        $s = $secret ?? self::secret();
+        return $s ? substr(hash('sha256', 'pm-ats-fp|' . $s), 0, 12) : '';
+    }
+
     public static function secret(): ?string
     {
         if (defined('PM_ATS_SECRET') && (string)PM_ATS_SECRET !== '') return (string)PM_ATS_SECRET;

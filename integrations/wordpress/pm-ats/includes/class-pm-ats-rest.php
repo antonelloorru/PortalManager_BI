@@ -3,7 +3,8 @@
  * API REST di interscambio con PortalManager (namespace pm-ats/v1). Tutte firmate HMAC (PM_ATS_Auth).
  *
  *   GET  /sync/status                     stato e versioni: plugin, api, db, schema impostazioni, onboarding (test di connessione)
- * Ogni risposta riporta l'intestazione X-PM-ATS-Version: <plugin>; api=<n> (v1.1.0).
+ * Ogni risposta riporta l'intestazione X-PM-ATS-Version: <plugin>; api=<n> (v1.1.0), anche gli errori (v1.1.1);
+ * sugli errori X-PM-ATS-Error: <codice> e nel corpo data.reason + dati di diagnosi (IP visto, ora del sito, rotta).
  *   POST /sync/jobs                       {mode:"full"|"delta", items:[…], closed:[id…]} → posizioni
  *   GET  /sync/applications?limit=&after= candidature da importare (senza CV)
  *   GET  /sync/applications/{uuid}/cv     CV (binario, Content-Type del file, X-PM-SHA256)
@@ -18,6 +19,24 @@ final class PM_ATS_Rest
     public static function init(): void
     {
         add_action('rest_api_init', [self::class, 'routes']);
+        add_filter('rest_post_dispatch', [self::class, 'stamp'], 10, 3);
+    }
+
+    /**
+     * v1.1.1 — X-PM-ATS-Version anche sugli errori (autenticazione compresa) e X-PM-ATS-Error con il codice:
+     * PortalManager distingue così un 401/403 del plugin da uno di firewall, CDN o plugin di sicurezza.
+     */
+    public static function stamp($res, $server, $req)
+    {
+        if (!($res instanceof WP_HTTP_Response) || !($req instanceof WP_REST_Request) || !str_starts_with((string)$req->get_route(), '/' . self::NS)) return $res;
+        $res->header('X-PM-ATS-Version', PM_ATS_VERSION . '; api=' . PM_ATS_API_VERSION);
+        $res->header('Cache-Control', 'no-store');
+        if ($res->get_status() >= 400) {
+            $d = $res->get_data();
+            $code = is_array($d) ? (string)($d['data']['reason'] ?? $d['code'] ?? '') : '';
+            if ($code !== '') $res->header('X-PM-ATS-Error', preg_replace('/[^a-z0-9_]/', '', strtolower($code)));
+        }
+        return $res;
     }
 
     public static function routes(): void

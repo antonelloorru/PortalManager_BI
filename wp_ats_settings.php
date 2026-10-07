@@ -1,6 +1,6 @@
 <?php
 /**
- * PortalManager — wp_ats_settings.php (v1.10.14)
+ * PortalManager — wp_ats_settings.php (v1.10.14; v1.10.16 diagnostica dell'handshake con codice d'errore effettivo)
  * Recruiting › Sito web › Impostazioni della connessione con il plugin WordPress pm-ats (solo Super Admin).
  *   Connessione       URL API, client ID, segreto (solo .env.php: PM_WPATS_SECRET), compilazione da codice PMATS1.
  *   Rete              verifica TLS, file CA, proxy, timeout
@@ -10,6 +10,7 @@
  */
 require_once('access_control.php');
 require_once __DIR__ . '/app/WpAtsConfig.php';
+require_once __DIR__ . '/app/WpAtsDiag.php';
 
 $u_id = (int)$_SESSION['user_id'];
 if ((int)($_SESSION['role_id'] ?? 99) !== 1) { $_SESSION['flash_msg'] = "<div class='alert alert-warning'>Le impostazioni del sito web sono riservate al Super Admin.</div>"; redirect('wp_ats_sync'); }
@@ -43,7 +44,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $r = WpAtsConfig::test($pdo, $u_id);
         write_log('Recruiting', $r['ok'] ? 'success' : 'warning', 'Impostazioni sito WordPress: test — ' . mb_substr($r['message'], 0, 300), $u_id);
         $lvl = !$r['ok'] ? 'danger' : (($r['compat']['level'] ?? 'ok') === 'ok' ? 'success' : 'warning');
-        $flash($lvl, $r['message'] . (isset($r['compat']) ? ' — ' . $r['compat']['msg'] : ''));
+        $flash($lvl, $r['message'] . (isset($r['compat']) ? ' — ' . $r['compat']['msg'] : '') . (isset($r['diag']) ? ' — diagnostica eseguita, vedere il dettaglio sotto.' : ''));
+        redirect_self();
+    }
+    if ($act === 'diag') {   // v1.10.16
+        @set_time_limit(120);
+        $d = WpAtsConfig::diag($pdo, $u_id);
+        write_log('Recruiting', $d['ok'] ? 'success' : 'warning', 'Sito WordPress: diagnostica — ' . mb_substr($d['summary'], 0, 300), $u_id);
+        $flash($d['ok'] ? 'success' : 'danger', 'Diagnostica: ' . $d['summary']);
         redirect_self();
     }
     if ($act === 'restart') {
@@ -57,6 +65,7 @@ $cfg = WpAtsClient::settings($pdo);
 $secretSet = WpAtsClient::secret() !== '';
 $info = WpAtsConfig::remoteInfo($pdo);
 $done = WpAtsConfig::setupDone($pdo);
+$diag = WpAtsConfig::lastDiag($pdo);
 $pill = fn(string $t, string $c) => "<span style='display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:700;background:{$c}1a;color:$c'>" . $t . "</span>";
 $cc = ['ok' => '#16a34a', 'warn' => '#d97706', 'ko' => '#dc2626'];
 $php = PHP_OS_FAMILY === 'Windows' ? dirname(PHP_BINARY) . '\\php.exe' : PHP_BINARY;
@@ -73,6 +82,8 @@ require_once('header.php');
     <div style="display:flex;gap:6px;flex-wrap:wrap">
       <form method="POST" style="margin:0"><?= Csrf::field() ?><input type="hidden" name="action" value="test">
         <button class="btn btn-sm" <?= WpAtsClient::fromSettings($pdo) ? '' : 'disabled title="URL o segreto mancante"' ?>><i class="fa-solid fa-plug-circle-check"></i> Test connessione</button></form>
+      <form method="POST" style="margin:0"><?= Csrf::field() ?><input type="hidden" name="action" value="diag">
+        <button class="btn btn-sm" <?= WpAtsClient::settings($pdo)['wpats.base_url'] !== '' ? '' : 'disabled title="URL mancante"' ?>><i class="fa-solid fa-stethoscope"></i> Diagnostica</button></form>
       <form method="POST" style="margin:0" onsubmit="return confirm('Riavviare la configurazione guidata? Le impostazioni attuali restano salvate.')"><?= Csrf::field() ?><input type="hidden" name="action" value="restart">
         <button class="btn btn-sm"><i class="fa-solid fa-wand-magic-sparkles"></i> <?= $done ? 'Riavvia' : 'Avvia' ?> configurazione guidata</button></form>
     </div>
@@ -95,7 +106,7 @@ require_once('header.php');
         <div class="form-group"><label>Client ID</label><input type="text" name="client_id" value="<?= $h($cfg['wpats.client_id']) ?>" maxlength="64"></div>
         <div class="form-group"><label>Segreto condiviso <?= $secretSet ? $pill('IMPOSTATO', '#16a34a') : $pill('MANCANTE', '#dc2626') ?></label>
           <input type="password" name="secret" value="" placeholder="<?= $secretSet ? '•••••• (vuoto = invariato)' : 'generato nel plugin WordPress' ?>" autocomplete="new-password">
-          <small style="color:var(--muted)">Salvato solo in <code>.env.php</code> (PM_WPATS_SECRET), mai nel database.</small>
+          <small style="color:var(--muted)">Salvato solo in <code>.env.php</code> (PM_WPATS_SECRET), mai nel database.<?php if ($secretSet): ?> Impronta <code><?= $h(WpAtsClient::fingerprint(WpAtsClient::secret())) ?></code>: deve coincidere con quella del plugin (Impostazioni › Connessione).<?php endif; ?></small>
           <?php if ($secretSet): ?><label style="font-size:12px;display:block;margin-top:4px;font-weight:400"><input type="checkbox" name="secret_clear" value="1" style="width:auto"> rimuovi segreto</label><?php endif; ?></div>
       </div>
 
@@ -123,7 +134,7 @@ require_once('header.php');
         <h3 style="font-size:14px;margin:0 0 8px"><i class="fa-solid fa-code-branch"></i> Versioni e compatibilità</h3>
         <table class="data-table" style="width:100%;font-size:12px"><tbody>
           <tr><td>PortalManager</td><td><b><?= $h(defined('PM_VERSION') ? PM_VERSION : '?') ?></b></td></tr>
-          <tr><td>Plugin richiesto</td><td>≥ <?= $h(WpAtsConfig::PLUGIN_MIN) ?> (minimo <?= $h(WpAtsConfig::PLUGIN_BASE) ?>)</td></tr>
+          <tr><td>Plugin richiesto</td><td>≥ <?= $h(WpAtsConfig::PLUGIN_MIN) ?> (minimo <?= $h(WpAtsConfig::PLUGIN_BASE) ?>, consigliato <?= $h(WpAtsConfig::PLUGIN_RECOMMENDED) ?>)</td></tr>
           <tr><td>Protocollo API</td><td>v<?= $h(WpAtsConfig::API_VERSION) ?> (pm-ats/v1)</td></tr>
           <tr><td>Plugin sul sito</td><td><?= $info ? '<b>' . $h($info['plugin'] ?? '?') . '</b> · API v' . $h($info['api'] ?? '1') : '—' ?></td></tr>
           <tr><td>WordPress / PHP</td><td><?= $info ? $h(($info['wordpress'] ?? '') . ' / ' . ($info['php'] ?? '')) : '—' ?></td></tr>
@@ -140,6 +151,13 @@ require_once('header.php');
         <p style="font-size:11px;color:var(--muted);margin:6px 0 0">Uscita 0 = ok, 1 = errori, 2 = configurazione.</p>
       </div>
     </div>
+  </div>
+
+  <div class="card" id="wpats-diag" style="padding:14px 16px;margin-top:14px">
+    <h3 style="font-size:14px;margin:0 0 6px"><i class="fa-solid fa-stethoscope"></i> Diagnostica dell'handshake</h3>
+    <p style="font-size:12px;color:var(--muted);margin:0 0 8px">Configurazione → DNS → trasporto/TLS → plugin → autenticazione firmata → orologio, con il codice effettivo restituito
+      (HTTP, codice del plugin, errore cURL) e il rimedio. Eseguita automaticamente quando il test fallisce.</p>
+    <?= $diag ? WpAtsDiag::html($diag) : '<p style="font-size:12px;color:var(--muted)">Nessuna diagnostica eseguita.</p>' ?>
   </div>
 </div>
 <?php require_once('footer.php'); ?>

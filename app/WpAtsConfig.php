@@ -20,6 +20,8 @@ final class WpAtsConfig
     public const PLUGIN_MIN = '1.1.0';
     /** Plugin minimo funzionante (sincronizzazione base). */
     public const PLUGIN_BASE = '1.0.0';
+    /** v1.10.16 — plugin consigliato: la 1.1.0 conta come fallimenti anche le chiamate riuscite (blocco 429 dopo 20 chiamate). */
+    public const PLUGIN_RECOMMENDED = '1.1.1';
     /** Protocollo REST supportato (pm-ats/v1). */
     public const API_VERSION = '1';
 
@@ -109,16 +111,49 @@ final class WpAtsConfig
         if ($pv === '' || version_compare($pv, self::PLUGIN_BASE, '<')) return ['level' => 'ko', 'msg' => 'Versione del plugin non riconosciuta'];
         if (version_compare($pv, self::PLUGIN_MIN, '<'))
             return ['level' => 'warn', 'msg' => "Plugin $pv: sincronizzazione supportata; aggiornare a ≥ " . self::PLUGIN_MIN . ' per configurazione guidata e controllo versioni'];
+        if (version_compare($pv, self::PLUGIN_RECOMMENDED, '<'))
+            return ['level' => 'warn', 'msg' => "Plugin $pv: aggiornare a " . self::PLUGIN_RECOMMENDED . ' (corregge il blocco 429 «too_many_failures» dopo 20 chiamate e aggiunge la diagnostica)'];
         $msg = "Plugin $pv compatibile (API v$api)";
         if (($status['onboarding'] ?? 'done') !== 'done') return ['level' => 'warn', 'msg' => $msg . ' — configurazione guidata del sito non completata'];
         return ['level' => 'ok', 'msg' => $msg];
     }
 
-    /** Esegue il test, salva le informazioni del sito (wpats.remote_info) e la compatibilità. */
+    /**
+     * v1.10.16 — Diagnostica passo per passo dell'handshake (WpAtsDiag), salvata in wp_ats_diag (ultime 100, nessun segreto:
+     * solo l'impronta) e registrata nel log della sincronizzazione.
+     */
+    public static function diag(PDO $pdo, ?int $uid): array
+    {
+        require_once __DIR__ . '/WpAtsDiag.php';
+        $d = WpAtsDiag::run($pdo);
+        try {   // storico in wp_ats_diag (v1.10.16): nessun segreto, solo l'impronta
+            $pdo->prepare("INSERT INTO wp_ats_diag (ok, summary, steps_json, user_id) VALUES (?, ?, ?, ?)")
+                ->execute([$d['ok'] ? 1 : 0, mb_substr($d['summary'], 0, 1000), json_encode($d['steps'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), $uid]);
+            $pdo->exec("DELETE FROM wp_ats_diag WHERE id < (SELECT m FROM (SELECT MAX(id) - 100 AS m FROM wp_ats_diag) x)");
+        } catch (Throwable $e) {}
+        try {
+            $pdo->prepare("INSERT INTO wp_ats_sync_log (operation, trigger_type, status, message, user_id, started_at, finished_at) VALUES ('test', 'manuale', ?, ?, ?, NOW(), NOW())")
+                ->execute([$d['ok'] ? 'ok' : 'error', mb_substr('Diagnostica: ' . $d['summary'], 0, 1000), $uid]);
+        } catch (Throwable $e) {}
+        return $d;
+    }
+
+    public static function lastDiag(PDO $pdo): array
+    {
+        try {
+            $r = $pdo->query("SELECT ok, summary, steps_json, created_at FROM wp_ats_diag ORDER BY id DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+        } catch (Throwable $e) { return []; }
+        if (!$r) return [];
+        $st = json_decode((string)$r['steps_json'], true);
+        return ['ok' => (bool)$r['ok'], 'summary' => (string)$r['summary'], 'steps' => is_array($st) ? $st : [], 'at' => (string)$r['created_at']];
+    }
+
+    /** Esegue il test, salva le informazioni del sito (wpats.remote_info) e la compatibilità; se fallisce esegue la diagnostica. */
     public static function test(PDO $pdo, ?int $uid): array
     {
         require_once __DIR__ . '/WpAtsSync.php';
         $r = (new WpAtsSync($pdo))->test($uid);
+        if (!$r['ok'] && WpAtsClient::fromSettings($pdo)) $r['diag'] = self::diag($pdo, $uid);   // v1.10.16
         if ($r['ok'] && is_array($r['data'] ?? null)) {
             $d = $r['data']; $c = self::compat($d);
             self::set($pdo, ['wpats.remote_info' => json_encode(['plugin' => $d['plugin'] ?? '', 'api' => $d['api'] ?? '1', 'wordpress' => $d['wordpress'] ?? '', 'php' => $d['php'] ?? '',

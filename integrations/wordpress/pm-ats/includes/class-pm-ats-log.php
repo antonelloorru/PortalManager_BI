@@ -17,6 +17,18 @@ final class PM_ATS_Log
         ], ['%s', '%s', '%d', '%s', '%s']);
     }
 
+    /** v1.1.1 — ultimo rifiuto di autenticazione dopo l'ultimo contatto riuscito (null se nessuno). */
+    public static function lastAuthFailure(): ?array
+    {
+        global $wpdb;
+        $r = $wpdb->get_row('SELECT created_at, http_status, detail, ip FROM ' . self::table() . " WHERE action = 'auth' ORDER BY id DESC LIMIT 1", ARRAY_A);
+        if (!$r) return null;
+        $at = (int)strtotime($r['created_at'] . ' UTC');
+        $ok = get_option('pm_ats_last_contact');
+        if (is_array($ok) && (int)($ok['at'] ?? 0) > $at) return null;
+        return ['at' => $at, 'status' => (int)$r['http_status'], 'detail' => $r['detail'] . ' (IP ' . $r['ip'] . ')'];
+    }
+
     public static function recent(int $limit = 100): array
     {
         global $wpdb;

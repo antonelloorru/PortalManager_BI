@@ -1,6 +1,6 @@
 <?php
 /**
- * PortalManager — wp_ats_setup.php (v1.10.14)
+ * PortalManager — wp_ats_setup.php (v1.10.14; v1.10.16 diagnostica al passo 3)
  * Recruiting › Sito web › Configurazione guidata della connessione con il plugin WordPress pm-ats (solo Super Admin).
  *   1 Prerequisiti  curl, HMAC, .env.php scrivibile, tabelle, uscita HTTPS, versioni
  *   2 Connessione   codice di connessione del plugin (PMATS1.…) oppure URL, client ID e segreto a mano
@@ -13,6 +13,7 @@
 require_once('access_control.php');
 require_once __DIR__ . '/app/WpAtsConfig.php';
 require_once __DIR__ . '/app/WpAtsSync.php';
+require_once __DIR__ . '/app/WpAtsDiag.php';
 
 $u_id = (int)$_SESSION['user_id'];
 if ((int)($_SESSION['role_id'] ?? 99) !== 1) { $_SESSION['flash_msg'] = "<div class='alert alert-warning'>La configurazione guidata è riservata al Super Admin.</div>"; redirect('wp_ats_sync'); }
@@ -51,11 +52,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         write_log('Recruiting', 'info', "Configurazione guidata sito WordPress: connessione salvata ($src)", $u_id);
         $go(3);
     }
+    if ($s === 3 && ($_POST['do'] ?? '') === 'diag') {   // v1.10.16
+        @set_time_limit(120);
+        $d = WpAtsConfig::diag($pdo, $u_id);
+        $go(3, $d['ok'] ? 'success' : 'danger', 'Diagnostica: ' . $d['summary']);
+    }
     if ($s === 3) {
         @set_time_limit(120);
         $r = WpAtsConfig::test($pdo, $u_id);
         write_log('Recruiting', $r['ok'] ? 'success' : 'warning', 'Configurazione guidata: test connessione — ' . mb_substr($r['message'], 0, 300), $u_id);
-        if (!$r['ok']) $go(3, 'danger', $r['message'] . (isset($r['compat']) ? ' — ' . $r['compat']['msg'] : ''));
+        if (!$r['ok']) $go(3, 'danger', $r['message'] . (isset($r['compat']) ? ' — ' . $r['compat']['msg'] : '') . (isset($r['diag']) ? ' — dettaglio nella diagnostica sotto.' : ''));
         $go(4, ($r['compat']['level'] ?? 'ok') === 'ok' ? 'success' : 'warning', $r['message'] . ' — ' . ($r['compat']['msg'] ?? ''));
     }
     if ($s === 4) {
@@ -141,7 +147,11 @@ require_once('header.php');
           <tr><td>Ultima verifica</td><td><?= $h($info['checked_at'] ?? '') ?></td></tr>
         </tbody></table>
       <?php endif; ?>
-      <p style="font-size:12px;color:var(--muted)">Errori tipici: 401 firma/segreto o orologio non sincronizzato; 403 IP non consentito nel plugin; «SSL certificate problem» → file CA al passo 4.</p>
+      <?php $diag = WpAtsConfig::lastDiag($pdo); if ($diag && (!$diag['ok'] || ($_GET['diag'] ?? '') === '1')): ?>
+        <div style="margin-top:10px"><?= WpAtsDiag::html($diag) ?></div>
+      <?php endif; ?>
+      <p style="font-size:12px;color:var(--muted)">Se il test fallisce viene eseguita la diagnostica passo per passo con il codice d'errore effettivo (HTTP, codice del plugin, errore cURL) e il rimedio.
+        <button class="btn btn-sm" name="do" value="diag" style="margin-left:6px"><i class="fa-solid fa-stethoscope"></i> Solo diagnostica</button></p>
 
     <?php elseif ($step === 4): ?>
       <h3 style="font-size:15px;margin:0 0 8px">4. Opzioni</h3>

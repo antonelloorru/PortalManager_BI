@@ -3,7 +3,7 @@ Contributors: portalmanager
 Requires at least: 6.0
 Tested up to: 6.8
 Requires PHP: 8.0
-Stable tag: 1.1.0
+Stable tag: 1.1.1
 License: Proprietary
 
 Pubblica sul sito le posizioni aperte gestite in PortalManager e raccoglie le candidature con CV.
@@ -62,11 +62,20 @@ X-PM-Signature = hex(HMAC-SHA256(segreto, METODO\nROTTA\nTIMESTAMP\nNONCE\nsha25
 
 == Upgrade Notice ==
 
+= 1.1.1 =
+Corregge il blocco 429 dopo 20 chiamate riuscite (verifica HMAC eseguita due volte). Diagnostica della connessione: codice d'errore effettivo, IP visto dal sito, ora del sito, impronta del segreto.
+
 = 1.1.0 =
 Configurazione guidata, impostazioni a schede, codice di connessione per PortalManager, versioning formale.
 Le installazioni 1.0.x già configurate non devono ripetere la configurazione.
 
 == Changelog ==
+
+= 1.1.1 =
+* Fix: verifica HMAC eseguita due volte per richiesta (permission_callback richiamato da rest_send_allow_header) → falsi «replay» e blocco 429 dopo 20 chiamate; ora una sola verifica per richiesta — PortalManager v1.10.16.
+* Errori di autenticazione con codice e dati di diagnosi (IP visto, ora del sito, rotta firmata) e intestazione X-PM-ATS-Error.
+* X-PM-ATS-Version anche sugli errori: PortalManager distingue un rifiuto del plugin da uno di firewall/CDN.
+* Impronta del segreto e ultimo accesso rifiutato in Impostazioni › Connessione.
 
 = 1.1.0 =
 * Configurazione guidata all'attivazione (requisiti, connessione, pagina, aspetto, verifica) — PortalManager v1.10.14.

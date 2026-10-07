@@ -23,13 +23,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         @set_time_limit(300);
         $sync = new WpAtsSync($pdo);
         $r = match ($act) {
-            'test' => $sync->test($u_id),
+            'test' => WpAtsConfig::test($pdo, $u_id),   // v1.10.16 — in caso di errore esegue la diagnostica
             'push' => $sync->pushJobs($u_id),
             'pull' => $sync->pullApplications($u_id),
             'all'  => $sync->run($u_id, 'manuale'),
         };
         write_log('Recruiting', $r['ok'] ? 'success' : 'warning', 'Sito WordPress — ' . $act . ': ' . mb_substr($r['message'], 0, 400), $u_id);
-        $_SESSION['flash_msg'] = "<div class='alert alert-" . ($r['ok'] ? 'success' : 'warning') . "'>" . $h($r['message']) . "</div>";
+        $_SESSION['flash_msg'] = "<div class='alert alert-" . ($r['ok'] ? 'success' : 'warning') . "'>" . $h($r['message'])
+            . (!$r['ok'] && $isSA ? " — <a href='" . url_safe('wp_ats_settings') . "#wpats-diag'>diagnostica dell'handshake</a>" : '') . "</div>";
         redirect_self();
     }
 }

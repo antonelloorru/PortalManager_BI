@@ -311,6 +311,10 @@ final class PM_ATS_Admin
         <table class="form-table" role="presentation">
           <tr><th><?php esc_html_e('URL di base API', 'pm-ats'); ?></th><td><code><?php echo esc_html(rest_url(PM_ATS_Rest::NS)); ?></code><p class="description"><?php esc_html_e('Da inserire in PortalManager › Recruiting › Sito web › Impostazioni (o con il codice di connessione).', 'pm-ats'); ?></p></td></tr>
           <tr><th><?php esc_html_e('Ultimo contatto', 'pm-ats'); ?></th><td><?php echo $last ? esc_html(sprintf(__('%1$s fa da %2$s', 'pm-ats'), human_time_diff((int)$last['at']), $last['ip'])) : '—'; ?></td></tr>
+          <?php $fail = PM_ATS_Log::lastAuthFailure(); if ($fail): ?>
+          <tr><th><?php esc_html_e('Ultimo accesso rifiutato', 'pm-ats'); ?></th><td><?php echo esc_html(sprintf(__('%1$s fa — HTTP %2$d %3$s', 'pm-ats'), human_time_diff((int)$fail['at']), (int)$fail['status'], (string)$fail['detail'])); ?>
+            <p class="description"><?php esc_html_e('Dettaglio completo in Lavora con noi › Registro.', 'pm-ats'); ?></p></td></tr>
+          <?php endif; ?>
           <tr><th><?php esc_html_e('Segreto condiviso', 'pm-ats'); ?></th><td>
             <?php if ($sec !== ''): ?>
               <div class="pm-ats-code"><p><strong><?php esc_html_e('Copia ora: non sarà più mostrato.', 'pm-ats'); ?></strong></p>
@@ -318,7 +322,9 @@ final class PM_ATS_Admin
                 <textarea readonly rows="3" class="large-text code" onclick="this.select()"><?php echo esc_textarea($code); ?></textarea>
                 <p><?php esc_html_e('Solo segreto (configurazione manuale, PM_WPATS_SECRET):', 'pm-ats'); ?> <code class="pm-ats-secret"><?php echo esc_html($sec); ?></code></p></div>
             <?php endif; ?>
-            <p><?php echo esc_html(['wp-config' => __('Configurato in wp-config.php (PM_ATS_SECRET).', 'pm-ats'), 'database' => __('Configurato (cifrato nel database).', 'pm-ats'), 'none' => __('Non configurato.', 'pm-ats')][$src]); ?></p>
+            <p><?php echo esc_html(['wp-config' => __('Configurato in wp-config.php (PM_ATS_SECRET).', 'pm-ats'), 'database' => __('Configurato (cifrato nel database).', 'pm-ats'), 'none' => __('Non configurato.', 'pm-ats')][$src]); ?>
+              <?php if ($src !== 'none'): ?><br><?php esc_html_e('Impronta:', 'pm-ats'); ?> <code><?php echo esc_html(PM_ATS_Settings::fingerprint()); ?></code>
+              <span class="description"><?php esc_html_e('deve coincidere con quella in PortalManager › Sito web — Impostazioni (diagnostica)', 'pm-ats'); ?></span><?php endif; ?></p>
             <?php if ($src !== 'wp-config'): ?>
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="display:inline">
               <?php wp_nonce_field('pm_ats_rotate'); ?><input type="hidden" name="action" value="pm_ats_rotate">
