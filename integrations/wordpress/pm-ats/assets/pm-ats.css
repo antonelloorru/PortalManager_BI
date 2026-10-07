@@ -1,4 +1,4 @@
-/*! PortalManager ATS — pm-ats.css · @version 1.3.2 */
+/*! PortalManager ATS — pm-ats.css · @version 1.3.3 */
 /* PortalManager ATS — stile del frontend. Colori, raggio e font sono variabili (Impostazioni del plugin);
    testo e font ereditano dal tema se non impostati. Tutto è racchiuso in .pm-ats per non toccare il tema. */
 .pm-ats{--pm-ats-primary:#ee7e02;--pm-ats-on-primary:#fff;--pm-ats-text:inherit;--pm-ats-muted:#6b7280;--pm-ats-card:#fff;
@@ -119,3 +119,7 @@ body.pm-ats-no-sidebar #left-area,body.pm-ats-no-sidebar #primary,body.pm-ats-no
 body.pm-ats-no-sidebar #main-content .container:before{display:none!important}
 /* scheda posizione su Divi: niente autore/data/categorie del modello «articolo» */
 body.single-pm_job .et_post_meta_wrapper .post-meta,body.single-pm_job #left-area .post-meta{display:none!important}
+
+/* v1.3.3 — titolo della pagina del tema nascosto (Divi h1.entry-title.main_title, temi classici e a blocchi) */
+body.pm-ats-hide-title .entry-title.main_title,body.pm-ats-hide-title .et_post_meta_wrapper>h1.entry-title,body.pm-ats-hide-title article.page>.entry-header>.entry-title,body.pm-ats-hide-title .entry-header>h1.entry-title:empty,body.pm-ats-hide-title h1.wp-block-post-title,body.pm-ats-hide-title h1.entry-title:empty{display:none!important}
+body.pm-ats-hide-title article.page>.entry-header:not(:has(*)),body.pm-ats-hide-title article.page>.entry-header:has(>h1.entry-title:only-child:empty){display:none!important}

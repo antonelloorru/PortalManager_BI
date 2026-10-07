@@ -31,6 +31,8 @@ final class PM_ATS_Public
         add_filter('get_post_metadata', [self::class, 'diviLayout'], 10, 4);
         add_filter('is_active_sidebar', [self::class, 'noSidebar'], 10, 2);
         add_filter('body_class', [self::class, 'bodyClass'], 99);
+        // v1.3.3 — titolo della pagina del tema (es. Divi <h1 class="entry-title main_title">) visibile, nascosto o personalizzato
+        add_filter('the_title', [self::class, 'pageTitle'], 20, 2);
         add_action('wp_enqueue_scripts', [self::class, 'register']);
         add_action('admin_post_nopriv_pm_ats_apply', [self::class, 'handle']);
         add_action('admin_post_pm_ats_apply', [self::class, 'handle']);
@@ -158,18 +160,47 @@ final class PM_ATS_Public
     public static function isPluginPage(?int $postId = null): bool
     {
         if (!PM_ATS_Settings::get('hide_sidebar')) return false;
+        return self::matchPage($postId, true);
+    }
+
+    /** v1.3.3 — Pagina elenco / «Lavora con noi» (pagina impostata o con uno shortcode pm-ats), esclusa la scheda della posizione. */
+    public static function isListPage(?int $postId = null): bool
+    {
+        return self::matchPage($postId, false);
+    }
+
+    private static function matchPage(?int $postId, bool $withJobs): bool
+    {
         if ($postId === null) {
             if (is_admin() || !did_action('wp')) return false;
-            if (is_singular(PM_ATS_Jobs::CPT) || is_post_type_archive(PM_ATS_Jobs::CPT)) return true;
+            if (is_singular(PM_ATS_Jobs::CPT) || is_post_type_archive(PM_ATS_Jobs::CPT)) return $withJobs;
             if (!is_singular()) return false;
             $postId = (int)get_queried_object_id();
         }
         if ($postId <= 0) return false;
-        if (get_post_type($postId) === PM_ATS_Jobs::CPT) return true;
+        if (get_post_type($postId) === PM_ATS_Jobs::CPT) return $withJobs;
         if ($postId === (int)PM_ATS_Settings::get('list_page_id')) return true;
         static $sc = [];
         if (!isset($sc[$postId])) $sc[$postId] = (bool)preg_match('/\[pm_ats_(jobs|apply|lavora_con_noi)\b/', (string)get_post_field('post_content', $postId));
         return $sc[$postId];
+    }
+
+    /**
+     * v1.3.3 — Titolo della pagina stampato dal tema (Divi <h1 class="entry-title main_title">, temi classici e a blocchi)
+     * nelle pagine «Lavora con noi»: show = invariato · hide = non stampato · custom = testo delle impostazioni.
+     * Agisce solo sul titolo della pagina richiesta nel ciclo principale: menu, widget, <title> e SEO restano invariati.
+     */
+    public static function pageTitle($title, $id = 0)
+    {
+        $mode = (string)PM_ATS_Settings::get('page_title_mode');
+        if ($mode === 'show' || $mode === '' || is_admin() || is_feed() || wp_doing_ajax() || (defined('REST_REQUEST') && REST_REQUEST)) return $title;
+        $id = (int)$id;
+        if ($id <= 0 || !is_singular() || $id !== (int)get_queried_object_id() || !in_the_loop() || !is_main_query() || !self::isListPage($id)) return $title;
+        if ($mode === 'custom') {
+            $t = trim((string)PM_ATS_Settings::get('page_title_text'));
+            return $t === '' ? $title : esc_html($t);
+        }
+        return '';
     }
 
     /**
@@ -190,6 +221,9 @@ final class PM_ATS_Public
 
     public static function bodyClass(array $c): array
     {
+        $mode = (string)PM_ATS_Settings::get('page_title_mode');
+        if ($mode === 'hide' && self::isListPage()) $c[] = 'pm-ats-hide-title';
+        elseif ($mode === 'custom' && self::isListPage()) $c[] = 'pm-ats-custom-title';
         if (!self::isPluginPage()) return $c;
         $c = array_values(array_diff($c, ['et_right_sidebar', 'et_left_sidebar', 'has-sidebar', 'right-sidebar', 'left-sidebar', 'sidebar-right', 'sidebar-left']));
         $c[] = 'pm-ats-no-sidebar';

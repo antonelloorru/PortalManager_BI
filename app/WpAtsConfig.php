@@ -21,7 +21,7 @@ final class WpAtsConfig
     /** Plugin minimo funzionante (sincronizzazione base). */
     public const PLUGIN_BASE = '1.0.0';
     /** v1.10.16 — plugin consigliato: la 1.1.0 conta come fallimenti anche le chiamate riuscite (blocco 429 dopo 20 chiamate). */
-    public const PLUGIN_RECOMMENDED = '1.3.2';   // v1.10.21: pagine del plugin senza barra laterale del tema
+    public const PLUGIN_RECOMMENDED = '1.3.3';   // v1.10.22: titolo della pagina del tema opzionale/personalizzabile (v1.10.21: nessuna barra laterale)
     /** Protocollo REST supportato (pm-ats/v1). */
     public const API_VERSION = '1';
 

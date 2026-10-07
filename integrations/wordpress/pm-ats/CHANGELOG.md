@@ -5,12 +5,20 @@ Versioning semantico `MAJOR.MINOR.PATCH`. Allineati a ogni rilascio: header `Ver
 
 | Costante | Valore | Significato |
 |---|---|---|
-| PM_ATS_VERSION | 1.3.2 | versione del plugin |
+| PM_ATS_VERSION | 1.3.3 | versione del plugin |
 | PM_ATS_API_VERSION | 1 | protocollo REST `pm-ats/v1` (cambia solo con modifiche incompatibili) |
 | PM_ATS_DB_VERSION | 1 | schema tabelle `pm_ats_applications`, `pm_ats_log` |
-| PM_ATS_SETTINGS_VERSION | 5 | schema dell'opzione `pm_ats_settings` |
+| PM_ATS_SETTINGS_VERSION | 6 | schema dell'opzione `pm_ats_settings` |
 | PM_ATS_TEMPLATE_VERSION | 1.3.0 | template sovrascrivibili dal tema |
 | PM_ATS_MIN_PM | 1.10.20 | PortalManager minimo per tutte le funzioni |
+
+## 1.3.3 — 2026-10-07 (PortalManager v1.10.22)
+- **Titolo della pagina opzionale e personalizzabile**: nuova opzione «Titolo della pagina» in Impostazioni › Aspetto per il titolo stampato dal tema sopra il contenuto (Divi `<h1 class="entry-title main_title">`, temi classici `h1.entry-title`, temi a blocchi `core/post-title`).
+  - `page_title_mode`: `show` (predefinito, invariato) · `hide` · `custom`; `page_title_text` (max 150 caratteri, vuoto = titolo della pagina).
+  - Ambito: pagina elenco impostata e pagine con `[pm_ats_jobs]`, `[pm_ats_apply]`, `[pm_ats_lavora_con_noi]`. La scheda della posizione mantiene il titolo della posizione.
+  - Filtro `the_title` limitato al titolo della pagina richiesta nel ciclo principale: menu, widget, `<title>` del browser e SEO non cambiano.
+  - `hide`: titolo vuoto (i temi che usano `the_title($before,$after)` non stampano l'h1) + classe `pm-ats-hide-title` con regola CSS di riserva (Divi stampa l'h1 vuoto).
+- Schema impostazioni 6 (nuove chiavi integrate automaticamente con i valori predefiniti).
 
 ## 1.3.2 — 2026-10-07 (PortalManager v1.10.21)
 - **Nessuna colonna laterale del tema** nelle pagine del plugin: scheda della posizione, archivio, pagina elenco impostata e ogni pagina con `[pm_ats_jobs]`, `[pm_ats_apply]` o `[pm_ats_lavora_con_noi]`. Prima, su Divi, compariva a destra la barra con i widget «Articoli recenti».

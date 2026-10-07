@@ -278,6 +278,12 @@ final class PM_ATS_Admin
                 <option value="accordion" <?php selected($s['layout'], 'accordion'); ?>><?php esc_html_e('Lavora con noi: elenco posizioni e modulo a destra', 'pm-ats'); ?></option></select>
                 <input type="number" min="1" max="100" name="<?php echo $f('per_page'); ?>" value="<?php echo (int)$s['per_page']; ?>" class="small-text"> <?php esc_html_e('per pagina', 'pm-ats'); ?></td></tr>
               <tr><th><?php esc_html_e('Barra laterale del tema', 'pm-ats'); ?></th><td><?php $chk('hide_sidebar', __('Nascondi la colonna laterale del tema (widget, articoli recenti) nelle pagine delle posizioni e «Lavora con noi»', 'pm-ats')); ?></td></tr>
+              <tr><th><?php esc_html_e('Titolo della pagina', 'pm-ats'); ?></th><td><select name="<?php echo $f('page_title_mode'); ?>" id="pm-ats-ptm">
+                <option value="show" <?php selected($s['page_title_mode'], 'show'); ?>><?php esc_html_e('Mostra il titolo della pagina (tema)', 'pm-ats'); ?></option>
+                <option value="hide" <?php selected($s['page_title_mode'], 'hide'); ?>><?php esc_html_e('Nascondi il titolo', 'pm-ats'); ?></option>
+                <option value="custom" <?php selected($s['page_title_mode'], 'custom'); ?>><?php esc_html_e('Mostra un testo personalizzato', 'pm-ats'); ?></option></select>
+                <?php $txt('page_title_text', 'text', 'maxlength="150" placeholder="' . esc_attr__('es. Lavora con noi', 'pm-ats') . '"'); ?>
+                <p class="description"><?php esc_html_e('Titolo stampato dal tema sopra il contenuto (es. Divi «h1.entry-title.main_title») nelle pagine «Lavora con noi» e con gli shortcode del plugin. La scheda della posizione mantiene il titolo della posizione; titolo del browser e SEO non cambiano. Testo vuoto = titolo della pagina.', 'pm-ats'); ?></p></td></tr>
               <tr><th colspan="2"><h3 style="margin:8px 0 0"><?php esc_html_e('Layout «Lavora con noi»', 'pm-ats'); ?></h3></th></tr>
               <tr><th><?php esc_html_e('Elenco posizioni', 'pm-ats'); ?></th><td><select name="<?php echo $f('wt_list_mode'); ?>">
                 <option value="link" <?php selected($s['wt_list_mode'], 'link'); ?>><?php esc_html_e('Titolo cliccabile che apre la scheda della posizione', 'pm-ats'); ?></option>

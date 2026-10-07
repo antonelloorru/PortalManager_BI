@@ -37,7 +37,9 @@ final class PM_ATS_Settings
             'font_family'        => '',
             'layout'             => 'accordion',   // accordion = «Lavora con noi» (predefinito dalla 1.3.1) | grid | list
             'wt_list_mode'       => 'link',
-            'hide_sidebar'       => 1,             // v1.3.2: nessuna barra laterale del tema nelle pagine del plugin        // v1.3.1: link = elenco con titolo cliccabile → scheda | accordion = dettaglio a fisarmonica
+            'hide_sidebar'       => 1,             // v1.3.2: nessuna barra laterale del tema nelle pagine del plugin
+            'page_title_mode'    => 'show',        // v1.3.3: titolo della pagina del tema — show | hide | custom
+            'page_title_text'    => '',            // v1.3.3: testo del titolo se page_title_mode = custom
             // v1.3.0 — layout «accordion» (riferimento wetechs.it/lavora-con-noi)
             'color_title'        => '#234d85',     // titoli, voci della fisarmonica
             'color_accent'       => '#ec7f31',     // evidenza nel titolo, riquadro del modulo
@@ -84,7 +86,7 @@ final class PM_ATS_Settings
         'pagina'      => ['list_page_id', 'jobs_slug', 'auto_form', 'allow_spontaneous', 'phone_required', 'show_salary', 'privacy_url', 'privacy_version',
                           'cv_types', 'cv_max_mb', 'rate_per_day', 'min_fill_seconds', 'notify_email', 'confirm_candidate'],
         'aspetto'     => ['color_primary', 'color_primary_text', 'color_text', 'color_muted', 'color_card', 'color_border', 'radius', 'font_family', 'layout', 'per_page', 'custom_css',
-                          'color_title', 'color_accent', 'wt_list_mode', 'hide_sidebar', 'wt_hero', 'wt_hero_title', 'wt_hero_image', 'wt_title', 'wt_intro', 'wt_list_title', 'wt_form_title'],
+                          'color_title', 'color_accent', 'wt_list_mode', 'hide_sidebar', 'page_title_mode', 'page_title_text', 'wt_hero', 'wt_hero_title', 'wt_hero_image', 'wt_title', 'wt_intro', 'wt_list_title', 'wt_form_title'],
         'dati'        => ['company_name', 'company_logo', 'purge_after_ack', 'retention_synced', 'retention_pending', 'remove_on_uninstall'],
     ];
     public const CHECKBOXES = ['auto_form', 'allow_spontaneous', 'phone_required', 'show_salary', 'confirm_candidate', 'purge_after_ack', 'remove_on_uninstall', 'wt_hero', 'hide_sidebar'];
@@ -157,6 +159,8 @@ final class PM_ATS_Settings
         $o['layout']            = in_array($in['layout'] ?? '', ['grid', 'list', 'accordion'], true) ? $in['layout'] : 'accordion';
         $o['wt_list_mode']      = in_array($in['wt_list_mode'] ?? '', ['link', 'accordion'], true) ? $in['wt_list_mode'] : 'link';
         $o['hide_sidebar']      = array_key_exists('hide_sidebar', $in) ? (empty($in['hide_sidebar']) ? 0 : 1) : 1;
+        $o['page_title_mode']   = in_array($in['page_title_mode'] ?? '', ['show', 'hide', 'custom'], true) ? $in['page_title_mode'] : 'show';
+        $o['page_title_text']   = mb_substr(sanitize_text_field((string)($in['page_title_text'] ?? '')), 0, 150);
         foreach (['color_title', 'color_accent'] as $k) $o[$k] = (string)(sanitize_hex_color((string)($in[$k] ?? '')) ?? '') ?: $d[$k];
         $o['wt_hero']           = empty($in['wt_hero']) ? 0 : 1;
         $o['wt_hero_image']     = esc_url_raw((string)($in['wt_hero_image'] ?? ''));

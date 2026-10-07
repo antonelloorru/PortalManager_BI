@@ -3,7 +3,7 @@ Contributors: portalmanager
 Requires at least: 6.0
 Tested up to: 6.8
 Requires PHP: 8.0
-Stable tag: 1.3.2
+Stable tag: 1.3.3
 License: Proprietary
 
 Pubblica sul sito le posizioni aperte gestite in PortalManager e raccoglie le candidature con CV.
@@ -62,6 +62,9 @@ X-PM-Signature = hex(HMAC-SHA256(segreto, METODO\nROTTA\nTIMESTAMP\nNONCE\nsha25
 
 == Upgrade Notice ==
 
+= 1.3.3 =
+Il titolo della pagina «Lavora con noi» stampato dal tema (es. Divi) si può nascondere o sostituire con un testo personalizzato da Impostazioni › Aspetto.
+
 = 1.3.2 =
 Le pagine delle posizioni e «Lavora con noi» non mostrano più la barra laterale del tema (es. Divi «Articoli recenti»).
 
@@ -82,6 +85,9 @@ Configurazione guidata, impostazioni a schede, codice di connessione per PortalM
 Le installazioni 1.0.x già configurate non devono ripetere la configurazione.
 
 == Changelog ==
+
+= 1.3.3 =
+* Nuova opzione «Titolo della pagina» in Impostazioni › Aspetto: mostra (predefinito), nascondi o testo personalizzato per il titolo del tema (Divi h1.entry-title.main_title, temi classici e a blocchi) nelle pagine «Lavora con noi» e con gli shortcode del plugin. Titolo del browser, menu e SEO invariati; la scheda della posizione mantiene il proprio titolo.
 
 = 1.3.2 =
 * Nessuna barra laterale del tema nelle pagine del plugin (scheda posizione, elenco, pagine con shortcode): Divi in modalità «senza barra laterale» senza modificare il database, aree widget disattivate negli altri temi, regola CSS di riserva. Opzione in Impostazioni › Aspetto.
