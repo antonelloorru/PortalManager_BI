@@ -1,4 +1,4 @@
-/*! PortalManager ATS — pm-ats-wetechs.css · @version 1.3.1 */
+/*! PortalManager ATS — pm-ats-wetechs.css · @version 1.3.4 */
 /* Layout «Fisarmonica con modulo a lato» — replica della pagina di riferimento wetechs.it/lavora-con-noi (tema Divi):
    valori misurati sulla pagina (colori, font, dimensioni, raggi, spaziature). Classi proprie .pm-ats-wt-* (nessuna classe
    Divi, per non attivare gli script del tema). Colori: --pm-ats-title (#234d85) e --pm-ats-accent (#ec7f31) dalle
@@ -15,7 +15,16 @@
 .pm-ats-wt-hero{background-image:linear-gradient(1deg,#00457a 4%,rgba(255,255,255,0) 64%),var(--pm-ats-wt-hero-img,none);background-color:#fff;
   background-size:cover;background-position:center bottom 21%;padding:56px 0}
 .pm-ats-wt-hero .pm-ats-wt-row{padding:50px 0}
-.pm-ats-wt .pm-ats-wt-h1{font-family:var(--wt-head);font-weight:700;font-size:60px;line-height:1.3;color:#fff;margin:0;padding:0 0 10px}
+.pm-ats-wt .pm-ats-wt-h1{font-family:var(--wt-head);font-weight:700;font-size:60px;font-size:clamp(24px,5.2cqi,60px);line-height:1.3;color:#fff;margin:0;padding:0 0 10px}
+/* v1.3.4 — testata ridimensionata con la larghezza della finestra (contenitore): titolo e altezze fluidi (cqi), nessuna altezza fissa */
+.pm-ats-wt-hero.pm-ats-wt-hero-scale{position:relative;padding:0;background:#fff;line-height:0;overflow:hidden}
+.pm-ats-wt-hero-scale .pm-ats-wt-hero-img{display:block;width:100%!important;max-width:100%!important;height:auto!important;margin:0;border:0;border-radius:0;box-shadow:none}
+.pm-ats-wt-hero-scale .pm-ats-wt-hero-over{position:absolute;inset:0;display:flex;align-items:flex-end;line-height:1.3;
+  background:linear-gradient(1deg,#00457a 4%,rgba(255,255,255,0) 64%)}
+.pm-ats-wt-hero.pm-ats-wt-hero-scale .pm-ats-wt-hero-over .pm-ats-wt-row{padding:0 0 4cqi;padding:0 0 clamp(8px,4cqi,50px)}
+.pm-ats-wt-hero.pm-ats-wt-hero-cover{width:100%;height:clamp(150px,32.8cqi,560px);padding:0;display:flex;align-items:flex-end}
+.pm-ats-wt-hero.pm-ats-wt-hero-cover .pm-ats-wt-row,.pm-ats-wt-hero.pm-ats-wt-hero-noimg .pm-ats-wt-row{padding:clamp(12px,4cqi,50px) 0}
+.pm-ats-wt-hero.pm-ats-wt-hero-noimg{padding:clamp(20px,4.4cqi,56px) 0}
 /* corpo a due colonne (et_pb_section_1 / et_pb_row_1 / et_pb_column_1_2) */
 .pm-ats-wt-body{background:#fff;padding:56px 0}
 .pm-ats-wt-body .pm-ats-wt-row{padding:28px 0}
@@ -101,13 +110,11 @@ body .pm-ats-wt .pm-ats-form button.pm-ats-btn:hover,body .pm-ats-wt .pm-ats-for
   .pm-ats-wt .pm-ats-wt-cols{display:block!important}
   .pm-ats-wt .pm-ats-wt-col{width:100%;max-width:100%}
   .pm-ats-wt-col-form{margin-top:30px}
-  .pm-ats-wt .pm-ats-wt-h1{font-size:56px}
   .pm-ats-wt .pm-ats-wt-h2{font-size:28px;margin-bottom:16px}
   .pm-ats-wt-hero .pm-ats-wt-row{padding:30px 0}
 }
 @media (max-width:767px){
   .pm-ats-wt .pm-ats-wt-row{width:90%}
-  .pm-ats-wt .pm-ats-wt-h1{font-size:40px}
   .pm-ats-wt-intro{font-size:14px}
   .pm-ats-wt .pm-ats-grid{grid-template-columns:1fr}
 }

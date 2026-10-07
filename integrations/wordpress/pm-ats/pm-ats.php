@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       PortalManager ATS – Posizioni aperte & Candidature
  * Description:       Pubblica le posizioni aperte di PortalManager e raccoglie le candidature (CV) dal sito. La sincronizzazione è avviata da PortalManager: invio delle posizioni e prelievo delle candidature tramite API REST firmate HMAC.
- * Version:           1.3.3
+ * Version:           1.3.4
  * Requires at least: 6.0
  * Tested up to:      6.8
  * Requires PHP:      8.0
@@ -19,7 +19,7 @@
  *                       GET  /wp-json/pm-ats/v1/sync/status             (test di connessione)
  *   Nessuna chiamata parte da WordPress verso PortalManager.
  *
- * Versioning (semver MAJOR.MINOR.PATCH, v1.1.0; 1.1.1 fix doppia verifica HMAC + diagnostica; 1.2.0 stato per posizione + anteprima; 1.3.0 struttura vincolante + layout Lavora con noi; 1.3.1 elenco con titoli cliccabili + modulo a destra; 1.3.2 pagine senza barra laterale del tema; 1.3.3 titolo della pagina opzionale/personalizzabile):
+ * Versioning (semver MAJOR.MINOR.PATCH, v1.1.0; 1.1.1 fix doppia verifica HMAC + diagnostica; 1.2.0 stato per posizione + anteprima; 1.3.0 struttura vincolante + layout Lavora con noi; 1.3.1 elenco con titoli cliccabili + modulo a destra; 1.3.2 pagine senza barra laterale del tema; 1.3.3 titolo della pagina opzionale/personalizzabile; 1.3.4 testata adattiva con immagine dalla Libreria media + riferimenti di creazione):
  *   PM_ATS_VERSION           versione del plugin (header «Version», readme «Stable tag», asset ?ver=, template @version)
  *   PM_ATS_API_VERSION       versione del protocollo REST pm-ats/vN (cambia solo con modifiche incompatibili)
  *   PM_ATS_DB_VERSION        schema delle tabelle; PM_ATS_SETTINGS_VERSION schema delle impostazioni
@@ -32,11 +32,11 @@
  */
 defined('ABSPATH') || exit;
 
-define('PM_ATS_VERSION', '1.3.3');
+define('PM_ATS_VERSION', '1.3.4');
 define('PM_ATS_API_VERSION', '1');
 define('PM_ATS_DB_VERSION', '1');
-define('PM_ATS_SETTINGS_VERSION', '6');
-define('PM_ATS_TEMPLATE_VERSION', '1.3.0');
+define('PM_ATS_SETTINGS_VERSION', '7');
+define('PM_ATS_TEMPLATE_VERSION', '1.3.4');
 define('PM_ATS_MIN_PM', '1.10.20');
 define('PM_ATS_FILE', __FILE__);
 define('PM_ATS_DIR', plugin_dir_path(__FILE__));

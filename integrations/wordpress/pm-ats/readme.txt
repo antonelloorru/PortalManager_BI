@@ -3,7 +3,7 @@ Contributors: portalmanager
 Requires at least: 6.0
 Tested up to: 6.8
 Requires PHP: 8.0
-Stable tag: 1.3.3
+Stable tag: 1.3.4
 License: Proprietary
 
 Pubblica sul sito le posizioni aperte gestite in PortalManager e raccoglie le candidature con CV.
@@ -62,6 +62,9 @@ X-PM-Signature = hex(HMAC-SHA256(segreto, METODO\nROTTA\nTIMESTAMP\nNONCE\nsha25
 
 == Upgrade Notice ==
 
+= 1.3.4 =
+La testata «Lavora con noi» si ridimensiona con la larghezza della finestra e l'immagine si sceglie o carica dalla Libreria media.
+
 = 1.3.3 =
 Il titolo della pagina «Lavora con noi» stampato dal tema (es. Divi) si può nascondere o sostituire con un testo personalizzato da Impostazioni › Aspetto.
 
@@ -85,6 +88,11 @@ Configurazione guidata, impostazioni a schede, codice di connessione per PortalM
 Le installazioni 1.0.x già configurate non devono ripetere la configurazione.
 
 == Changelog ==
+
+= 1.3.4 =
+* Testata «Lavora con noi» adattiva: immagine intera a larghezza 100% e altezza proporzionale (predefinito) o fascia proporzionale ritagliata; titolo con corpo fluido; srcset dalla Libreria media.
+* Impostazioni › Aspetto: pulsante «Scegli dalla Libreria media» (caricamento o scelta), anteprima e rimozione dell'immagine di testata.
+* Riferimenti di creazione in fondo alle impostazioni e nel piè di pagina delle schermate del plugin.
 
 = 1.3.3 =
 * Nuova opzione «Titolo della pagina» in Impostazioni › Aspetto: mostra (predefinito), nascondi o testo personalizzato per il titolo del tema (Divi h1.entry-title.main_title, temi classici e a blocchi) nelle pagine «Lavora con noi» e con gli shortcode del plugin. Titolo del browser, menu e SEO invariati; la scheda della posizione mantiene il proprio titolo.

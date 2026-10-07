@@ -5,12 +5,25 @@ Versioning semantico `MAJOR.MINOR.PATCH`. Allineati a ogni rilascio: header `Ver
 
 | Costante | Valore | Significato |
 |---|---|---|
-| PM_ATS_VERSION | 1.3.3 | versione del plugin |
+| PM_ATS_VERSION | 1.3.4 | versione del plugin |
 | PM_ATS_API_VERSION | 1 | protocollo REST `pm-ats/v1` (cambia solo con modifiche incompatibili) |
 | PM_ATS_DB_VERSION | 1 | schema tabelle `pm_ats_applications`, `pm_ats_log` |
-| PM_ATS_SETTINGS_VERSION | 6 | schema dell'opzione `pm_ats_settings` |
-| PM_ATS_TEMPLATE_VERSION | 1.3.0 | template sovrascrivibili dal tema |
+| PM_ATS_SETTINGS_VERSION | 7 | schema dell'opzione `pm_ats_settings` |
+| PM_ATS_TEMPLATE_VERSION | 1.3.4 | template sovrascrivibili dal tema |
 | PM_ATS_MIN_PM | 1.10.20 | PortalManager minimo per tutte le funzioni |
+
+## 1.3.4 — 2026-10-07 (PortalManager v1.10.23)
+- **Testata «Lavora con noi» adattiva** (`PM_ATS_Public::heroHtml`, `wt_hero_fit`):
+  - `scale` (predefinito): `<img>` a larghezza 100% e altezza proporzionale, nessuna altezza fissa; gradiente e titolo sovrapposti. Se l'immagine è nella Libreria media viene usato `wp_get_attachment_image` con `srcset`/`sizes="100vw"`, quindi il browser scarica la dimensione adatta allo schermo.
+  - `cover`: fascia `aspect-ratio:1280/420` (min 160 px) con immagine a riempimento.
+  - Titolo con corpo fluido `clamp(26px, 5.2cqi, 60px)`; spaziature in `cqi`.
+- **Immagine dalla Libreria media**: Impostazioni › Aspetto › Sezione di testata → «Scegli dalla Libreria media» (`wp.media`: caricamento o scelta), anteprima, «Rimuovi»; resta possibile un URL esterno.
+  - Nuova chiave `wt_hero_image_id`: allegato verificato con `wp_attachment_is_image` e `read_post`.
+  - L'ID viene ignorato se l'URL è stato cambiato a mano (confronto senza suffissi `-WxH`/`-scaled`).
+- **Riferimenti di creazione**: «Ideatore del plugin per WordPress: Antonello Orrù © 2026 · componente PortalManager_BI».
+  - Compaiono in fondo a ogni tab delle impostazioni, con la versione del plugin.
+  - Compaiono nel piè di pagina (`admin_footer_text`) delle schermate del plugin.
+- `jobs-accordion.php` @version 1.3.4 (variabile `$hero_html`); schema impostazioni 7.
 
 ## 1.3.3 — 2026-10-07 (PortalManager v1.10.22)
 - **Titolo della pagina opzionale e personalizzabile**: nuova opzione «Titolo della pagina» in Impostazioni › Aspetto per il titolo stampato dal tema sopra il contenuto (Divi `<h1 class="entry-title main_title">`, temi classici `h1.entry-title`, temi a blocchi `core/post-title`).

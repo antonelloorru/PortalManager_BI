@@ -231,6 +231,37 @@ final class PM_ATS_Public
         return $c;
     }
 
+    /**
+     * v1.3.4 — Testata «Lavora con noi» che si ridimensiona con la larghezza della finestra.
+     * scale (predefinito): immagine intera, larghezza 100% e altezza proporzionale (srcset dalla Libreria media se l'immagine vi è
+     *        caricata, così il browser sceglie la dimensione adatta allo schermo); titolo sovrapposto con corpo fluido.
+     * cover: fascia ad altezza proporzionale alla larghezza (aspect-ratio) con immagine ritagliata a riempimento.
+     */
+    public static function heroHtml(array $s): string
+    {
+        $fit   = in_array($s['wt_hero_fit'] ?? '', ['scale', 'cover'], true) ? $s['wt_hero_fit'] : 'scale';
+        $url   = (string)($s['wt_hero_image'] ?? '');
+        $title = '<div class="pm-ats-wt-row"><h1 class="pm-ats-wt-h1">' . esc_html((string)$s['wt_hero_title']) . '</h1></div>';
+        if ($url === '') return '<section class="pm-ats-wt-hero pm-ats-wt-hero-noimg">' . $title . '</section>';
+        if ($fit === 'cover') {
+            $big = (int)($s['wt_hero_image_id'] ?? 0) > 0 ? (string)wp_get_attachment_image_url((int)$s['wt_hero_image_id'], 'full') : '';
+            return '<section class="pm-ats-wt-hero pm-ats-wt-hero-cover" style="--pm-ats-wt-hero-img:url(\'' . esc_url($big !== '' ? $big : $url) . '\')">' . $title . '</section>';
+        }
+        $id  = (int)($s['wt_hero_image_id'] ?? 0);
+        if ($id > 0 && (!wp_attachment_is_image($id) || !self::sameMedia($url, (string)wp_get_attachment_url($id)))) $id = 0;
+        if ($id === 0) $id = (int)attachment_url_to_postid($url);
+        $img = $id > 0 ? wp_get_attachment_image($id, 'full', false, ['class' => 'pm-ats-wt-hero-img', 'alt' => '', 'sizes' => '100vw', 'loading' => 'eager', 'decoding' => 'async', 'fetchpriority' => 'high']) : '';
+        if ($img === '') $img = '<img class="pm-ats-wt-hero-img" src="' . esc_url($url) . '" alt="" loading="eager" decoding="async" fetchpriority="high">';
+        return '<section class="pm-ats-wt-hero pm-ats-wt-hero-scale">' . $img . '<div class="pm-ats-wt-hero-over">' . $title . '</div></section>';
+    }
+
+    /** Stesso file della Libreria media anche se l'URL indica una dimensione ridotta (-300x200) o l'originale non «-scaled». */
+    private static function sameMedia(string $a, string $b): bool
+    {
+        $n = static fn(string $u) => preg_replace('/(?:-\d+x\d+|-scaled)(?=\.\w+$)/', '', (string)preg_replace('#^https?:#', '', $u));
+        return $b !== '' && $n($a) === $n($b);
+    }
+
     public static function head(): void
     {
         if (is_singular(PM_ATS_Jobs::CPT)) echo PM_ATS_Jobs::jsonLd((int)get_queried_object_id()) . "\n"; // phpcs:ignore WordPress.Security.EscapeOutput
@@ -260,7 +291,7 @@ final class PM_ATS_Public
             $hero = isset($atts['hero']) ? $atts['hero'] !== '0' : !empty($s['wt_hero']);
             $mode = in_array($atts['elenco'] ?? '', ['link', 'accordion'], true) ? $atts['elenco'] : (string)$s['wt_list_mode'];
             return self::render('jobs-accordion.php', [
-                'jobs' => $res['items'], 'settings' => $s, 'hero' => $hero, 'closed_notice' => !empty($_GET['pm_ats_closed']), 'mode' => $mode,
+                'jobs' => $res['items'], 'settings' => $s, 'hero' => $hero, 'hero_html' => $hero ? self::heroHtml($s) : '', 'closed_notice' => !empty($_GET['pm_ats_closed']), 'mode' => $mode,
                 'form' => self::form(0, '', $pos ?: [0 => __('Candidatura spontanea', 'pm-ats')]),
             ]);
         }

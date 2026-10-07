@@ -26,3 +26,10 @@
 .pm-ats-code{background:#fcf9e8;border-left:4px solid #dba617;padding:4px 12px;margin:8px 0}
 .pm-ats-maint{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
 .pm-ats-maint form{margin:0}
+
+/* v1.3.4 — selettore immagine dalla Libreria media */
+.pm-ats-media{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:6px 0}
+.pm-ats-media .pm-ats-media-url{flex:1 1 320px;max-width:520px}
+.pm-ats-media-prev{flex-basis:100%}
+.pm-ats-media-prev img{display:block;max-width:360px;width:100%;height:auto;border:1px solid #dcdcde;border-radius:4px;margin-top:4px}
+.pm-ats-credits a{color:inherit}

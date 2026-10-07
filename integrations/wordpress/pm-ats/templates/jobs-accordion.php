@@ -4,8 +4,9 @@
  * l'ELENCO delle posizioni aperte (titolo cliccabile → scheda della posizione), a destra il modulo di candidatura
  * («Compila il form», con scelta della posizione o candidatura spontanea).
  * Sovrascrivibile in <tema>/pm-ats/jobs-accordion.php
- * @version 1.3.1
- * Variabili: $jobs (WP_Post[]), $settings, $hero (bool), $form (HTML del modulo), $closed_notice, $mode ('link' | 'accordion')
+ * @version 1.3.4
+ * Variabili: $jobs (WP_Post[]), $settings, $hero (bool), $hero_html (testata già composta, v1.3.4), $form (HTML del modulo),
+ *            $closed_notice, $mode ('link' | 'accordion')
  * Corrispondenza con le classi del riferimento (Divi): et_pb_section → .pm-ats-wt-hero / .pm-ats-wt-body,
  * et_pb_column_1_2 → .pm-ats-wt-col, et_pb_accordion_item / et_pb_toggle → .pm-ats-wt-item, et_pb_toggle_title → .pm-ats-wt-title,
  * form-single-column → .pm-ats-form. Classi proprie (prefisso pm-ats-wt) per non attivare gli script del tema.
@@ -17,11 +18,7 @@ $mode = $mode ?? 'link';
 $title = preg_replace('/\{([^{}]+)\}/', '<span class="pm-ats-wt-accent">$1</span>', esc_html((string)$s['wt_title']));
 ?>
 <div class="pm-ats pm-ats-wt" id="pm-ats-jobs">
-  <?php if ($hero): ?>
-  <section class="pm-ats-wt-hero"<?php if ($s['wt_hero_image'] !== ''): ?> style="--pm-ats-wt-hero-img:url('<?php echo esc_url($s['wt_hero_image']); ?>')"<?php endif; ?>>
-    <div class="pm-ats-wt-row"><h1 class="pm-ats-wt-h1"><?php echo esc_html($s['wt_hero_title']); ?></h1></div>
-  </section>
-  <?php endif; ?>
+  <?php if ($hero) echo $hero_html ?? PM_ATS_Public::heroHtml($s); // phpcs:ignore WordPress.Security.EscapeOutput — composto con esc_* ?>
 
   <section class="pm-ats-wt-body">
     <div class="pm-ats-wt-row pm-ats-wt-cols">

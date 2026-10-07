@@ -21,6 +21,7 @@ final class PM_ATS_Admin
         add_action('admin_post_pm_ats_maint', [self::class, 'maintenance']);   // v1.1.0
         add_action('admin_post_pm_ats_app', [self::class, 'appAction']);
         add_filter('manage_' . PM_ATS_Jobs::CPT . '_posts_columns', [self::class, 'cols']);
+        add_filter('admin_footer_text', [self::class, 'footerText']);   // v1.3.4 — riferimenti di creazione
         add_action('manage_' . PM_ATS_Jobs::CPT . '_posts_custom_column', [self::class, 'col'], 10, 2);
         add_action('admin_notices', [self::class, 'notices']);
         $role = get_role('administrator');
@@ -43,6 +44,8 @@ final class PM_ATS_Admin
             wp_enqueue_style('wp-color-picker');
             wp_enqueue_script('wp-color-picker');
             wp_add_inline_script('wp-color-picker', 'jQuery(function($){$(".pm-ats-color").wpColorPicker();});');
+            wp_enqueue_media();   // v1.3.4 — immagine di testata dalla Libreria media
+            wp_enqueue_script('pm-ats-admin', PM_ATS_URL . 'assets/pm-ats-admin.js', ['jquery'], PM_ATS_VERSION, true);
         }
     }
 
@@ -209,6 +212,21 @@ final class PM_ATS_Admin
         wp_die(esc_html__('Operazione non valida.', 'pm-ats'), 400);
     }
 
+    /** v1.3.4 — Riferimenti di creazione in fondo alle impostazioni e nel piè di pagina delle schermate del plugin. */
+    public const CREDITS = 'Ideatore del plugin per WordPress: Antonello Orrù © 2026 · componente PortalManager_BI';
+
+    public static function credits(): void
+    {
+        echo '<p class="pm-ats-credits" style="margin:24px 0 0;padding-top:12px;border-top:1px solid #dcdcde;color:#646970;font-size:12px">'
+           . esc_html(self::CREDITS) . ' · pm-ats ' . esc_html(PM_ATS_VERSION) . '</p>';
+    }
+
+    public static function footerText($text)
+    {
+        $scr = function_exists('get_current_screen') ? get_current_screen() : null;
+        return $scr && str_contains((string)$scr->id, 'pm-ats') ? esc_html(self::CREDITS) : $text;
+    }
+
     public static function pageSettings(): void
     {
         if (!current_user_can('manage_options')) wp_die(esc_html__('Accesso negato.', 'pm-ats'));
@@ -292,7 +310,18 @@ final class PM_ATS_Admin
                 <tr><th><?php echo esc_html($l); ?></th><td><input type="text" class="pm-ats-color" name="<?php echo $f($k); ?>" value="<?php echo esc_attr($s[$k]); ?>"></td></tr>
               <?php endforeach; ?>
               <tr><th><?php esc_html_e('Sezione di testata', 'pm-ats'); ?></th><td><?php $chk('wt_hero', __('Mostra la testata con titolo e immagine (disattivare se la pagina ne ha già una)', 'pm-ats')); ?><br>
-                <?php $txt('wt_hero_title', 'text'); ?><br><?php $txt('wt_hero_image', 'url', 'placeholder="https://…/immagine.jpg"'); ?></td></tr>
+                <?php $txt('wt_hero_title', 'text'); ?><br><?php $hid = (int)$s['wt_hero_image_id']; $hp = $hid > 0 ? (string)wp_get_attachment_image_url($hid, 'medium') : ''; if ($hp === '') $hp = (string)$s['wt_hero_image']; ?>
+                <span class="pm-ats-media" data-title="<?php esc_attr_e('Immagine della testata', 'pm-ats'); ?>" data-button="<?php esc_attr_e('Usa questa immagine', 'pm-ats'); ?>">
+                  <input type="url" class="regular-text pm-ats-media-url" name="<?php echo $f('wt_hero_image'); ?>" value="<?php echo esc_attr($s['wt_hero_image']); ?>" placeholder="https://…/immagine.jpg">
+                  <input type="hidden" class="pm-ats-media-id" name="<?php echo $f('wt_hero_image_id'); ?>" value="<?php echo $hid; ?>">
+                  <button type="button" class="button pm-ats-media-pick"><?php esc_html_e('Scegli dalla Libreria media', 'pm-ats'); ?></button>
+                  <button type="button" class="button-link button-link-delete pm-ats-media-del"<?php echo $s['wt_hero_image'] === '' ? ' hidden' : ''; ?>><?php esc_html_e('Rimuovi', 'pm-ats'); ?></button>
+                  <span class="pm-ats-media-prev"><?php if ($hp !== ''): ?><img src="<?php echo esc_url($hp); ?>" alt=""><?php endif; ?></span>
+                </span>
+                <select name="<?php echo $f('wt_hero_fit'); ?>">
+                  <option value="scale" <?php selected($s['wt_hero_fit'], 'scale'); ?>><?php esc_html_e('Immagine intera, ridimensionata con la larghezza della finestra', 'pm-ats'); ?></option>
+                  <option value="cover" <?php selected($s['wt_hero_fit'], 'cover'); ?>><?php esc_html_e('Fascia proporzionale alla finestra, immagine ritagliata', 'pm-ats'); ?></option></select>
+                <p class="description"><?php esc_html_e('L\'altezza della testata e il titolo si adattano alla larghezza dello schermo. Carica o scegli l\'immagine dalla Libreria media: il browser scarica la dimensione adatta allo schermo (srcset).', 'pm-ats'); ?></p></td></tr>
               <tr><th><?php esc_html_e('Titolo', 'pm-ats'); ?></th><td><?php $txt('wt_title', 'text'); ?><p class="description"><?php esc_html_e('Il testo fra parentesi graffe {…} è evidenziato con il colore d\'accento.', 'pm-ats'); ?></p></td></tr>
               <tr><th><?php esc_html_e('Introduzione', 'pm-ats'); ?></th><td><textarea name="<?php echo $f('wt_intro'); ?>" rows="3" class="large-text"><?php echo esc_textarea($s['wt_intro']); ?></textarea></td></tr>
               <tr><th><?php esc_html_e('Titoli elenco / modulo', 'pm-ats'); ?></th><td><?php $txt('wt_list_title', 'text'); ?> <?php $txt('wt_form_title', 'text'); ?></td></tr>
@@ -315,6 +344,7 @@ final class PM_ATS_Admin
           <?php endif; ?>
 
           <?php if ($tab === 'manutenzione') self::tabMaintenance($ob); ?>
+          <?php self::credits(); ?>
         </div>
         <?php
     }
