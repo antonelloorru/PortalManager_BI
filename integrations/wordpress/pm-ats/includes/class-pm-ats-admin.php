@@ -274,8 +274,18 @@ final class PM_ATS_Admin
               <?php endforeach; ?>
               <tr><th><?php esc_html_e('Arrotondamento', 'pm-ats'); ?></th><td><input type="number" min="0" max="30" name="<?php echo $f('radius'); ?>" value="<?php echo (int)$s['radius']; ?>" class="small-text"> px</td></tr>
               <tr><th><?php esc_html_e('Font', 'pm-ats'); ?></th><td><?php $txt('font_family', 'text', 'placeholder="es. Poppins, sans-serif"'); ?><p class="description"><?php esc_html_e('Vuoto (come testo e colori vuoti) = ereditato dal tema.', 'pm-ats'); ?></p></td></tr>
-              <tr><th><?php esc_html_e('Elenco', 'pm-ats'); ?></th><td><select name="<?php echo $f('layout'); ?>"><option value="grid" <?php selected($s['layout'], 'grid'); ?>><?php esc_html_e('Griglia di schede', 'pm-ats'); ?></option><option value="list" <?php selected($s['layout'], 'list'); ?>><?php esc_html_e('Lista', 'pm-ats'); ?></option></select>
+              <tr><th><?php esc_html_e('Elenco', 'pm-ats'); ?></th><td><select name="<?php echo $f('layout'); ?>"><option value="grid" <?php selected($s['layout'], 'grid'); ?>><?php esc_html_e('Griglia di schede', 'pm-ats'); ?></option><option value="list" <?php selected($s['layout'], 'list'); ?>><?php esc_html_e('Lista', 'pm-ats'); ?></option>
+                <option value="accordion" <?php selected($s['layout'], 'accordion'); ?>><?php esc_html_e('Fisarmonica con modulo a lato (Lavora con noi)', 'pm-ats'); ?></option></select>
                 <input type="number" min="1" max="100" name="<?php echo $f('per_page'); ?>" value="<?php echo (int)$s['per_page']; ?>" class="small-text"> <?php esc_html_e('per pagina', 'pm-ats'); ?></td></tr>
+              <tr><th colspan="2"><h3 style="margin:8px 0 0"><?php esc_html_e('Layout «Fisarmonica con modulo a lato»', 'pm-ats'); ?></h3></th></tr>
+              <?php foreach (['color_title' => __('Colore titoli', 'pm-ats'), 'color_accent' => __('Colore d\'accento (evidenza, riquadro modulo)', 'pm-ats')] as $k => $l): ?>
+                <tr><th><?php echo esc_html($l); ?></th><td><input type="text" class="pm-ats-color" name="<?php echo $f($k); ?>" value="<?php echo esc_attr($s[$k]); ?>"></td></tr>
+              <?php endforeach; ?>
+              <tr><th><?php esc_html_e('Sezione di testata', 'pm-ats'); ?></th><td><?php $chk('wt_hero', __('Mostra la testata con titolo e immagine (disattivare se la pagina ne ha già una)', 'pm-ats')); ?><br>
+                <?php $txt('wt_hero_title', 'text'); ?><br><?php $txt('wt_hero_image', 'url', 'placeholder="https://…/immagine.jpg"'); ?></td></tr>
+              <tr><th><?php esc_html_e('Titolo', 'pm-ats'); ?></th><td><?php $txt('wt_title', 'text'); ?><p class="description"><?php esc_html_e('Il testo fra parentesi graffe {…} è evidenziato con il colore d\'accento.', 'pm-ats'); ?></p></td></tr>
+              <tr><th><?php esc_html_e('Introduzione', 'pm-ats'); ?></th><td><textarea name="<?php echo $f('wt_intro'); ?>" rows="3" class="large-text"><?php echo esc_textarea($s['wt_intro']); ?></textarea></td></tr>
+              <tr><th><?php esc_html_e('Titoli elenco / modulo', 'pm-ats'); ?></th><td><?php $txt('wt_list_title', 'text'); ?> <?php $txt('wt_form_title', 'text'); ?></td></tr>
               <tr><th><?php esc_html_e('CSS aggiuntivo', 'pm-ats'); ?></th><td><textarea name="<?php echo $f('custom_css'); ?>" rows="5" class="large-text code"><?php echo esc_textarea($s['custom_css']); ?></textarea></td></tr>
             <?php elseif ($tab === 'dati'): ?>
               <tr><th><?php esc_html_e('Azienda (dati strutturati)', 'pm-ats'); ?></th><td><?php $txt('company_name', 'text', 'placeholder="' . esc_attr(get_bloginfo('name')) . '"'); ?><br><?php $txt('company_logo', 'url', 'placeholder="https://…/logo.png"'); ?></td></tr>

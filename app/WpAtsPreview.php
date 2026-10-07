@@ -1,6 +1,6 @@
 <?php
 /**
- * app/WpAtsPreview.php — v1.10.18
+ * app/WpAtsPreview.php — v1.10.18 (v1.10.19: struttura vincolante delle sezioni)
  * Anteprima LOCALE della scheda annuncio, usata quando il sito non è raggiungibile o il plugin è < 1.2.0.
  * Riproduce il template job-single del plugin pm-ats (stesse sezioni, stesso ordine, stessa formattazione del testo,
  * foglio di stile del plugin incluso dal pacchetto integrations/wordpress/pm-ats). Non riproduce il tema del sito:
@@ -10,12 +10,32 @@ declare(strict_types=1);
 
 final class WpAtsPreview
 {
-    /** Stesse sezioni di PM_ATS_Jobs::SECTIONS. */
-    public const SECTIONS = [
-        'presentation_text' => 'Chi siamo', 'description' => 'La posizione', 'required_skills' => 'Requisiti',
-        'hard_skills' => 'Competenze tecniche', 'soft_skills' => 'Competenze trasversali', 'nice_to_have' => 'Costituisce titolo preferenziale',
-        'we_offer' => 'Cosa offriamo', 'benefits' => 'Benefit', 'offer_info' => 'Informazioni sull\'offerta', 'gender_disclaimer' => '',
+    /**
+     * v1.10.19 — Struttura vincolante della Job Description, identica a PM_ATS_Jobs::STRUCTURE del plugin (≥ 1.3.0):
+     * 1 Chi siamo · 2 Informazioni sull'offerta · 3 Competenze · 4 Costituisce titolo preferenziale · 5 Cosa offriamo.
+     * Chiude la nota di pari opportunità. «description» (note interne) non è mai mostrata.
+     */
+    public const STRUCTURE = [
+        'chi-siamo'     => ['Chi siamo', ['presentation_text' => '']],
+        'offerta'       => ['Informazioni sull\'offerta', ['offer_info' => '']],
+        'competenze'    => ['Competenze', ['required_skills' => 'Requisiti', 'hard_skills' => 'Competenze tecniche', 'soft_skills' => 'Competenze trasversali']],
+        'preferenziale' => ['Costituisce titolo preferenziale', ['nice_to_have' => '']],
+        'offriamo'      => ['Cosa offriamo', ['we_offer' => '', 'benefits' => 'Benefit']],
     ];
+
+    /** @return array<int,array{key:string,n:int,title:string,parts:array}> come PM_ATS_Jobs::sections() */
+    public static function sections(array $job): array
+    {
+        $out = []; $n = 0;
+        foreach (self::STRUCTURE as $key => [$title, $fields]) {
+            $n++; $parts = [];
+            foreach ($fields as $f => $sub) if (trim((string)($job[$f] ?? '')) !== '') $parts[] = ['field' => $f, 'subtitle' => $sub, 'text' => (string)$job[$f]];
+            if (!$parts) continue;
+            if (count($parts) === 1) $parts[0]['subtitle'] = '';
+            $out[] = ['key' => $key, 'n' => $n, 'title' => $title, 'parts' => $parts];
+        }
+        return $out;
+    }
 
     private static function e(string $s): string { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
 
@@ -52,10 +72,12 @@ final class WpAtsPreview
         foreach ($chips as $c) $o .= '<li class="pm-ats-chip">' . self::e((string)$c) . '</li>';
         if ((int)($job['positions_expected'] ?? 1) > 1) $o .= '<li class="pm-ats-chip">' . (int)$job['positions_expected'] . ' posizioni</li>';
         $o .= '</ul><p><a class="pm-ats-btn" href="#pm-ats-form">Candidati ora</a></p>';
-        foreach (self::SECTIONS as $k => $h) {
-            if (trim((string)($job[$k] ?? '')) === '') continue;
-            $o .= '<section class="pm-ats-section pm-ats-section-' . $k . '">' . ($h !== '' ? '<h2>' . self::e($h) . '</h2>' : '') . self::format((string)$job[$k]) . '</section>';
+        foreach (self::sections($job) as $sec) {
+            $o .= '<section class="pm-ats-section pm-ats-section-' . $sec['key'] . '" data-pm-ats-section="' . $sec['n'] . '"><h2 class="pm-ats-section-title">' . self::e($sec['title']) . '</h2>';
+            foreach ($sec['parts'] as $p) $o .= ($p['subtitle'] !== '' ? '<h3 class="pm-ats-section-subtitle">' . self::e($p['subtitle']) . '</h3>' : '') . self::format($p['text']);
+            $o .= '</section>';
         }
+        if (trim((string)($job['gender_disclaimer'] ?? '')) !== '') $o .= '<div class="pm-ats-section pm-ats-section-closing">' . self::format((string)$job['gender_disclaimer']) . '</div>';
         return $o . '<div class="pm-ats-form" id="pm-ats-form"><p><strong>Modulo di candidatura</strong> — in anteprima l\'invio è disattivato.</p></div></div></div></body></html>';
     }
 }

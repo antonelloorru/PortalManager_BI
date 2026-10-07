@@ -1,4 +1,4 @@
-/*! PortalManager ATS — pm-ats.js · @version 1.1.0 */
+/*! PortalManager ATS — pm-ats.js · @version 1.3.0 */
 /* PortalManager ATS — miglioramenti progressivi del modulo (il modulo funziona anche senza JavaScript). */
 (function () {
   'use strict';
@@ -47,6 +47,36 @@
       }
       var b = form.querySelector('button[type=submit]');
       if (b) { b.disabled = true; b.textContent = I.sending || 'Invio…'; }
+    });
+  });
+
+  // v1.3.0 — fisarmonica (layout «Lavora con noi»): una voce aperta alla volta, × per chiudere, tastiera con il pulsante
+  document.querySelectorAll('[data-pm-ats-accordion]').forEach(function (acc) {
+    var items = acc.querySelectorAll('[data-pm-ats-item]');
+    function set(it, open) {
+      var b = it.querySelector('.pm-ats-wt-toggle'), c = it.querySelector('.pm-ats-wt-content');
+      it.classList.toggle('is-open', open); b.setAttribute('aria-expanded', open ? 'true' : 'false'); c.hidden = !open;
+    }
+    items.forEach(function (it) {
+      it.querySelector('.pm-ats-wt-toggle').addEventListener('click', function () {
+        var open = !it.classList.contains('is-open');
+        items.forEach(function (o) { if (o !== it) set(o, false); });
+        set(it, open);
+      });
+      var x = it.querySelector('.pm-ats-wt-close');
+      if (x) x.addEventListener('click', function (e) { e.stopPropagation(); set(it, false); it.querySelector('.pm-ats-wt-toggle').focus(); });
+    });
+    // apertura diretta da #pm-ats-job-<id>
+    if (location.hash && /^#pm-ats-job-\d+$/.test(location.hash)) {
+      var t = acc.querySelector(location.hash);
+      if (t) set(t.closest('[data-pm-ats-item]'), true);
+    }
+  });
+  // «Candidati per questa posizione»: preseleziona la posizione nel modulo a lato
+  document.querySelectorAll('[data-pm-ats-apply]').forEach(function (a) {
+    a.addEventListener('click', function () {
+      var s = document.querySelector('[data-pm-ats-job]');
+      if (s) { s.value = a.getAttribute('data-pm-ats-apply'); s.dispatchEvent(new Event('change')); setTimeout(function () { s.focus({ preventScroll: true }); }, 400); }
     });
   });
 

@@ -1,8 +1,9 @@
 <?php
 /**
  * Modulo di candidatura. Sovrascrivibile in <tema>/pm-ats/apply-form.php
- * @version 1.1.0
- * Variabili: $job_id (0 = spontanea), $title, $old, $error, $error_field, $error_text, $success_ref, $settings, $token, $action
+ * @version 1.3.0
+ * Variabili: $job_id (0 = spontanea), $title, $old, $error, $error_field, $error_text, $success_ref, $settings, $token, $action,
+ *            $positions (v1.3.0: [post_id => titolo] → campo «Posizione per cui ti candidi»; vuoto = posizione fissa $job_id)
  * I nomi dei campi (name="…") NON vanno modificati.
  */
 defined('ABSPATH') || exit;
@@ -12,8 +13,9 @@ $req = '<span class="pm-ats-req" aria-hidden="true">*</span>';
 $accept = implode(',', array_map(static fn($e) => '.' . trim($e), explode(',', (string)$settings['cv_types'])));
 $uid = 'pm-ats-' . (int)$job_id;
 ?>
-<div class="pm-ats pm-ats-apply" id="pm-ats-form">
-  <h2 class="pm-ats-apply-title"><?php echo $job_id ? esc_html__('Candidati per questa posizione', 'pm-ats') : esc_html($title); ?></h2>
+<?php $positions = $positions ?? []; ?>
+<div class="pm-ats pm-ats-apply<?php echo $positions ? ' pm-ats-apply-select' : ''; ?>" id="pm-ats-form">
+  <?php if (!$positions): ?><h2 class="pm-ats-apply-title"><?php echo $job_id ? esc_html__('Candidati per questa posizione', 'pm-ats') : esc_html($title); ?></h2><?php endif; ?>
 
   <?php if ($success_ref !== ''): ?>
     <div class="pm-ats-alert pm-ats-alert-ok" role="status" tabindex="-1">
@@ -25,13 +27,21 @@ $uid = 'pm-ats-' . (int)$job_id;
 
   <form class="pm-ats-form" method="post" action="<?php echo esc_url($action); ?>" enctype="multipart/form-data" novalidate>
     <input type="hidden" name="action" value="pm_ats_apply">
-    <input type="hidden" name="job_id" value="<?php echo (int)$job_id; ?>">
+    <?php if (!$positions): ?><input type="hidden" name="job_id" value="<?php echo (int)$job_id; ?>"><?php else: ?><input type="hidden" name="_pm_ats_sel" value="1"><?php endif; ?>
     <input type="hidden" name="_pm_ats_t" value="<?php echo esc_attr($token); ?>" data-pm-ats-token>
     <input type="hidden" name="_back" value="<?php echo esc_url((is_ssl() ? 'https://' : 'http://') . sanitize_text_field(wp_unslash($_SERVER['HTTP_HOST'] ?? '')) . esc_url_raw(wp_unslash($_SERVER['REQUEST_URI'] ?? '/'))); ?>">
     <input type="hidden" name="MAX_FILE_SIZE" value="<?php echo (int)$settings['cv_max_mb'] * 1048576; ?>">
     <div class="pm-ats-hp" aria-hidden="true"><label>Website <input type="text" name="website" tabindex="-1" autocomplete="off"></label></div>
 
     <div class="pm-ats-grid">
+      <?php if ($positions): $sel = (int)($old['job_id'] ?? $job_id); ?>
+      <p class="pm-ats-full"><label for="<?php echo $uid; ?>-job"><?php esc_html_e('Posizione per cui ti candidi', 'pm-ats'); ?> <?php echo $req; ?></label>
+        <select id="<?php echo $uid; ?>-job" name="job_id" required data-pm-ats-job<?php echo $inv('job_id'); ?>>
+          <option value=""><?php esc_html_e('— seleziona —', 'pm-ats'); ?></option>
+          <?php if (!empty($settings['allow_spontaneous'])): ?><option value="0" <?php selected(isset($old['job_id']) && (int)$old['job_id'] === 0); ?>><?php esc_html_e('Candidatura spontanea', 'pm-ats'); ?></option><?php endif; ?>
+          <?php foreach ($positions as $pid => $pt): ?><option value="<?php echo (int)$pid; ?>" <?php selected($sel, (int)$pid); ?>><?php echo esc_html($pt); ?></option><?php endforeach; ?>
+        </select></p>
+      <?php endif; ?>
       <p><label for="<?php echo $uid; ?>-fn"><?php esc_html_e('Nome', 'pm-ats'); ?> <?php echo $req; ?></label>
         <input id="<?php echo $uid; ?>-fn" name="first_name" type="text" required maxlength="100" autocomplete="given-name" value="<?php echo $v('first_name'); ?>"<?php echo $inv('first_name'); ?>></p>
       <p><label for="<?php echo $uid; ?>-ln"><?php esc_html_e('Cognome', 'pm-ats'); ?> <?php echo $req; ?></label>

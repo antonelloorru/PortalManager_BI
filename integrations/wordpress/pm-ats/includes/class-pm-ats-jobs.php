@@ -12,19 +12,72 @@ final class PM_ATS_Jobs
 {
     public const CPT = 'pm_job';
 
-    /** Sezioni testuali nell'ordine di visualizzazione: chiave PortalManager => titolo. */
+    /**
+     * v1.3.0 — STRUTTURA VINCOLANTE della Job Description (ordine obbligatorio, indipendente dal layout e dal tema):
+     *   1 Chi siamo · 2 Informazioni sull'offerta · 3 Competenze · 4 Costituisce titolo preferenziale · 5 Cosa offriamo
+     * chiave => [titolo, [campo PortalManager => sottotitolo ('' = nessuno)]]. La nota di pari opportunità (gender_disclaimer)
+     * chiude la scheda senza titolo. Il campo «description» di PortalManager (note interne) non è mai pubblicato.
+     * Unica sorgente per scheda, elenco a fisarmonica, anteprima, estratto e dati strutturati: i template usano sections().
+     */
+    public const STRUCTURE = [
+        'chi-siamo'     => ['Chi siamo', ['presentation_text' => '']],
+        'offerta'       => ['Informazioni sull\'offerta', ['offer_info' => '']],
+        'competenze'    => ['Competenze', ['required_skills' => 'Requisiti', 'hard_skills' => 'Competenze tecniche', 'soft_skills' => 'Competenze trasversali']],
+        'preferenziale' => ['Costituisce titolo preferenziale', ['nice_to_have' => '']],
+        'offriamo'      => ['Cosa offriamo', ['we_offer' => '', 'benefits' => 'Benefit']],
+    ];
+    public const CLOSING = 'gender_disclaimer';
+
+    /**
+     * Sezioni testuali (compatibilità con i template 1.0/1.1 sovrascritti dal tema): stesso ordine della STRUCTURE,
+     * campo => titolo. Non contiene più «description».
+     */
     public const SECTIONS = [
         'presentation_text' => 'Chi siamo',
-        'description'       => 'La posizione',
-        'required_skills'   => 'Requisiti',
+        'offer_info'        => 'Informazioni sull\'offerta',
+        'required_skills'   => 'Competenze',
         'hard_skills'       => 'Competenze tecniche',
         'soft_skills'       => 'Competenze trasversali',
         'nice_to_have'      => 'Costituisce titolo preferenziale',
         'we_offer'          => 'Cosa offriamo',
         'benefits'          => 'Benefit',
-        'offer_info'        => 'Informazioni sull\'offerta',
         'gender_disclaimer' => '',
     ];
+
+    /**
+     * Sezioni presenti della posizione, nell'ordine vincolante.
+     * @return array<int,array{key:string,n:int,title:string,parts:array<int,array{field:string,subtitle:string,text:string}>}>
+     */
+    public static function sections(array $job): array
+    {
+        $out = []; $n = 0;
+        foreach (self::STRUCTURE as $key => [$title, $fields]) {
+            $n++;
+            $parts = [];
+            foreach ($fields as $f => $sub) if (trim((string)($job[$f] ?? '')) !== '') $parts[] = ['field' => $f, 'subtitle' => $sub, 'text' => (string)$job[$f]];
+            if (!$parts) continue;
+            // un solo blocco: nessun sottotitolo (il titolo della sezione basta)
+            if (count($parts) === 1) $parts[0]['subtitle'] = '';
+            $out[] = ['key' => $key, 'n' => $n, 'title' => $title, 'parts' => $parts];
+        }
+        return $out;
+    }
+
+    /** HTML delle sezioni nell'ordine vincolante (titolo $h, sottotitoli $h+1) + nota di chiusura. */
+    public static function sectionsHtml(array $job, string $h = 'h2', string $class = 'pm-ats-section'): string
+    {
+        $sub = 'h' . min(6, (int)substr($h, 1) + 1);
+        $o = '';
+        foreach (self::sections($job) as $s) {
+            $o .= '<section class="' . esc_attr($class) . ' ' . esc_attr($class) . '-' . esc_attr($s['key']) . '" data-pm-ats-section="' . (int)$s['n'] . '">'
+                . '<' . $h . ' class="' . esc_attr($class) . '-title">' . esc_html(__($s['title'], 'pm-ats')) . '</' . $h . '>';
+            foreach ($s['parts'] as $p)
+                $o .= ($p['subtitle'] !== '' ? '<' . $sub . ' class="' . esc_attr($class) . '-subtitle">' . esc_html(__($p['subtitle'], 'pm-ats')) . '</' . $sub . '>' : '') . self::format($p['text']);
+            $o .= '</section>';
+        }
+        if (trim((string)($job[self::CLOSING] ?? '')) !== '') $o .= '<div class="' . esc_attr($class) . ' ' . esc_attr($class) . '-closing">' . self::format((string)$job[self::CLOSING]) . '</div>';
+        return $o;
+    }
     public const META_FIELDS = ['department', 'location', 'contract_type', 'remote_policy', 'opened_at', 'target_date', 'positions_expected', 'code'];
 
     public static function init(): void
@@ -86,7 +139,7 @@ final class PM_ATS_Jobs
             }
             // estratto: il testo specifico della posizione prima della presentazione aziendale (uguale per tutte)
             $plain = '';
-            foreach (['description', 'required_skills', 'hard_skills', 'offer_info', 'we_offer', 'presentation_text'] as $k) if ($d[$k] !== '') { $plain = $d[$k]; break; }
+            foreach (['offer_info', 'required_skills', 'hard_skills', 'we_offer', 'presentation_text'] as $k) if ($d[$k] !== '') { $plain = $d[$k]; break; }
             $plain = trim(preg_replace('/^\s*(?:[-*•·▪◦]|\d+[.)])\s+/mu', '', wp_strip_all_tags($plain)));
             $post = [
                 'post_type' => self::CPT, 'post_status' => $want, 'post_title' => $d['title'],
@@ -130,6 +183,7 @@ final class PM_ATS_Jobs
         $date = static fn($v) => (is_string($v) && preg_match('/^\d{4}-\d{2}-\d{2}$/', substr($v, 0, 10))) ? substr($v, 0, 10) : '';
         $d = ['id' => $id, 'title' => mb_substr($title, 0, 200)];
         foreach (array_keys(self::SECTIONS) as $k) $d[$k] = $txt($r[$k] ?? '');
+        $d['description'] = '';   // v1.3.0 — note interne di PortalManager: mai pubblicate né conservate
         $d['department']    = $txt($r['department'] ?? '', 100);
         $d['location']      = $txt($r['location'] ?? '', 100);
         $d['contract_type'] = $txt($r['contract_type'] ?? '', 40);
@@ -263,7 +317,8 @@ final class PM_ATS_Jobs
         $d = self::data($postId);
         if (!$d) return '';
         $desc = '';
-        foreach (self::SECTIONS as $k => $h) if (($d[$k] ?? '') !== '') $desc .= ($h ? '<h3>' . esc_html($h) . '</h3>' : '') . self::format($d[$k]);
+        foreach (self::sections($d) as $s) { $desc .= '<h3>' . esc_html($s['title']) . '</h3>'; foreach ($s['parts'] as $p) $desc .= ($p['subtitle'] !== '' ? '<h4>' . esc_html($p['subtitle']) . '</h4>' : '') . self::format($p['text']); }
+        if (($d[self::CLOSING] ?? '') !== '') $desc .= self::format($d[self::CLOSING]);
         $emp = ['Indeterminato' => 'FULL_TIME', 'Determinato' => 'TEMPORARY', 'Somministrazione' => 'TEMPORARY',
                 'Consulenza' => 'CONTRACTOR', 'Stage' => 'INTERN'][$d['contract_type'] ?? ''] ?? 'OTHER';
         $org = array_filter(['@type' => 'Organization', 'name' => PM_ATS_Settings::get('company_name') ?: get_bloginfo('name'),

@@ -1,4 +1,4 @@
-/*! PortalManager ATS — pm-ats.css · @version 1.1.0 */
+/*! PortalManager ATS — pm-ats.css · @version 1.3.0 */
 /* PortalManager ATS — stile del frontend. Colori, raggio e font sono variabili (Impostazioni del plugin);
    testo e font ereditano dal tema se non impostati. Tutto è racchiuso in .pm-ats per non toccare il tema. */
 .pm-ats{--pm-ats-primary:#ee7e02;--pm-ats-on-primary:#fff;--pm-ats-text:inherit;--pm-ats-muted:#6b7280;--pm-ats-card:#fff;
@@ -69,7 +69,9 @@ body .pm-ats button.pm-ats-btn:hover,body .pm-ats a.pm-ats-btn:hover{filter:brig
 .pm-ats-section{margin:28px 0}
 .pm-ats-section h2{font-size:1.3em;margin:0 0 10px;padding-bottom:6px;border-bottom:2px solid var(--pm-ats-primary);display:inline-block}
 .pm-ats-section ul{padding-left:1.2em}
-.pm-ats-section-gender_disclaimer{font-size:.9em;color:var(--pm-ats-muted)}
+.pm-ats-section-gender_disclaimer,.pm-ats-section-closing{font-size:.9em;color:var(--pm-ats-muted)}
+.pm-ats-section-subtitle{font-size:1em;margin:14px 0 6px;font-weight:700}
+.pm-ats-section-closing{margin:28px 0}
 .pm-ats-back{margin-top:28px}
 
 /* candidatura spontanea */

@@ -160,6 +160,10 @@ final class WpAtsSync
         $r['code'] = 'POS-' . str_pad((string)$r['id'], 4, '0', STR_PAD_LEFT);
         foreach ($r as $k => $v) if (is_string($v)) $r[$k] = trim($v);
         if (!in_array($r['web_status'] ?? 'publish', ['publish', 'draft'], true)) $r['web_status'] = 'publish';
+        // v1.10.19 — «description» contiene note interne (RAL, indicazioni operative): non viene mai inviata al sito.
+        // La Job Description pubblica segue la struttura vincolante (Chi siamo, Informazioni sull'offerta, Competenze,
+        // Costituisce titolo preferenziale, Cosa offriamo) costruita dal plugin con gli altri campi.
+        $r['description'] = '';
         return $r;
     }
 

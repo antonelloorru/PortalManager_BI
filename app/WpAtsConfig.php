@@ -21,7 +21,7 @@ final class WpAtsConfig
     /** Plugin minimo funzionante (sincronizzazione base). */
     public const PLUGIN_BASE = '1.0.0';
     /** v1.10.16 — plugin consigliato: la 1.1.0 conta come fallimenti anche le chiamate riuscite (blocco 429 dopo 20 chiamate). */
-    public const PLUGIN_RECOMMENDED = '1.2.0';   // v1.10.18: pubblicazione per posizione e anteprima
+    public const PLUGIN_RECOMMENDED = '1.3.0';   // v1.10.19: struttura vincolante della Job Description e layout Lavora con noi
     /** Protocollo REST supportato (pm-ats/v1). */
     public const API_VERSION = '1';
 
@@ -117,7 +117,7 @@ final class WpAtsConfig
         if (version_compare($pv, self::PLUGIN_MIN, '<'))
             return ['level' => 'warn', 'msg' => "Plugin $pv: sincronizzazione supportata; aggiornare a ≥ " . self::PLUGIN_MIN . ' per configurazione guidata e controllo versioni'];
         if (version_compare($pv, self::PLUGIN_RECOMMENDED, '<'))
-            return ['level' => 'warn', 'msg' => "Plugin $pv: aggiornare a " . self::PLUGIN_RECOMMENDED . (version_compare($pv, '1.1.1', '<') ? ' (corregge il blocco 429 «too_many_failures» dopo 20 chiamate; ' : ' (') . 'bozza per posizione e anteprima dell\'annuncio dal sito)'];
+            return ['level' => 'warn', 'msg' => "Plugin $pv: aggiornare a " . self::PLUGIN_RECOMMENDED . (version_compare($pv, '1.1.1', '<') ? ' (corregge il blocco 429 «too_many_failures» dopo 20 chiamate; ' : ' (') . 'ordine vincolante della Job Description, nessuna nota interna pubblicata, layout Lavora con noi)'];
         $msg = "Plugin $pv compatibile (API v$api)";
         if (($status['onboarding'] ?? 'done') !== 'done') return ['level' => 'warn', 'msg' => $msg . ' — configurazione guidata del sito non completata'];
         return ['level' => 'ok', 'msg' => $msg];

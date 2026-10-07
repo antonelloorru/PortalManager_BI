@@ -5,12 +5,26 @@ Versioning semantico `MAJOR.MINOR.PATCH`. Allineati a ogni rilascio: header `Ver
 
 | Costante | Valore | Significato |
 |---|---|---|
-| PM_ATS_VERSION | 1.2.0 | versione del plugin |
+| PM_ATS_VERSION | 1.3.0 | versione del plugin |
 | PM_ATS_API_VERSION | 1 | protocollo REST `pm-ats/v1` (cambia solo con modifiche incompatibili) |
 | PM_ATS_DB_VERSION | 1 | schema tabelle `pm_ats_applications`, `pm_ats_log` |
-| PM_ATS_SETTINGS_VERSION | 2 | schema dell'opzione `pm_ats_settings` |
-| PM_ATS_TEMPLATE_VERSION | 1.1.0 | template sovrascrivibili dal tema |
-| PM_ATS_MIN_PM | 1.10.18 | PortalManager minimo per tutte le funzioni |
+| PM_ATS_SETTINGS_VERSION | 3 | schema dell'opzione `pm_ats_settings` |
+| PM_ATS_TEMPLATE_VERSION | 1.3.0 | template sovrascrivibili dal tema |
+| PM_ATS_MIN_PM | 1.10.19 | PortalManager minimo per tutte le funzioni |
+
+## 1.3.0 — 2026-10-07 (PortalManager v1.10.19)
+Due interventi separati:
+- **Struttura vincolante della Job Description**, indipendente dal layout. Ordine: 1 Chi siamo (`presentation_text`) · 2 Informazioni sull'offerta (`offer_info`) · 3 Competenze (`required_skills`, `hard_skills`, `soft_skills` con sottotitoli se più d'uno) · 4 Costituisce titolo preferenziale (`nice_to_have`) · 5 Cosa offriamo (`we_offer`, `benefits`). Chiude la scheda la nota pari opportunità (`gender_disclaimer`).
+  - Unica sorgente `PM_ATS_Jobs::STRUCTURE` / `sections()` / `sectionsHtml()`, usata da scheda, fisarmonica, anteprima, estratto e JSON-LD. `SECTIONS` è riordinata per i template del tema 1.0/1.1.
+  - `description` (note interne di PortalManager: RAL, indicazioni operative) non è più pubblicata né conservata nel sito.
+- **Layout di riferimento «Lavora con noi»** (`layout = accordion`), con il nuovo template `jobs-accordion.php` e il foglio `assets/pm-ats-wetechs.css`:
+  - testata facoltativa (gradiente #00457a + immagine, titolo 60 px);
+  - «Unisciti a {We}Tech's!» (48 px, #234d85, evidenza #ec7f31), introduzione, «Posizioni Aperte»;
+  - fisarmonica: voci #f4f4f4, bordo #d9d9d9, raggio 10 px, titolo Montserrat 16 px bold, «+» / «×»;
+  - riquadro modulo con sfondo d'accento, bordo #d06a27 e raggio 10 px; campi bianchi a 2 colonne, selezione della posizione e pulsante bianco/arancio;
+  - responsive a 980 e 767 px. Classi proprie `.pm-ats-wt-*`, con la corrispondenza alle classi Divi documentata nel template. Nessun font esterno caricato.
+  - `apply-form.php`: campo «Posizione per cui ti candidi» quando il modulo serve più posizioni; «Candidati per questa posizione» la preseleziona.
+- Template aggiornati a `@version 1.3.0`: `job-single.php`, `apply-form.php`, `jobs-accordion.php` (nuovo). `jobs-list.php` e `job-card.php` invariati.
 
 ## 1.2.0 — 2026-10-07 (PortalManager v1.10.18)
 - **Pubblicazione puntuale**: `/sync/jobs` accetta `web_status` per item. `publish` = visibile (predefinito, compatibile con PortalManager precedenti). `draft` = bozza: il post esiste ma non è visibile né elencato, e l'URL dà 404 invece del messaggio «posizione chiusa». Le posizioni escluse da PortalManager vengono ritirate. Meta `_pm_web_status` = publish | draft | withdrawn.

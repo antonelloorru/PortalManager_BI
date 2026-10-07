@@ -40,7 +40,11 @@ final class PM_ATS_Public
     {
         wp_register_style('pm-ats', PM_ATS_URL . 'assets/pm-ats.css', [], PM_ATS_VERSION);
         wp_register_script('pm-ats', PM_ATS_URL . 'assets/pm-ats.js', [], PM_ATS_VERSION, true);
+        wp_register_style('pm-ats-wt', PM_ATS_URL . 'assets/pm-ats-wetechs.css', ['pm-ats'], PM_ATS_VERSION);   // v1.3.0
         if (is_singular(PM_ATS_Jobs::CPT)) self::enqueue();
+        // v1.3.0 — pagina con lo shortcode: stili nell'<head> (niente cambio di stile visibile al caricamento)
+        $po = is_singular() ? get_post() : null;
+        if ($po && (has_shortcode((string)$po->post_content, 'pm_ats_jobs') || has_shortcode((string)$po->post_content, 'pm_ats_apply'))) self::enqueue();
     }
 
     public static function enqueue(): void
@@ -50,6 +54,7 @@ final class PM_ATS_Public
         if (!wp_style_is('pm-ats', 'registered')) self::register();
         wp_enqueue_style('pm-ats');
         wp_add_inline_style('pm-ats', self::cssVars());
+        if (PM_ATS_Settings::get('layout') === 'accordion') wp_enqueue_style('pm-ats-wt');   // v1.3.0 — stile anche sulla scheda singola
         wp_enqueue_script('pm-ats');
         wp_localize_script('pm-ats', 'PM_ATS', [
             'tokenUrl' => rest_url(PM_ATS_Rest::NS . '/form-token'),
@@ -66,7 +71,8 @@ final class PM_ATS_Public
         $s = PM_ATS_Settings::all();
         $v = ['--pm-ats-primary' => $s['color_primary'], '--pm-ats-on-primary' => $s['color_primary_text'] ?: '#ffffff',
               '--pm-ats-text' => $s['color_text'], '--pm-ats-muted' => $s['color_muted'], '--pm-ats-card' => $s['color_card'],
-              '--pm-ats-border' => $s['color_border'], '--pm-ats-radius' => (int)$s['radius'] . 'px', '--pm-ats-font' => $s['font_family']];
+              '--pm-ats-border' => $s['color_border'], '--pm-ats-radius' => (int)$s['radius'] . 'px', '--pm-ats-font' => $s['font_family'],
+              '--pm-ats-title' => $s['color_title'] ?? '', '--pm-ats-accent' => $s['color_accent'] ?? ''];
         $css = '.pm-ats{';
         foreach ($v as $k => $x) if ($x !== '' && $x !== null) $css .= $k . ':' . $x . ';';
         return $css . '}' . ($s['custom_css'] !== '' ? "\n" . $s['custom_css'] : '');
@@ -159,6 +165,18 @@ final class PM_ATS_Public
             'department' => sanitize_text_field(wp_unslash((string)($_GET['pmd'] ?? ''))),
             'remote_policy' => sanitize_text_field(wp_unslash((string)($_GET['pmr'] ?? ''))),
         ];
+        // v1.3.0 — layout «accordion» (riferimento Lavora con noi): tutte le posizioni a fisarmonica + modulo con scelta
+        if ($a['layout'] === 'accordion') {
+            $res = PM_ATS_Jobs::query([], 100, 1);
+            $pos = [];
+            foreach ($res['items'] as $p) $pos[(int)$p->ID] = get_the_title($p);
+            wp_enqueue_style('pm-ats-wt');
+            $hero = isset($atts['hero']) ? $atts['hero'] !== '0' : !empty($s['wt_hero']);
+            return self::render('jobs-accordion.php', [
+                'jobs' => $res['items'], 'settings' => $s, 'hero' => $hero, 'closed_notice' => !empty($_GET['pm_ats_closed']),
+                'form' => self::form(0, '', $pos ?: [0 => __('Candidatura spontanea', 'pm-ats')]),
+            ]);
+        }
         $page = max(1, (int)($_GET['pmp'] ?? 1));
         $res = PM_ATS_Jobs::query($f, max(1, (int)$a['per_page']), $page);
         $opts = [];
@@ -182,14 +200,18 @@ final class PM_ATS_Public
         return self::form($job, (string)$a['title']);
     }
 
-    public static function form(int $jobId, string $title = ''): string
+    /** @param array<int,string> $positions v1.3.0: posizioni selezionabili (post_id => titolo); vuoto = posizione fissa $jobId */
+    public static function form(int $jobId, string $title = '', array $positions = []): string
     {
         $k = sanitize_key((string)($_GET['pm_ats_k'] ?? ''));
         $old = $k !== '' ? (array)get_transient('pm_ats_old_' . $k) : [];
         $err = sanitize_key((string)($_GET['pm_ats_err'] ?? ''));
         $okRef = sanitize_key((string)($_GET['pm_ats_ok'] ?? ''));
-        $forThis = ((int)($_GET['pm_ats_job'] ?? -1)) === $jobId;
+        // modulo con scelta della posizione: l'esito è suo qualunque posizione sia stata scelta
+        $forThis = $positions ? !empty($_GET['pm_ats_sel']) : ((int)($_GET['pm_ats_job'] ?? -1)) === $jobId;
+        if ($positions && $forThis && isset($_GET['pm_ats_job'])) $old['job_id'] = (int)$_GET['pm_ats_job'];
         return self::render('apply-form.php', [
+            'positions' => $positions,
             'job_id' => $jobId,
             'title' => $title !== '' ? $title : ($jobId ? get_the_title($jobId) : __('Candidatura spontanea', 'pm-ats')),
             'old' => $forThis ? $old : [], 'error' => $forThis ? $err : '', 'error_field' => $forThis ? sanitize_key((string)($_GET['pm_ats_f'] ?? '')) : '',
@@ -235,8 +257,10 @@ final class PM_ATS_Public
         $back = wp_validate_redirect(wp_unslash((string)($_POST['_back'] ?? '')), self::listUrl());
         $back = remove_query_arg(['pm_ats_err', 'pm_ats_ok', 'pm_ats_k', 'pm_ats_f', 'pm_ats_job'], $back);
         $job = (int)($_POST['job_id'] ?? 0);
-        $go = static function (array $q) use ($back, $job): void {
-            wp_safe_redirect(add_query_arg($q + ['pm_ats_job' => $job], $back) . '#pm-ats-form', 303); exit;
+        $sel = !empty($_POST['_pm_ats_sel']);   // v1.3.0 — modulo con scelta della posizione
+        $back = remove_query_arg('pm_ats_sel', $back);
+        $go = static function (array $q) use ($back, $job, $sel): void {
+            wp_safe_redirect(add_query_arg($q + ['pm_ats_job' => $job] + ($sel ? ['pm_ats_sel' => 1] : []), $back) . '#pm-ats-form', 303); exit;
         };
         $fail = static function (string $code, string $field = '') use ($go): void {
             $k = strtolower(wp_generate_password(12, false));

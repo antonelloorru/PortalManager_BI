@@ -35,7 +35,17 @@ final class PM_ATS_Settings
             'color_border'       => '#e5e7eb',
             'radius'             => 10,
             'font_family'        => '',
-            'layout'             => 'grid',        // grid | list
+            'layout'             => 'grid',        // grid | list | accordion (v1.3.0: riferimento «Lavora con noi»)
+            // v1.3.0 — layout «accordion» (riferimento wetechs.it/lavora-con-noi)
+            'color_title'        => '#234d85',     // titoli, voci della fisarmonica
+            'color_accent'       => '#ec7f31',     // evidenza nel titolo, riquadro del modulo
+            'wt_hero'            => 0,             // sezione di testata (se la pagina non ne ha già una)
+            'wt_hero_title'      => 'Lavora con Noi',
+            'wt_hero_image'      => '',
+            'wt_title'           => 'Unisciti a {We}Tech\'s!',   // {testo} = evidenziato con il colore d'accento
+            'wt_intro'           => 'Siamo sempre alla ricerca di talenti motivati e appassionati di tecnologia. Scopri le posizioni aperte e inviaci la tua candidatura attraverso il modulo qui sotto.',
+            'wt_list_title'      => 'Posizioni Aperte',
+            'wt_form_title'      => 'Compila il form',
             'per_page'           => 12,
             'custom_css'         => '',
             'privacy_url'        => '',
@@ -71,10 +81,11 @@ final class PM_ATS_Settings
         'connessione' => ['client_id', 'allowed_ips', 'ip_source'],
         'pagina'      => ['list_page_id', 'jobs_slug', 'auto_form', 'allow_spontaneous', 'phone_required', 'show_salary', 'privacy_url', 'privacy_version',
                           'cv_types', 'cv_max_mb', 'rate_per_day', 'min_fill_seconds', 'notify_email', 'confirm_candidate'],
-        'aspetto'     => ['color_primary', 'color_primary_text', 'color_text', 'color_muted', 'color_card', 'color_border', 'radius', 'font_family', 'layout', 'per_page', 'custom_css'],
+        'aspetto'     => ['color_primary', 'color_primary_text', 'color_text', 'color_muted', 'color_card', 'color_border', 'radius', 'font_family', 'layout', 'per_page', 'custom_css',
+                          'color_title', 'color_accent', 'wt_hero', 'wt_hero_title', 'wt_hero_image', 'wt_title', 'wt_intro', 'wt_list_title', 'wt_form_title'],
         'dati'        => ['company_name', 'company_logo', 'purge_after_ack', 'retention_synced', 'retention_pending', 'remove_on_uninstall'],
     ];
-    public const CHECKBOXES = ['auto_form', 'allow_spontaneous', 'phone_required', 'show_salary', 'confirm_candidate', 'purge_after_ack', 'remove_on_uninstall'];
+    public const CHECKBOXES = ['auto_form', 'allow_spontaneous', 'phone_required', 'show_salary', 'confirm_candidate', 'purge_after_ack', 'remove_on_uninstall', 'wt_hero'];
 
     /**
      * v1.1.0 — Aggiorna solo le chiavi fornite (wizard, schede): unisce alle impostazioni correnti e sanifica tutto.
@@ -141,7 +152,12 @@ final class PM_ATS_Settings
         if ($o['color_primary'] === '') $o['color_primary'] = $d['color_primary'];
         $o['radius']            = max(0, min(30, (int)($in['radius'] ?? 10)));
         $o['font_family']       = preg_replace('/[^A-Za-z0-9 ,\'"-]/', '', (string)($in['font_family'] ?? ''));
-        $o['layout']            = in_array($in['layout'] ?? '', ['grid', 'list'], true) ? $in['layout'] : 'grid';
+        $o['layout']            = in_array($in['layout'] ?? '', ['grid', 'list', 'accordion'], true) ? $in['layout'] : 'grid';
+        foreach (['color_title', 'color_accent'] as $k) $o[$k] = (string)(sanitize_hex_color((string)($in[$k] ?? '')) ?? '') ?: $d[$k];
+        $o['wt_hero']           = empty($in['wt_hero']) ? 0 : 1;
+        $o['wt_hero_image']     = esc_url_raw((string)($in['wt_hero_image'] ?? ''));
+        foreach (['wt_hero_title', 'wt_title', 'wt_list_title', 'wt_form_title'] as $k) $o[$k] = mb_substr(sanitize_text_field((string)($in[$k] ?? $d[$k])), 0, 150);
+        $o['wt_intro']          = mb_substr(sanitize_textarea_field((string)($in['wt_intro'] ?? $d['wt_intro'])), 0, 2000);
         $o['per_page']          = max(1, min(100, (int)($in['per_page'] ?? 12)));
         $o['custom_css']        = trim(wp_strip_all_tags((string)($in['custom_css'] ?? '')));
         $o['privacy_url']       = esc_url_raw((string)($in['privacy_url'] ?? ''));

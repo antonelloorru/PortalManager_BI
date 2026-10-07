@@ -1,8 +1,10 @@
 <?php
 /**
  * Dettaglio posizione (sostituisce il contenuto del post). Sovrascrivibile in <tema>/pm-ats/job-single.php
- * @version 1.1.0
+ * @version 1.3.0
  * Variabili: $post_id, $job (array dati PortalManager), $list_url, $form (HTML del modulo o '')
+ * Sezioni: PM_ATS_Jobs::sectionsHtml() — ordine vincolante (Chi siamo, Informazioni sull'offerta, Competenze,
+ * Costituisce titolo preferenziale, Cosa offriamo). Le copie nel tema devono usare la stessa funzione.
  */
 defined('ABSPATH') || exit;
 ?>
@@ -15,12 +17,7 @@ defined('ABSPATH') || exit;
     <p><a class="pm-ats-btn" href="#pm-ats-form"><?php esc_html_e('Candidati ora', 'pm-ats'); ?></a></p>
   <?php endif; ?>
 
-  <?php foreach (PM_ATS_Jobs::SECTIONS as $k => $h): if (($job[$k] ?? '') === '') continue; ?>
-    <section class="pm-ats-section pm-ats-section-<?php echo esc_attr($k); ?>">
-      <?php if ($h !== ''): ?><h2><?php echo esc_html($h); ?></h2><?php endif; ?>
-      <?php echo PM_ATS_Jobs::format((string)$job[$k]); // phpcs:ignore -- testo già escapato in format() ?>
-    </section>
-  <?php endforeach; ?>
+  <?php echo PM_ATS_Jobs::sectionsHtml($job, 'h2'); // phpcs:ignore -- testo escapato in sectionsHtml()/format() ?>
 
   <?php echo $form; // phpcs:ignore ?>
 

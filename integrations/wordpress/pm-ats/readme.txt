@@ -3,7 +3,7 @@ Contributors: portalmanager
 Requires at least: 6.0
 Tested up to: 6.8
 Requires PHP: 8.0
-Stable tag: 1.2.0
+Stable tag: 1.3.0
 License: Proprietary
 
 Pubblica sul sito le posizioni aperte gestite in PortalManager e raccoglie le candidature con CV.
@@ -62,6 +62,9 @@ X-PM-Signature = hex(HMAC-SHA256(segreto, METODO\nROTTA\nTIMESTAMP\nNONCE\nsha25
 
 == Upgrade Notice ==
 
+= 1.3.0 =
+Ordine vincolante delle sezioni della Job Description e nuovo layout «Fisarmonica con modulo a lato» (Lavora con noi). Le copie dei template nel tema vanno aggiornate (job-single.php, apply-form.php).
+
 = 1.2.0 =
 Pubblicazione puntuale (pubblicata / bozza / ritirata) decisa in PortalManager per ogni posizione e anteprima della scheda annuncio. Richiede PortalManager 1.10.18 per le nuove funzioni.
 
@@ -73,6 +76,12 @@ Configurazione guidata, impostazioni a schede, codice di connessione per PortalM
 Le installazioni 1.0.x già configurate non devono ripetere la configurazione.
 
 == Changelog ==
+
+= 1.3.0 =
+* Struttura vincolante della Job Description: Chi siamo, Informazioni sull'offerta, Competenze, Costituisce titolo preferenziale, Cosa offriamo (PM_ATS_Jobs::STRUCTURE / sections() / sectionsHtml()) su scheda, elenco, anteprima, estratto e dati strutturati.
+* Il campo «description» di PortalManager (note interne) non viene più pubblicato né conservato.
+* Layout «Fisarmonica con modulo a lato» che replica la pagina Lavora con noi: testata facoltativa, titolo con evidenza, posizioni a fisarmonica, modulo nel riquadro d'accento con scelta della posizione.
+* Nuove impostazioni Aspetto: colori titoli/accento, testata, titoli e introduzione.
 
 = 1.2.0 =
 * Stato di pubblicazione per posizione (web_status publish | draft) da PortalManager; le bozze non sono visibili e non vengono segnalate come «chiuse».

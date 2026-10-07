@@ -230,7 +230,7 @@ final class PM_ATS_Setup
         <p><?php esc_html_e('Testo e font sono ereditati dal tema; il resto è nella scheda «Aspetto» delle Impostazioni.', 'pm-ats'); ?></p>
         <table class="form-table" role="presentation">
           <tr><th><?php esc_html_e('Colore principale', 'pm-ats'); ?></th><td><input type="text" class="pm-ats-color" name="<?php echo $f('color_primary'); ?>" value="<?php echo esc_attr($s['color_primary']); ?>"></td></tr>
-          <tr><th><?php esc_html_e('Elenco', 'pm-ats'); ?></th><td><select name="<?php echo $f('layout'); ?>"><option value="grid" <?php selected($s['layout'], 'grid'); ?>><?php esc_html_e('Griglia di schede', 'pm-ats'); ?></option><option value="list" <?php selected($s['layout'], 'list'); ?>><?php esc_html_e('Lista', 'pm-ats'); ?></option></select>
+          <tr><th><?php esc_html_e('Elenco', 'pm-ats'); ?></th><td><select name="<?php echo $f('layout'); ?>"><option value="grid" <?php selected($s['layout'], 'grid'); ?>><?php esc_html_e('Griglia di schede', 'pm-ats'); ?></option><option value="list" <?php selected($s['layout'], 'list'); ?>><?php esc_html_e('Lista', 'pm-ats'); ?></option><option value="accordion" <?php selected($s['layout'], 'accordion'); ?>><?php esc_html_e('Fisarmonica con modulo a lato (Lavora con noi)', 'pm-ats'); ?></option></select>
             <input type="number" min="1" max="100" name="<?php echo $f('per_page'); ?>" value="<?php echo (int)$s['per_page']; ?>" class="small-text"> <?php esc_html_e('per pagina', 'pm-ats'); ?></td></tr>
         </table>
         <?php
