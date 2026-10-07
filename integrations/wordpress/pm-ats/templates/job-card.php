@@ -1,6 +1,7 @@
 <?php
 /**
  * Scheda sintetica di una posizione. Sovrascrivibile in <tema>/pm-ats/job-card.php
+ * @version 1.1.0
  * Variabili: $post (WP_Post), $job (array dati PortalManager)
  */
 defined('ABSPATH') || exit;

@@ -2,7 +2,8 @@
 /**
  * API REST di interscambio con PortalManager (namespace pm-ats/v1). Tutte firmate HMAC (PM_ATS_Auth).
  *
- *   GET  /sync/status                     stato e versione (test di connessione)
+ *   GET  /sync/status                     stato e versioni: plugin, api, db, schema impostazioni, onboarding (test di connessione)
+ * Ogni risposta riporta l'intestazione X-PM-ATS-Version: <plugin>; api=<n> (v1.1.0).
  *   POST /sync/jobs                       {mode:"full"|"delta", items:[…], closed:[id…]} → posizioni
  *   GET  /sync/applications?limit=&after= candidature da importare (senza CV)
  *   GET  /sync/applications/{uuid}/cv     CV (binario, Content-Type del file, X-PM-SHA256)
@@ -33,7 +34,10 @@ final class PM_ATS_Rest
     public static function status(): WP_REST_Response
     {
         PM_ATS_Log::add('status', 200);
-        return self::ok(['plugin' => PM_ATS_VERSION, 'wordpress' => get_bloginfo('version'), 'site' => home_url('/'),
+        $ob = PM_ATS_Upgrade::onboarding();
+        return self::ok(['plugin' => PM_ATS_VERSION, 'api' => PM_ATS_API_VERSION, 'db' => PM_ATS_DB_VERSION, 'settings_schema' => PM_ATS_SETTINGS_VERSION,
+            'min_pm' => PM_ATS_MIN_PM, 'onboarding' => $ob['status'], 'php' => PHP_VERSION,
+            'wordpress' => get_bloginfo('version'), 'site' => home_url('/'),
             'jobs_published' => PM_ATS_Jobs::count(), 'applications' => PM_ATS_Applications::counts(),
             'list_url' => PM_ATS_Public::listUrl(), 'time' => time()]);
     }
@@ -90,6 +94,7 @@ final class PM_ATS_Rest
     {
         $res = new WP_REST_Response(['ok' => true] + $data, 200);
         $res->header('Cache-Control', 'no-store');
+        $res->header('X-PM-ATS-Version', PM_ATS_VERSION . '; api=' . PM_ATS_API_VERSION);   // v1.1.0
         return $res;
     }
 

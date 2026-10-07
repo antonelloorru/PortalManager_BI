@@ -17,6 +17,7 @@ if ($rel !== '' && preg_match('/^pm-ats-private-[a-f0-9]{16}$/', $rel)) {
 $wpdb->query("DROP TABLE IF EXISTS {$wpdb->prefix}pm_ats_applications");
 $wpdb->query("DROP TABLE IF EXISTS {$wpdb->prefix}pm_ats_log");
 foreach ((array)get_posts(['post_type' => 'pm_job', 'post_status' => 'any', 'numberposts' => -1, 'fields' => 'ids']) as $id) wp_delete_post((int)$id, true);
-foreach (['pm_ats_settings', 'pm_ats_secret_enc', 'pm_ats_db_version', 'pm_ats_private_dir', 'pm_ats_last_contact', 'pm_ats_last_jobs_sync', 'pm_ats_flush_rewrite'] as $o) delete_option($o);
+foreach (['pm_ats_settings', 'pm_ats_secret_enc', 'pm_ats_db_version', 'pm_ats_private_dir', 'pm_ats_last_contact', 'pm_ats_last_jobs_sync', 'pm_ats_flush_rewrite',
+          'pm_ats_version', 'pm_ats_version_history', 'pm_ats_settings_version', 'pm_ats_onboarding'] as $o) delete_option($o);
 $role = get_role('administrator');
 if ($role) $role->remove_cap('pm_ats_view');

@@ -1,6 +1,7 @@
 <?php
 /**
- * Impostazioni del plugin (opzione unica pm_ats_settings) e segreto condiviso con PortalManager.
+ * Impostazioni del plugin (opzione unica pm_ats_settings, schema PM_ATS_SETTINGS_VERSION) e segreto condiviso con PortalManager.
+ * v1.1.0 — salvataggio per scheda / passo del wizard (merge), codice di connessione per PortalManager.
  * Il segreto si legge, in ordine, dalla costante PM_ATS_SECRET (wp-config.php, consigliato) o
  * dall'opzione pm_ats_secret_enc cifrata AES-256-GCM con una chiave derivata dalle salt di WordPress.
  */
@@ -65,8 +66,59 @@ final class PM_ATS_Settings
         return $a[$k] ?? null;
     }
 
+    /** v1.1.0 — campi per scheda della pagina Impostazioni (salvataggio parziale: le altre schede restano invariate). */
+    public const TABS = [
+        'connessione' => ['client_id', 'allowed_ips', 'ip_source'],
+        'pagina'      => ['list_page_id', 'jobs_slug', 'auto_form', 'allow_spontaneous', 'phone_required', 'show_salary', 'privacy_url', 'privacy_version',
+                          'cv_types', 'cv_max_mb', 'rate_per_day', 'min_fill_seconds', 'notify_email', 'confirm_candidate'],
+        'aspetto'     => ['color_primary', 'color_primary_text', 'color_text', 'color_muted', 'color_card', 'color_border', 'radius', 'font_family', 'layout', 'per_page', 'custom_css'],
+        'dati'        => ['company_name', 'company_logo', 'purge_after_ack', 'retention_synced', 'retention_pending', 'remove_on_uninstall'],
+    ];
+    public const CHECKBOXES = ['auto_form', 'allow_spontaneous', 'phone_required', 'show_salary', 'confirm_candidate', 'purge_after_ack', 'remove_on_uninstall'];
+
+    /**
+     * v1.1.0 — Aggiorna solo le chiavi fornite (wizard, schede): unisce alle impostazioni correnti e sanifica tutto.
+     * Le caselle di controllo dei campi indicati in $keys valgono 0 se assenti.
+     */
+    public static function merge(array $in, array $keys = []): array
+    {
+        $base = self::all();
+        foreach ($keys ?: array_keys($in) as $k) {
+            if (!array_key_exists($k, self::defaults())) continue;
+            if (in_array($k, self::CHECKBOXES, true)) $base[$k] = empty($in[$k]) ? 0 : 1;
+            elseif (array_key_exists($k, $in)) $base[$k] = $in[$k];
+        }
+        return self::sanitize($base);
+    }
+
+    public static function save(array $in, array $keys = []): void
+    {
+        update_option(self::OPTION, self::merge($in, $keys));
+    }
+
+    /**
+     * v1.1.0 — Codice di connessione per PortalManager: «PMATS1.» + base64url(JSON {v, url, client, secret, plugin, api}).
+     * Contiene il segreto: mostrato una sola volta, come il segreto.
+     */
+    public static function connectionCode(string $secret): string
+    {
+        $j = wp_json_encode(['v' => 1, 'url' => rest_url(PM_ATS_Rest::NS), 'client' => (string)self::get('client_id'), 'secret' => $secret,
+                             'plugin' => PM_ATS_VERSION, 'api' => PM_ATS_API_VERSION, 'site' => home_url('/')]);
+        return 'PMATS1.' . rtrim(strtr(base64_encode((string)$j), '+/', '-_'), '=');
+    }
+
     public static function sanitize(array $in): array
     {
+        // v1.1.0 — salvataggio da una scheda della pagina Impostazioni: solo i campi di quella scheda
+        if (isset($in['_tab']) && isset(self::TABS[$in['_tab']])) {
+            $tab = (string)$in['_tab']; unset($in['_tab']);
+            $base = self::all();
+            foreach (self::TABS[$tab] as $k) {
+                if (in_array($k, self::CHECKBOXES, true)) $base[$k] = empty($in[$k]) ? 0 : 1;
+                elseif (array_key_exists($k, $in)) $base[$k] = $in[$k];
+            }
+            $in = $base;
+        }
         $d = self::defaults(); $o = [];
         $o['client_id']         = preg_replace('/[^A-Za-z0-9_.-]/', '', (string)($in['client_id'] ?? $d['client_id'])) ?: $d['client_id'];
         $ips = [];

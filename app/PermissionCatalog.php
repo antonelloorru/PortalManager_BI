@@ -52,6 +52,8 @@ final class PermissionCatalog
             'candidato_profilo.php'      => ['↳ Dossier candidato', 'Sub-route: accesso via lista Candidati'],
             'recruiting_agenzie.php'     => ['Agenzie selezione', 'Anagrafica + contatti'],
             'wp_ats_sync.php'            => ['Sito web (WordPress)', 'Pubblicazione posizioni e prelievo candidature dal sito'],
+            'wp_ats_settings.php'        => ['Sito web — Impostazioni', 'Connessione al plugin WordPress (solo Super Admin)'],
+            'wp_ats_setup.php'           => ['Sito web — Configurazione guidata', 'Wizard connessione plugin WordPress (solo Super Admin)'],
             'recruiting_contratti.php'   => ['Contratti agenzie', 'Upload firmato + versioning'],
             'documenti.php'              => ['Archivio documenti', 'Gestione documentale con ACL'],
             'publish_posizione.php'      => ['Pubblicazione posizioni', 'Multi-channel posting'],

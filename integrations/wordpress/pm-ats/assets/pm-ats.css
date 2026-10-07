@@ -1,3 +1,4 @@
+/*! PortalManager ATS — pm-ats.css · @version 1.1.0 */
 /* PortalManager ATS — stile del frontend. Colori, raggio e font sono variabili (Impostazioni del plugin);
    testo e font ereditano dal tema se non impostati. Tutto è racchiuso in .pm-ats per non toccare il tema. */
 .pm-ats{--pm-ats-primary:#ee7e02;--pm-ats-on-primary:#fff;--pm-ats-text:inherit;--pm-ats-muted:#6b7280;--pm-ats-card:#fff;

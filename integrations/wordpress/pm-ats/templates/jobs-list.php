@@ -1,6 +1,7 @@
 <?php
 /**
  * Elenco posizioni aperte. Sovrascrivibile in <tema>/pm-ats/jobs-list.php
+ * @version 1.1.0
  * Variabili: $jobs (WP_Post[]), $total, $pages, $page, $filters, $options, $show_filters, $layout, $spontaneous, $closed_notice
  */
 defined('ABSPATH') || exit;

@@ -1,3 +1,4 @@
+/*! PortalManager ATS — pm-ats.js · @version 1.1.0 */
 /* PortalManager ATS — miglioramenti progressivi del modulo (il modulo funziona anche senza JavaScript). */
 (function () {
   'use strict';

@@ -38,7 +38,7 @@ final class Router
 
         // Recruiting
         'recruiting_posizioni', 'recruiting_candidati', 'candidato_profilo',
-        'publish_posizione', 'recruiting_agenzie', 'recruiting_contratti', 'wp_ats_sync',
+        'publish_posizione', 'recruiting_agenzie', 'recruiting_contratti', 'wp_ats_sync', 'wp_ats_settings', 'wp_ats_setup',
         'documenti',
 
         // Admin

@@ -1,6 +1,7 @@
 <?php
 /**
  * Dettaglio posizione (sostituisce il contenuto del post). Sovrascrivibile in <tema>/pm-ats/job-single.php
+ * @version 1.1.0
  * Variabili: $post_id, $job (array dati PortalManager), $list_url, $form (HTML del modulo o '')
  */
 defined('ABSPATH') || exit;

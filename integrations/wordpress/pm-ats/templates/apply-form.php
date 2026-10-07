@@ -1,6 +1,7 @@
 <?php
 /**
  * Modulo di candidatura. Sovrascrivibile in <tema>/pm-ats/apply-form.php
+ * @version 1.1.0
  * Variabili: $job_id (0 = spontanea), $title, $old, $error, $error_field, $error_text, $success_ref, $settings, $token, $action
  * I nomi dei campi (name="…") NON vanno modificati.
  */

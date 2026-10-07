@@ -102,6 +102,8 @@ class MenuManager
                     ['page' => 'recruiting_candidati',  'label' => 'Pipeline candidati',   'icon' => 'fa-users-line'],
                     ['page' => 'publish_posizione',     'label' => 'Pubblica su portali',  'icon' => 'fa-bullhorn'],
                     ['page' => 'wp_ats_sync',           'label' => 'Sito web (WordPress)', 'icon' => 'fa-globe'],
+                    ['page' => 'wp_ats_settings',       'label' => 'Sito web — Impostazioni', 'icon' => 'fa-sliders'],
+                    ['page' => 'wp_ats_setup',          'label' => 'Sito web — Configurazione guidata', 'icon' => 'fa-wand-magic-sparkles'],
                     ['page' => 'candidato_profilo',     'label' => 'Dossier candidati',    'icon' => 'fa-folder-tree'],
                     ['page' => 'documenti',             'label' => 'Archivio documenti',   'icon' => 'fa-folder-open'],
                     ['page' => 'manage_clients',        'label' => 'Anagrafica clienti',   'icon' => 'fa-handshake'],

@@ -1,3 +1,4 @@
+/*! PortalManager ATS — admin.css · @version 1.1.0 · stile delle pagine di amministrazione */
 .pm-ats-admin .pm-ats-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin:16px 0}
 .pm-ats-admin .pm-ats-kpi{background:#fff;border:1px solid #dcdcde;border-left:4px solid #ee7e02;border-radius:4px;padding:12px 14px}
 .pm-ats-admin .pm-ats-kpi b{display:block;font-size:22px;line-height:1.2}
@@ -8,3 +9,20 @@
 .pm-ats-admin .pm-ats-st-synced{background:#edfaef;color:#1a6f2b}
 .pm-ats-admin .pm-ats-st-error{background:#fcf0f1;color:#a00}
 .pm-ats-admin table.widefat td{vertical-align:middle}
+
+/* v1.1.0 — configurazione guidata e impostazioni a schede */
+.pm-ats-admin .pm-ats-ver{font-size:12px;font-weight:600;color:#646970;background:#f0f0f1;border-radius:10px;padding:2px 8px;vertical-align:middle}
+.pm-ats-steps{display:flex;flex-wrap:wrap;gap:6px;list-style:none;margin:16px 0;padding:0;counter-reset:s}
+.pm-ats-steps li{margin:0}
+.pm-ats-steps a{display:flex;align-items:center;gap:6px;padding:7px 12px;border:1px solid #dcdcde;border-radius:20px;background:#fff;text-decoration:none;color:#50575e}
+.pm-ats-steps a span{display:inline-flex;width:20px;height:20px;border-radius:50%;background:#dcdcde;color:#fff;font-size:11px;font-weight:700;align-items:center;justify-content:center}
+.pm-ats-steps li.is-done a span{background:#00a32a}
+.pm-ats-steps li.is-current a{border-color:#ee7e02;color:#1d2327;font-weight:600}
+.pm-ats-steps li.is-current a span{background:#ee7e02}
+.pm-ats-setup-card{background:#fff;border:1px solid #dcdcde;border-radius:6px;padding:8px 20px 4px;max-width:960px}
+.pm-ats-setup-nav{display:flex;gap:8px;justify-content:flex-end;border-top:1px solid #f0f0f1;padding-top:12px}
+.pm-ats-checks td:first-child{width:28px;text-align:center;font-weight:700}
+.pm-ats-ck-ok{color:#00a32a}.pm-ats-ck-warn{color:#dba617}.pm-ats-ck-ko{color:#d63638}
+.pm-ats-code{background:#fcf9e8;border-left:4px solid #dba617;padding:4px 12px;margin:8px 0}
+.pm-ats-maint{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.pm-ats-maint form{margin:0}
