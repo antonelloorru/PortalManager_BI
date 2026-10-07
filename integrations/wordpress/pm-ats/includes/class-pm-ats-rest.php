@@ -9,6 +9,8 @@
  *   GET  /sync/applications?limit=&after= candidature da importare (senza CV)
  *   GET  /sync/applications/{uuid}/cv     CV (binario, Content-Type del file, X-PM-SHA256)
  *   POST /sync/ack                        {items:[{uuid, ok, pm_candidate_id, pm_application_id, error}]}
+ *   POST /sync/preview                    {item:{…posizione…, web_status}} → {url, token, expires, post_url, post_status} (v1.2.0)
+ * /sync/jobs: ogni item può avere web_status = publish (visibile, predefinito) | draft (bozza: non visibile) (v1.2.0).
  */
 defined('ABSPATH') || exit;
 
@@ -48,6 +50,7 @@ final class PM_ATS_Rest
             'args' => ['limit' => ['type' => 'integer', 'default' => 20, 'minimum' => 1, 'maximum' => 100], 'after' => ['type' => 'integer', 'default' => 0, 'minimum' => 0]]]);
         register_rest_route(self::NS, '/sync/applications/(?P<uuid>[a-f0-9]{32})/cv', ['methods' => 'GET', 'callback' => [self::class, 'cv'], 'permission_callback' => $auth]);
         register_rest_route(self::NS, '/sync/ack', ['methods' => 'POST', 'callback' => [self::class, 'ack'], 'permission_callback' => $auth]);
+        register_rest_route(self::NS, '/sync/preview', ['methods' => 'POST', 'callback' => [self::class, 'preview'], 'permission_callback' => $auth]);   // v1.2.0
     }
 
     public static function status(): WP_REST_Response
@@ -70,6 +73,16 @@ final class PM_ATS_Rest
         $r = PM_ATS_Jobs::sync($b['items'], $full, array_map('intval', (array)($b['closed'] ?? [])));
         PM_ATS_Log::add('jobs', 200, sprintf('%s: +%d ~%d =%d -%d err %d', $full ? 'full' : 'delta', $r['created'], $r['updated'], $r['unchanged'], $r['withdrawn'], count($r['errors'])));
         return self::ok($r);
+    }
+
+    /** v1.2.0 — anteprima della scheda: {item:{…posizione…, web_status}} → URL temporaneo ?pm_ats_preview=<token>. */
+    public static function preview(WP_REST_Request $req): WP_REST_Response
+    {
+        $b = json_decode((string)$req->get_body(), true);
+        $p = is_array($b) && is_array($b['item'] ?? null) ? PM_ATS_Jobs::preview($b['item']) : null;
+        if ($p === null) return self::fail('bad_payload', 400);
+        PM_ATS_Log::add('preview', 200, 'POS ' . (int)$b['item']['id']);
+        return self::ok($p);
     }
 
     public static function applications(WP_REST_Request $req): WP_REST_Response

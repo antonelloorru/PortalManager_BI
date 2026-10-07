@@ -325,6 +325,36 @@ $active_tab   = $_GET['tab'] ?? 'publish';
 </div>
 
 <?=$msg?>
+<?= $_SESSION['flash_msg'] ?? '' ?><?php unset($_SESSION['flash_msg']); ?>
+
+<?php // ── v1.10.18 — Sito web (WordPress): stato di pubblicazione della posizione + anteprima ───────────────
+  $wpWs = (string)($pos['web_status'] ?? 'publish');
+  $wpPub = null;
+  foreach ($pubs as $pp) if (($pp['channel'] ?? '') === 'wordpress') { $wpPub = $pp; break; }
+  $wpOpen = (bool)$pdo->query("SELECT COUNT(*) FROM v_public_open_positions WHERE id = " . (int)$pos_id)->fetchColumn();
+  $wpCan = can('edit', 'wp_ats_sync.php');
+  $wpLbl = ['publish' => 'Pubblicata', 'draft' => 'Bozza sul sito', 'off' => 'Non pubblicare'];
+?>
+<div class="card no-print" style="margin-bottom:16px;border-left:4px solid #21759b">
+  <div class="card-header"><span class="card-title"><i class="fa-brands fa-wordpress" style="color:#21759b"></i> Sito web aziendale (WordPress)</span>
+    <span style="font-size:12px">Sul sito: <strong><?= h(['published' => 'pubblicata', 'draft' => 'bozza (non visibile)', 'removed' => 'ritirata'][$wpPub['status'] ?? ''] ?? 'mai inviata') ?></strong>
+      <?php if (($wpPub['status'] ?? '') === 'published' && !empty($wpPub['channel_url'])): ?> · <a href="<?= h($wpPub['channel_url']) ?>" target="_blank" rel="noopener">apri <i class="fa-solid fa-arrow-up-right-from-square"></i></a><?php endif; ?></span></div>
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+    <?php if ($wpCan): ?>
+    <form method="POST" action="<?= url_safe('wp_ats_sync') ?>" style="margin:0;display:flex;gap:6px;align-items:center">
+      <?= Csrf::field() ?><input type="hidden" name="action" value="web_status"><input type="hidden" name="pos_id" value="<?= (int)$pos_id ?>"><input type="hidden" name="back" value="pos">
+      <label style="font-size:12px;margin:0">Pubblicazione</label>
+      <select name="web_status" style="width:auto"><?php foreach ($wpLbl as $k => $l): ?><option value="<?= $k ?>" <?= $wpWs === $k ? 'selected' : '' ?>><?= h($l) ?></option><?php endforeach; ?></select>
+      <button class="btn btn-sm btn-primary"><i class="fa-solid fa-paper-plane"></i> Applica sul sito</button>
+    </form>
+    <?php else: ?><span style="font-size:12px">Pubblicazione: <strong><?= h($wpLbl[$wpWs] ?? $wpWs) ?></strong></span><?php endif; ?>
+    <a class="btn btn-sm" target="_blank" rel="noopener" href="<?= url_safe('wp_ats_sync', ['preview' => (int)$pos_id]) ?>"><i class="fa-solid fa-eye"></i> Anteprima annuncio</a>
+  </div>
+  <div style="font-size:11px;color:var(--muted);margin-top:6px">
+    <?= $wpOpen ? 'Posizione inviabile al sito.' : 'Non inviabile finché non è <b>aperta</b>, avviata e non scaduta: l\'anteprima è comunque disponibile.' ?>
+    Pubblicata = visibile · Bozza sul sito = inviata ma non visibile · Non pubblicare = ritirata o mai inviata. «Applica» invia subito la sola posizione.
+  </div>
+</div>
 
 <?php if($pos['status'] !== 'open'): ?>
 <div class="alert alert-warning">

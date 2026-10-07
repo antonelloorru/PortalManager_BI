@@ -62,7 +62,7 @@ final class WpAtsSync
             $r = $this->c->request('POST', '/sync/jobs', ['mode' => 'full', 'items' => $items, 'closed' => []]);
             if ($r['status'] !== 200 || empty($r['json']['ok'])) return $this->finish($id, false, WpAtsClient::describe($r), ['jobs_sent' => count($items)]);
             $j = $r['json'];
-            $this->recordPublications((array)($j['map'] ?? []), $userId);
+            $this->recordPublications((array)($j['map'] ?? []), $userId, true);
             $cnt = ['jobs_sent' => count($items), 'jobs_created' => (int)$j['created'], 'jobs_updated' => (int)$j['updated'], 'jobs_withdrawn' => (int)$j['withdrawn']];
             $err = (array)($j['errors'] ?? []);
             $msg = sprintf('Posizioni inviate %d: nuove %d, aggiornate %d, invariate %d, ritirate %d%s', count($items), $j['created'], $j['updated'], $j['unchanged'], $j['withdrawn'],
@@ -136,38 +136,107 @@ final class WpAtsSync
 
     /* ── posizioni ───────────────────────────────────────────────────── */
 
+    /** Campi della posizione inviati al sito. */
+    public const ITEM_COLS = 'id, title, department, location, contract_type, remote_policy, description, required_skills, nice_to_have,
+                              hard_skills, soft_skills, benefits, we_offer, presentation_text, offer_info, gender_disclaimer,
+                              positions_expected, opened_at, target_date';
+
+    /**
+     * Posizioni da inviare: aperte, avviate, non scadute (v_public_open_positions) e con stato sito ≠ «off» (v1.10.18).
+     * web_status: publish = visibile | draft = bozza sul sito (non visibile, anteprima) | off = non pubblicare / ritirare.
+     */
     public function openPositions(): array
     {
-        $rows = $this->pdo->query("SELECT id, title, department, location, contract_type, remote_policy, description, required_skills, nice_to_have,
-                                          hard_skills, soft_skills, benefits, we_offer, presentation_text, offer_info, gender_disclaimer,
-                                          positions_expected, opened_at, target_date
-                                     FROM v_public_open_positions ORDER BY opened_at DESC, id DESC")->fetchAll(PDO::FETCH_ASSOC);
-        foreach ($rows as &$r) {
-            $r['id'] = (int)$r['id']; $r['positions_expected'] = (int)$r['positions_expected'];
-            $r['code'] = 'POS-' . str_pad((string)$r['id'], 4, '0', STR_PAD_LEFT);
-            foreach ($r as $k => $v) if (is_string($v)) $r[$k] = trim($v);
-        }
-        return $rows;
+        $rows = $this->pdo->query("SELECT v.*, COALESCE(jp.web_status, 'publish') AS web_status
+                                     FROM (SELECT " . self::ITEM_COLS . " FROM v_public_open_positions) v JOIN job_positions jp ON jp.id = v.id
+                                    WHERE COALESCE(jp.web_status, 'publish') <> 'off'
+                                    ORDER BY v.opened_at DESC, v.id DESC")->fetchAll(PDO::FETCH_ASSOC);
+        return array_map([self::class, 'item'], $rows);
     }
 
-    private function recordPublications(array $map, ?int $userId): void
+    public static function item(array $r): array
+    {
+        $r['id'] = (int)$r['id']; $r['positions_expected'] = (int)$r['positions_expected'];
+        $r['code'] = 'POS-' . str_pad((string)$r['id'], 4, '0', STR_PAD_LEFT);
+        foreach ($r as $k => $v) if (is_string($v)) $r[$k] = trim($v);
+        if (!in_array($r['web_status'] ?? 'publish', ['publish', 'draft'], true)) $r['web_status'] = 'publish';
+        return $r;
+    }
+
+    /** v1.10.18 — Posizione qualsiasi (anche non aperta) come item per l'anteprima. */
+    public function positionItem(int $posId): ?array
+    {
+        $st = $this->pdo->prepare("SELECT " . self::ITEM_COLS . ", web_status, status FROM job_positions WHERE id = ?");
+        $st->execute([$posId]);
+        $r = $st->fetch(PDO::FETCH_ASSOC);
+        return $r ? self::item($r) : null;
+    }
+
+    /**
+     * v1.10.18 — Invio puntuale della singola posizione (delta): pubblica/aggiorna se inviabile, altrimenti ritira.
+     * Non tocca le altre posizioni del sito.
+     */
+    public function pushOne(int $posId, ?int $userId = null): array
+    {
+        $id = $this->start('push', 'manuale', $userId);
+        if (!$this->c) return $this->finish($id, false, 'Configurazione incompleta');
+        if (!$this->lock()) return $this->finish($id, false, 'Sincronizzazione già in corso');
+        try {
+            $item = null;
+            foreach ($this->openPositions() as $it) if ($it['id'] === $posId) { $item = $it; break; }
+            $r = $this->c->request('POST', '/sync/jobs', ['mode' => 'delta', 'items' => $item ? [$item] : [], 'closed' => $item ? [] : [$posId]]);
+            if ($r['status'] !== 200 || empty($r['json']['ok'])) return $this->finish($id, false, WpAtsClient::describe($r), ['jobs_sent' => $item ? 1 : 0]);
+            $j = $r['json'];
+            $this->recordPublications((array)($j['map'] ?? []), $userId, false, $item ? [] : [$posId]);
+            $code = 'POS-' . str_pad((string)$posId, 4, '0', STR_PAD_LEFT);
+            $msg = $item ? sprintf('%s %s sul sito (%s)', $code, $item['web_status'] === 'draft' ? 'salvata come bozza' : 'pubblicata', $j['created'] ? 'nuova' : ($j['updated'] ? 'aggiornata' : 'invariata'))
+                         : sprintf('%s ritirata dal sito%s', $code, $j['withdrawn'] ? '' : ' (non era pubblicata)');
+            $this->log($msg);
+            return $this->finish($id, empty($j['errors']), $msg, ['jobs_sent' => $item ? 1 : 0, 'jobs_created' => (int)$j['created'], 'jobs_updated' => (int)$j['updated'], 'jobs_withdrawn' => (int)$j['withdrawn']], $j);
+        } finally { $this->unlock(); }
+    }
+
+    /**
+     * v1.10.18 — Anteprima della scheda sul sito (plugin ≥ 1.2.0): URL temporaneo generato dal plugin con i dati attuali.
+     * @return array{ok:bool, url?:string, expires?:int, post_url?:?string, message:string, code?:string}
+     */
+    public function preview(int $posId): array
+    {
+        if (!$this->c) return ['ok' => false, 'message' => 'Configurazione incompleta'];
+        $item = $this->positionItem($posId);
+        if (!$item) return ['ok' => false, 'message' => 'Posizione non trovata'];
+        $r = $this->c->request('POST', '/sync/preview', ['item' => $item]);
+        if ($r['status'] === 200 && !empty($r['json']['ok']) && !empty($r['json']['url']))
+            return ['ok' => true, 'url' => (string)$r['json']['url'], 'expires' => (int)($r['json']['expires'] ?? 0), 'post_url' => $r['json']['post_url'] ?? null, 'message' => 'ok'];
+        $a = WpAtsClient::analyze($r);
+        return ['ok' => false, 'code' => $a['code'], 'message' => WpAtsClient::describe($r)];
+    }
+
+    private function recordPublications(array $map, ?int $userId, bool $full = true, array $removed = []): void
     {
         $live = [];
         $sel = $this->pdo->prepare("SELECT id FROM position_publications WHERE position_id = ? AND channel = 'wordpress' ORDER BY id DESC LIMIT 1");
-        $upd = $this->pdo->prepare("UPDATE position_publications SET channel_url = ?, api_post_id = ?, status = 'published',
-                                           published_at = COALESCE(IF(status = 'published', published_at, NULL), NOW()) WHERE id = ?");
+        // v1.10.18 — stato effettivo restituito dal plugin: publish → published, draft → draft (bozza sul sito)
+        $upd = $this->pdo->prepare("UPDATE position_publications SET channel_url = ?, api_post_id = ?, status = ?,
+                                           published_at = CASE WHEN ? = 'published' THEN COALESCE(IF(status = 'published', published_at, NULL), NOW()) ELSE published_at END WHERE id = ?");
         $ins = $this->pdo->prepare("INSERT INTO position_publications (position_id, channel, channel_url, status, published_at, published_by, api_post_id, notes)
-                                    VALUES (?, 'wordpress', ?, 'published', NOW(), ?, ?, 'Sito web aziendale (plugin pm-ats)')");
+                                    VALUES (?, 'wordpress', ?, ?, IF(? = 'published', NOW(), NULL), ?, ?, 'Sito web aziendale (plugin pm-ats)')");
         foreach ($map as $m) {
             $pid = (int)($m['id'] ?? 0); if ($pid <= 0) continue;
             $live[] = $pid;
+            $st = ($m['status'] ?? 'publish') === 'draft' ? 'draft' : 'published';
             $url = mb_substr((string)($m['url'] ?? ''), 0, 500); $post = 'wp:' . (int)($m['post_id'] ?? 0);
             $sel->execute([$pid]); $pubId = (int)$sel->fetchColumn(); $sel->closeCursor();
-            $pubId ? $upd->execute([$url, $post, $pubId]) : $ins->execute([$pid, $url, $userId, $post]);
+            $pubId ? $upd->execute([$url, $post, $st, $st, $pubId]) : $ins->execute([$pid, $url, $st, $st, $userId, $post]);
         }
-        $q = "UPDATE position_publications SET status = 'removed' WHERE channel = 'wordpress' AND status = 'published'";
-        if ($live) $q .= ' AND position_id NOT IN (' . implode(',', array_map('intval', $live)) . ')';
-        $this->pdo->exec($q);
+        if ($full) {
+            $q = "UPDATE position_publications SET status = 'removed' WHERE channel = 'wordpress' AND status IN ('published','draft')";
+            if ($live) $q .= ' AND position_id NOT IN (' . implode(',', array_map('intval', $live)) . ')';
+            $this->pdo->exec($q);
+        } elseif ($removed) {
+            $this->pdo->exec("UPDATE position_publications SET status = 'removed' WHERE channel = 'wordpress' AND status IN ('published','draft') AND position_id IN ("
+                             . implode(',', array_map('intval', $removed)) . ')');
+        }
     }
 
     /* ── candidature ─────────────────────────────────────────────────── */

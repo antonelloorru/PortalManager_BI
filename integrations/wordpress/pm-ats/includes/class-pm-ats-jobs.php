@@ -3,7 +3,8 @@
  * Posizioni aperte: custom post type `pm_job`, alimentato SOLO da PortalManager (POST /sync/jobs).
  * In WordPress le posizioni non si creano a mano: le modifiche si fanno in PortalManager e arrivano col push.
  *
- * Meta: _pm_id (id job_positions), _pm_hash (impronta del contenuto ricevuto), _pm_data (array normalizzato).
+ * Meta: _pm_id (id job_positions), _pm_hash (impronta del contenuto ricevuto), _pm_data (array normalizzato),
+ *       _pm_web_status (v1.2.0): publish = visibile | draft = bozza (non visibile, anteprima) | withdrawn = ritirata.
  */
 defined('ABSPATH') || exit;
 
@@ -76,17 +77,19 @@ final class PM_ATS_Jobs
             $d = self::normalize(is_array($raw) ? $raw : []);
             if ($d === null) { $out['errors'][] = ['id' => $raw['id'] ?? null, 'error' => 'invalid_item']; continue; }
             $seen[] = $d['id'];
+            // v1.2.0 — stato di pubblicazione deciso in PortalManager per la singola posizione
+            $want = ($raw['web_status'] ?? 'publish') === 'draft' ? 'draft' : 'publish';
             $hash = hash('sha256', wp_json_encode($d));
             $pid = self::postIdFor($d['id']);
-            if ($pid && get_post_meta($pid, '_pm_hash', true) === $hash && get_post_status($pid) === 'publish') {
-                $out['unchanged']++; $out['map'][] = ['id' => $d['id'], 'post_id' => $pid, 'url' => get_permalink($pid)]; continue;
+            if ($pid && get_post_meta($pid, '_pm_hash', true) === $hash && get_post_status($pid) === $want && get_post_meta($pid, '_pm_web_status', true) === $want) {
+                $out['unchanged']++; $out['map'][] = ['id' => $d['id'], 'post_id' => $pid, 'url' => get_permalink($pid), 'status' => $want]; continue;
             }
             // estratto: il testo specifico della posizione prima della presentazione aziendale (uguale per tutte)
             $plain = '';
             foreach (['description', 'required_skills', 'hard_skills', 'offer_info', 'we_offer', 'presentation_text'] as $k) if ($d[$k] !== '') { $plain = $d[$k]; break; }
             $plain = trim(preg_replace('/^\s*(?:[-*•·▪◦]|\d+[.)])\s+/mu', '', wp_strip_all_tags($plain)));
             $post = [
-                'post_type' => self::CPT, 'post_status' => 'publish', 'post_title' => $d['title'],
+                'post_type' => self::CPT, 'post_status' => $want, 'post_title' => $d['title'],
                 'post_content' => '', 'post_excerpt' => mb_substr(preg_replace('/\s+/', ' ', $plain), 0, 280),
                 'comment_status' => 'closed', 'ping_status' => 'closed',
             ];
@@ -99,8 +102,9 @@ final class PM_ATS_Jobs
             update_post_meta($pid, '_pm_id', $d['id']);
             update_post_meta($pid, '_pm_hash', $hash);
             update_post_meta($pid, '_pm_data', wp_slash($d));
+            update_post_meta($pid, '_pm_web_status', $want);
             foreach (self::META_FIELDS as $k) update_post_meta($pid, '_pm_' . $k, wp_slash((string)$d[$k]));
-            $out['map'][] = ['id' => $d['id'], 'post_id' => $pid, 'url' => get_permalink($pid)];
+            $out['map'][] = ['id' => $d['id'], 'post_id' => $pid, 'url' => get_permalink($pid), 'status' => $want];
         }
         $toClose = array_map('intval', $closed);
         if ($full) {
@@ -108,7 +112,9 @@ final class PM_ATS_Jobs
         }
         foreach (array_unique($toClose) as $pmId) {
             $pid = self::postIdFor($pmId);
-            if ($pid && get_post_status($pid) === 'publish') { wp_update_post(['ID' => $pid, 'post_status' => 'draft']); $out['withdrawn']++; }
+            if (!$pid) continue;
+            if (get_post_status($pid) === 'publish') { wp_update_post(['ID' => $pid, 'post_status' => 'draft']); $out['withdrawn']++; }
+            update_post_meta($pid, '_pm_web_status', 'withdrawn');
         }
         update_option('pm_ats_last_jobs_sync', ['at' => time()] + array_diff_key($out, ['map' => 1]), false);
         return $out;
@@ -143,15 +149,45 @@ final class PM_ATS_Jobs
               WHERE p.post_type = %s AND m.meta_value = %d ORDER BY p.ID LIMIT 1", self::CPT, $pmId));
     }
 
-    /** @return array<int,int> pm_id => post_id per le posizioni pubblicate */
+    /** @return array<int,int> pm_id => post_id per le posizioni pubblicate o in bozza (v1.2.0: le bozze assenti diventano ritirate) */
     public static function allPmIds(): array
     {
         global $wpdb;
         $rows = $wpdb->get_results($wpdb->prepare(
             "SELECT m.meta_value pm, p.ID pid FROM {$wpdb->posts} p JOIN {$wpdb->postmeta} m ON m.post_id = p.ID AND m.meta_key = '_pm_id'
-              WHERE p.post_type = %s AND p.post_status = 'publish'", self::CPT), ARRAY_A);
+              LEFT JOIN {$wpdb->postmeta} w ON w.post_id = p.ID AND w.meta_key = '_pm_web_status'
+              WHERE p.post_type = %s AND (p.post_status = 'publish' OR (p.post_status = 'draft' AND w.meta_value = 'draft'))", self::CPT), ARRAY_A);
         $o = []; foreach ((array)$rows as $r) $o[(int)$r['pm']] = (int)$r['pid'];
         return $o;
+    }
+
+    /* ── anteprima (v1.2.0) ───────────────────────────────────────────── */
+
+    public const PREVIEW_TTL = 1800;
+
+    /**
+     * Anteprima di una posizione inviata da PortalManager (anche mai pubblicata o in bozza): i dati sono salvati in un
+     * transient con un token casuale; l'URL pubblico ?pm_ats_preview=<token> vale PREVIEW_TTL secondi, non è indicizzato
+     * e non crea né modifica alcun contenuto.
+     * @return array{token:string,url:string,expires:int,post_url:?string,post_status:?string}|null
+     */
+    public static function preview(array $raw): ?array
+    {
+        $d = self::normalize($raw);
+        if ($d === null) return null;
+        $tok = bin2hex(random_bytes(24));
+        set_transient('pm_ats_pv_' . $tok, ['data' => $d, 'web_status' => (string)($raw['web_status'] ?? '')], self::PREVIEW_TTL);
+        $pid = self::postIdFor($d['id']);
+        return ['token' => $tok, 'url' => add_query_arg('pm_ats_preview', $tok, home_url('/')), 'expires' => time() + self::PREVIEW_TTL,
+                'post_url' => $pid ? (string)get_permalink($pid) : null, 'post_status' => $pid ? (string)get_post_status($pid) : null,
+                'web_status' => $pid ? (string)get_post_meta($pid, '_pm_web_status', true) : null];
+    }
+
+    public static function previewData(string $tok): ?array
+    {
+        if (!preg_match('/^[a-f0-9]{48}$/', $tok)) return null;
+        $v = get_transient('pm_ats_pv_' . $tok);
+        return is_array($v) && isset($v['data']) ? $v : null;
     }
 
     /* ── lettura per il frontend ────────────────────────────────────── */

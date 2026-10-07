@@ -24,6 +24,7 @@ final class PM_ATS_Public
         add_filter('the_content', [self::class, 'singleContent'], 20);
         add_action('wp_head', [self::class, 'head'], 5);
         add_action('template_redirect', [self::class, 'redirectArchive']);
+        add_action('template_redirect', [self::class, 'preview'], 0);   // v1.2.0
         add_action('wp_enqueue_scripts', [self::class, 'register']);
         add_action('admin_post_nopriv_pm_ats_apply', [self::class, 'handle']);
         add_action('admin_post_pm_ats_apply', [self::class, 'handle']);
@@ -97,9 +98,46 @@ final class PM_ATS_Public
             $slug = get_query_var('name');
             if ($slug && get_query_var('post_type') === PM_ATS_Jobs::CPT) {
                 $p = get_page_by_path($slug, OBJECT, PM_ATS_Jobs::CPT);
-                if ($p && $p->post_status === 'draft') { wp_safe_redirect(add_query_arg('pm_ats_closed', 1, self::listUrl()), 302); exit; }
+                if ($p && $p->post_status === 'draft' && get_post_meta($p->ID, '_pm_web_status', true) !== 'draft') { wp_safe_redirect(add_query_arg('pm_ats_closed', 1, self::listUrl()), 302); exit; }
             }
         }
+    }
+
+    /**
+     * v1.2.0 — Anteprima della scheda (?pm_ats_preview=<token>, generato da PortalManager con POST /sync/preview):
+     * stessa resa della pagina pubblicata (template job-single, stili del plugin e del tema, colori), dati non salvati,
+     * modulo di candidatura disattivato, noindex. Vale 30 minuti.
+     */
+    public static function preview(): void
+    {
+        $tok = isset($_GET['pm_ats_preview']) ? sanitize_key((string)wp_unslash($_GET['pm_ats_preview'])) : '';
+        if ($tok === '') return;
+        $p = PM_ATS_Jobs::previewData($tok);
+        nocache_headers();
+        header('X-Robots-Tag: noindex, nofollow', true);
+        if ($p === null) { status_header(410); wp_die(esc_html__('Anteprima scaduta o non valida: generarne una nuova da PortalManager.', 'pm-ats'), esc_html__('Anteprima', 'pm-ats'), ['response' => 410]); }
+        $job = $p['data'];
+        $pid = PM_ATS_Jobs::postIdFor((int)$job['id']);
+        $state = $pid ? (string)get_post_status($pid) : '';
+        $label = ($p['web_status'] ?? '') === 'draft' ? __('bozza (non visibile sul sito)', 'pm-ats')
+               : ($state === 'publish' ? __('pubblicata', 'pm-ats') : __('non pubblicata', 'pm-ats'));
+        self::register(); self::enqueue();
+        add_filter('wp_robots', 'wp_robots_no_robots');
+        add_filter('document_title_parts', static fn($t) => ['title' => __('Anteprima', 'pm-ats') . ' — ' . $job['title']] + $t);
+        $form = '<div class="pm-ats-form pm-ats-preview-form" id="pm-ats-form"><p><strong>' . esc_html__('Modulo di candidatura', 'pm-ats') . '</strong> — '
+              . esc_html__('in anteprima l\'invio è disattivato.', 'pm-ats') . '</p></div>';
+        $body = self::render('job-single.php', ['post_id' => $pid, 'job' => $job, 'list_url' => self::listUrl(), 'form' => PM_ATS_Settings::get('auto_form') ? $form : '']);
+        status_header(200);
+        ?><!doctype html>
+<html <?php language_attributes(); ?>><head><meta charset="<?php bloginfo('charset'); ?>"><meta name="viewport" content="width=device-width, initial-scale=1"><?php wp_head(); ?>
+<style>.pm-ats-preview-bar{position:sticky;top:0;z-index:99999;background:#1e293b;color:#fff;font:13px/1.4 system-ui,sans-serif;padding:8px 16px;display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+.pm-ats-preview-bar b{background:#f59e0b;color:#1e293b;border-radius:4px;padding:1px 8px}.pm-ats-preview-main{max-width:960px;margin:0 auto;padding:32px 20px}</style></head>
+<body <?php body_class('pm-ats-preview'); ?>><?php if (function_exists('wp_body_open')) wp_body_open(); ?>
+<div class="pm-ats-preview-bar"><b><?php esc_html_e('ANTEPRIMA', 'pm-ats'); ?></b><span><?php echo esc_html(sprintf(__('Stato sul sito: %s', 'pm-ats'), $label)); ?></span>
+<span><?php echo esc_html($job['code'] ?? ''); ?></span><?php if ($pid && $state === 'publish'): ?><a style="color:#93c5fd" href="<?php echo esc_url(get_permalink($pid)); ?>"><?php esc_html_e('Apri la pagina pubblicata', 'pm-ats'); ?></a><?php endif; ?></div>
+<main class="pm-ats-preview-main"><h1 class="pm-ats-preview-title"><?php echo esc_html($job['title']); ?></h1><?php echo $body; // phpcs:ignore ?></main>
+<?php wp_footer(); ?></body></html><?php
+        exit;
     }
 
     public static function head(): void

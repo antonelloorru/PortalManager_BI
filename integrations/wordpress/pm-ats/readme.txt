@@ -3,7 +3,7 @@ Contributors: portalmanager
 Requires at least: 6.0
 Tested up to: 6.8
 Requires PHP: 8.0
-Stable tag: 1.1.1
+Stable tag: 1.2.0
 License: Proprietary
 
 Pubblica sul sito le posizioni aperte gestite in PortalManager e raccoglie le candidature con CV.
@@ -62,6 +62,9 @@ X-PM-Signature = hex(HMAC-SHA256(segreto, METODO\nROTTA\nTIMESTAMP\nNONCE\nsha25
 
 == Upgrade Notice ==
 
+= 1.2.0 =
+Pubblicazione puntuale (pubblicata / bozza / ritirata) decisa in PortalManager per ogni posizione e anteprima della scheda annuncio. Richiede PortalManager 1.10.18 per le nuove funzioni.
+
 = 1.1.1 =
 Corregge il blocco 429 dopo 20 chiamate riuscite (verifica HMAC eseguita due volte). Diagnostica della connessione: codice d'errore effettivo, IP visto dal sito, ora del sito, impronta del segreto.
 
@@ -70,6 +73,10 @@ Configurazione guidata, impostazioni a schede, codice di connessione per PortalM
 Le installazioni 1.0.x già configurate non devono ripetere la configurazione.
 
 == Changelog ==
+
+= 1.2.0 =
+* Stato di pubblicazione per posizione (web_status publish | draft) da PortalManager; le bozze non sono visibili e non vengono segnalate come «chiuse».
+* Anteprima della scheda: POST /sync/preview → URL temporaneo (30 min, noindex) con la stessa resa della pagina pubblicata, modulo disattivato.
 
 = 1.1.1 =
 * Fix: verifica HMAC eseguita due volte per richiesta (permission_callback richiamato da rest_send_allow_header) → falsi «replay» e blocco 429 dopo 20 chiamate; ora una sola verifica per richiesta — PortalManager v1.10.16.
