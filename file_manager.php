@@ -9,6 +9,18 @@
  *  - Log azioni in app_logs (categoria FileManager)
  *
  * ACCESSO: solo Super Admin (role_id = 1)
+ *
+ * v1.10.27 — correzioni:
+ *  - link e pulsanti puntavano a «?p=…» / «?op=…»: con <base href> di header.php si risolvevano sulla radice del portale
+ *    (index), quindi navigazione cartelle, breadcrumb, download, visualizza, modifica e «Chiudi» non funzionavano.
+ *    Ora tutti gli URL sono «file_manager.php?…» (fm_url);
+ *  - CSRF verificato su ogni POST (Csrf::verify) e PRG: dopo ogni operazione redirect alla cartella corrente con esito
+ *    in sessione (niente doppio invio al ricaricamento, si resta nella cartella);
+ *  - download / ZIP / visualizza: buffer di output svuotati prima dell'invio (bootstrap apre ob_start: file grandi
+ *    finivano in memoria e i binari potevano essere corrotti), invio a blocchi, nome file RFC 5987;
+ *  - visualizza: HTML/SVG/XML serviti come testo o con CSP sandbox (nessuna esecuzione di script nell'origine del portale);
+ *  - rinomina / elimina: percorsi passati con data-attribute (nomi con apici o caratteri speciali);
+ *  - elimina: esito reale (file non eliminati segnalati), protezione delle cartelle di sistema del portale.
  */
 
 require_once('access_control.php');
@@ -118,6 +130,58 @@ function fm_log(PDO $pdo, int $u_id, string $action, string $detail): void {
     }
 }
 
+/** v1.10.27 — URL della pagina (mai «?…» relativo: header.php imposta <base href> sulla radice del portale). */
+function fm_url(array $q = []): string {
+    $q = array_filter($q, fn($v) => $v !== null && $v !== '');
+    return 'file_manager.php' . ($q ? '?' . http_build_query($q) : '');
+}
+
+/** v1.10.27 — Svuota i buffer aperti da bootstrap (ob_start) prima di inviare un file. */
+function fm_clean_output(): void {
+    while (ob_get_level() > 0) { @ob_end_clean(); }
+    @ini_set('zlib.output_compression', '0');
+    @set_time_limit(0);
+}
+
+/** v1.10.27 — Invia un file a blocchi (nessun caricamento in memoria). */
+function fm_send_file(string $path, string $mime, string $disposition): void {
+    fm_clean_output();
+    $name = basename($path);
+    $ascii = preg_replace('/[^A-Za-z0-9._-]+/', '_', $name);
+    header('Content-Type: ' . $mime);
+    header('Content-Disposition: ' . $disposition . '; filename="' . $ascii . '"; filename*=UTF-8\'\'' . rawurlencode($name));
+    header('Content-Length: ' . filesize($path));
+    header('Cache-Control: no-store, no-cache, must-revalidate');
+    header('X-Content-Type-Options: nosniff');
+    $fh = fopen($path, 'rb');
+    if ($fh) { while (!feof($fh)) { echo fread($fh, 1048576); flush(); } fclose($fh); }
+    exit;
+}
+
+/** v1.10.27 — Esito dell'operazione in sessione + redirect alla cartella (PRG). */
+function fm_done(string $html, string $rel_dir): void {
+    $_SESSION['fm_flash'] = $html;
+    while (ob_get_level() > 0) { @ob_end_clean(); }
+    header('Location: ' . fm_url(['p' => $rel_dir]), true, 303);
+    exit;
+}
+
+/** v1.10.27 — Elimina file o cartella; ritorna i percorsi non eliminati. */
+function fm_delete(string $abs): array {
+    $fail = [];
+    if (is_dir($abs) && !is_link($abs)) {
+        $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($abs, RecursiveDirectoryIterator::SKIP_DOTS), RecursiveIteratorIterator::CHILD_FIRST);
+        foreach ($it as $f) {
+            $ok = ($f->isDir() && !$f->isLink()) ? @rmdir($f->getPathname()) : @unlink($f->getPathname());
+            if (!$ok) $fail[] = $f->getPathname();
+        }
+        if (!@rmdir($abs)) $fail[] = $abs;
+    } elseif (!@unlink($abs)) {
+        $fail[] = $abs;
+    }
+    return $fail;
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // Stato corrente
 // ─────────────────────────────────────────────────────────────────────
@@ -127,6 +191,11 @@ $current_dir = fm_safe_path($current_rel, $ROOT, true);
 if ($current_dir === null || !is_dir($current_dir)) $current_dir = $ROOT;
 
 $msg = '';
+if (!empty($_SESSION['fm_flash'])) { $msg = (string)$_SESSION['fm_flash']; unset($_SESSION['fm_flash']); }
+$current_rel_dir = fm_rel_path($current_dir, $ROOT);
+// v1.10.27 — cartelle indispensabili al portale: non eliminabili né rinominabili da qui
+$PROTECTED = array_map(fn($d) => realpath($ROOT . DIRECTORY_SEPARATOR . $d) ?: '', ['app', 'assets', 'sql', 'uploads', 'vendor']);
+$is_protected = fn(string $abs) => $abs !== '' && in_array(realpath($abs) ?: $abs, array_filter($PROTECTED), true);
 
 // ─────────────────────────────────────────────────────────────────────
 // DOWNLOAD (deve essere PRIMA dell'include header.php)
@@ -135,12 +204,7 @@ if (($_GET['op'] ?? '') === 'download' && !empty($_GET['f'])) {
     $target = fm_safe_path($_GET['f'], $ROOT, true);
     if ($target && is_file($target)) {
         fm_log($pdo, $u_id, 'download', fm_rel_path($target, $ROOT));
-        header('Content-Type: application/octet-stream');
-        header('Content-Disposition: attachment; filename="' . basename($target) . '"');
-        header('Content-Length: ' . filesize($target));
-        header('Cache-Control: no-cache');
-        readfile($target);
-        exit;
+        fm_send_file($target, 'application/octet-stream', 'attachment');
     }
     http_response_code(404);
     die('File non trovato o fuori scope.');
@@ -153,21 +217,17 @@ if (($_GET['op'] ?? '') === 'view' && !empty($_GET['f'])) {
     $target = fm_safe_path($_GET['f'], $ROOT, true);
     if ($target && is_file($target)) {
         $ext = strtolower(pathinfo($target, PATHINFO_EXTENSION));
+        // v1.10.27 — immagini e PDF nel loro tipo; tutto il testo (anche HTML, SVG, XML, PHP) come text/plain;
+        // CSP sandbox: nessuno script eseguito nell'origine del portale
         $mime_map = [
-            'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'png' => 'image/png',
-            'gif' => 'image/gif', 'webp' => 'image/webp', 'svg' => 'image/svg+xml',
+            'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'png' => 'image/png', 'gif' => 'image/gif', 'webp' => 'image/webp',
             'pdf' => 'application/pdf',
-            'txt' => 'text/plain', 'md' => 'text/plain', 'log' => 'text/plain',
-            'csv' => 'text/plain', 'json' => 'application/json', 'xml' => 'text/xml',
-            'css' => 'text/plain', 'js' => 'text/plain',
-            'php' => 'text/plain', 'html' => 'text/plain', 'sql' => 'text/plain',
         ];
-        $mime = $mime_map[$ext] ?? 'application/octet-stream';
-        header('Content-Type: ' . $mime . '; charset=utf-8');
-        header('Content-Disposition: inline; filename="' . basename($target) . '"');
-        header('X-Content-Type-Options: nosniff');
-        readfile($target);
-        exit;
+        $is_text = in_array($ext, $TEXT_EXTS, true) || in_array($ext, ['svg', 'xml', 'htm', 'html', 'log', 'csv'], true);
+        $mime = $mime_map[$ext] ?? ($is_text ? 'text/plain; charset=utf-8' : 'application/octet-stream');
+        fm_log($pdo, $u_id, 'view', fm_rel_path($target, $ROOT));
+        header("Content-Security-Policy: sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; object-src 'self'");
+        fm_send_file($target, $mime, $mime === 'application/octet-stream' ? 'attachment' : 'inline');
     }
     http_response_code(404);
     die('File non trovato.');
@@ -177,7 +237,11 @@ if (($_GET['op'] ?? '') === 'view' && !empty($_GET['f'])) {
 // POST handlers (operazioni R/W)
 // ─────────────────────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    Csrf::verify();                                                  // v1.10.27
     $action = $_POST['action'] ?? '';
+    $back = (string)($_POST['p'] ?? $current_rel_dir);               // cartella in cui tornare (PRG)
+    $back_abs = fm_safe_path($back, $ROOT, true);
+    $back = ($back_abs && is_dir($back_abs)) ? fm_rel_path($back_abs, $ROOT) : '';
     try {
 
         // ── UPLOAD (multi-file) ────────────────────────────────────
@@ -218,20 +282,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         elseif ($action === 'delete') {
             $target = fm_safe_path($_POST['target'] ?? '', $ROOT, true);
             if (!$target || $target === $ROOT) throw new Exception('Target non valido.');
-            if (is_dir($target)) {
-                $it = new RecursiveIteratorIterator(
-                    new RecursiveDirectoryIterator($target, RecursiveDirectoryIterator::SKIP_DOTS),
-                    RecursiveIteratorIterator::CHILD_FIRST
-                );
-                foreach ($it as $f) {
-                    if ($f->isDir()) @rmdir($f->getPathname());
-                    else @unlink($f->getPathname());
-                }
-                @rmdir($target);
-            } else {
-                @unlink($target);
-            }
-            fm_log($pdo, $u_id, 'delete', fm_rel_path($target, $ROOT));
+            if ($is_protected($target)) throw new Exception('Cartella di sistema del portale: non eliminabile da qui.');
+            $fail = fm_delete($target);
+            fm_log($pdo, $u_id, 'delete', fm_rel_path($target, $ROOT) . ($fail ? ' (non eliminati: ' . count($fail) . ')' : ''));
+            if ($fail) throw new Exception('Eliminazione parziale: ' . count($fail) . ' elementi non eliminati (permessi o file in uso), es. ' . fm_rel_path($fail[0], $ROOT));
             $msg = "<div class='alert alert-info'><i class='fa-solid fa-trash'></i> Eliminato: <code>" . htmlspecialchars(fm_rel_path($target, $ROOT)) . "</code></div>";
         }
 
@@ -239,6 +293,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         elseif ($action === 'rename') {
             $source = fm_safe_path($_POST['source'] ?? '', $ROOT, true);
             if (!$source || $source === $ROOT) throw new Exception('Source non valido.');
+            if ($is_protected($source)) throw new Exception('Cartella di sistema del portale: non rinominabile da qui.');
             $new_name = trim($_POST['new_name'] ?? '');
             if ($new_name === '') throw new Exception('Nome vuoto.');
             $new_name = preg_replace('/[\x00-\x1f\\\\\/:\*\?"<>\|]/', '_', $new_name);
@@ -274,6 +329,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $content = $_POST['content'] ?? '';
             if (strlen($content) > $MAX_EDIT_SIZE) throw new Exception('Contenuto troppo grande (max 5 MB).');
             if (file_put_contents($target, $content) === false) throw new Exception('Scrittura fallita (permessi?)');
+            $back = fm_rel_path(dirname($target), $ROOT);   // v1.10.27 — si torna alla cartella del file
             fm_log($pdo, $u_id, 'edit', fm_rel_path($target, $ROOT) . ' (' . strlen($content) . ' bytes)');
             $msg = "<div class='alert alert-success'><i class='fa-solid fa-check'></i> Salvato <code>" . htmlspecialchars(basename($target)) . "</code></div>";
         }
@@ -284,7 +340,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (empty($items)) throw new Exception('Nessun elemento selezionato.');
             $zip_tmp = tempnam(sys_get_temp_dir(), 'fm_zip_');
             $zip = new ZipArchive();
-            if ($zip->open($zip_tmp, ZipArchive::OVERWRITE) !== true) throw new Exception('Impossibile creare ZIP.');
+            if ($zip->open($zip_tmp, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) throw new Exception('Impossibile creare ZIP.');
             $added = 0;
             foreach ($items as $rel) {
                 $abs = fm_safe_path($rel, $ROOT, true);
@@ -299,7 +355,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     );
                     foreach ($it as $f) {
                         if ($f->isFile()) {
-                            $rel_in_zip = $base . '/' . str_replace($abs . DIRECTORY_SEPARATOR, '', $f->getPathname());
+                            $rel_in_zip = $base . '/' . substr($f->getPathname(), strlen($abs) + 1);
                             $rel_in_zip = str_replace(DIRECTORY_SEPARATOR, '/', $rel_in_zip);
                             $zip->addFile($f->getPathname(), $rel_in_zip);
                             $added++;
@@ -310,45 +366,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $zip->close();
             if ($added === 0) { @unlink($zip_tmp); throw new Exception('Nessun file aggiunto allo ZIP.'); }
             fm_log($pdo, $u_id, 'download_zip', count($items) . ' items, ' . $added . ' files');
-            $filename = 'portalmanager_files_' . date('Ymd_His') . '.zip';
-            header('Content-Type: application/zip');
-            header('Content-Disposition: attachment; filename="' . $filename . '"');
-            header('Content-Length: ' . filesize($zip_tmp));
-            readfile($zip_tmp);
-            @unlink($zip_tmp);
-            exit;
+            $zip_named = dirname($zip_tmp) . DIRECTORY_SEPARATOR . 'portalmanager_files_' . date('Ymd_His') . '.zip';
+            if (!@rename($zip_tmp, $zip_named)) $zip_named = $zip_tmp;
+            register_shutdown_function(fn() => @unlink($zip_named));
+            fm_send_file($zip_named, 'application/zip', 'attachment');
         }
 
         // ── DELETE multipla ────────────────────────────────────────
         elseif ($action === 'delete_multi') {
             $items = $_POST['items'] ?? [];
             if (empty($items)) throw new Exception('Nessun elemento selezionato.');
-            $deleted = 0;
+            $deleted = 0; $skipped = [];
             foreach ($items as $rel) {
                 $abs = fm_safe_path($rel, $ROOT, true);
                 if (!$abs || $abs === $ROOT) continue;
-                if (is_dir($abs)) {
-                    $it = new RecursiveIteratorIterator(
-                        new RecursiveDirectoryIterator($abs, RecursiveDirectoryIterator::SKIP_DOTS),
-                        RecursiveIteratorIterator::CHILD_FIRST
-                    );
-                    foreach ($it as $f) {
-                        if ($f->isDir()) @rmdir($f->getPathname());
-                        else @unlink($f->getPathname());
-                    }
-                    @rmdir($abs);
-                } else {
-                    @unlink($abs);
-                }
-                $deleted++;
-                fm_log($pdo, $u_id, 'delete_multi', fm_rel_path($abs, $ROOT));
+                if ($is_protected($abs)) { $skipped[] = fm_rel_path($abs, $ROOT); continue; }
+                $fail = fm_delete($abs);
+                if ($fail) $skipped[] = fm_rel_path($abs, $ROOT); else $deleted++;
+                fm_log($pdo, $u_id, 'delete_multi', fm_rel_path($abs, $ROOT) . ($fail ? ' (parziale)' : ''));
             }
-            $msg = "<div class='alert alert-info'><i class='fa-solid fa-trash'></i> Eliminati <strong>$deleted</strong> elementi.</div>";
+            $msg = "<div class='alert alert-" . ($skipped ? 'warning' : 'info') . "'><i class='fa-solid fa-trash'></i> Eliminati <strong>$deleted</strong> elementi."
+                 . ($skipped ? '<br><small>Non eliminati (sistema, permessi o file in uso): ' . htmlspecialchars(implode(', ', array_slice($skipped, 0, 10))) . '</small>' : '') . '</div>';
         }
 
     } catch (Exception $e) {
         $msg = "<div class='alert alert-danger'><i class='fa-solid fa-triangle-exclamation'></i> " . htmlspecialchars($e->getMessage()) . "</div>";
     }
+    fm_done($msg !== '' ? $msg : "<div class='alert alert-warning'>Operazione non riconosciuta.</div>", $back);
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -428,12 +472,12 @@ $h = fn($s) => htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8');
     <span class="card-title" style="color:#1e40af">
       <i class="fa-solid fa-pen-to-square"></i> Editing: <code><?= $h(fm_rel_path($edit_file, $ROOT)) ?></code>
     </span>
-    <a href="?p=<?= $h(fm_rel_path(dirname($edit_file), $ROOT)) ?>" class="btn btn-sm">
+    <a href="<?= $h(fm_url(['p' => fm_rel_path(dirname($edit_file), $ROOT)])) ?>" class="btn btn-sm">
       <i class="fa-solid fa-xmark"></i> Chiudi senza salvare
     </a>
   </div>
   <form method="POST">
-    <?= csrf_field() ?>
+    <?= csrf_field() ?><input type="hidden" name="p" value="<?= $h($current_rel_dir) ?>">
     <input type="hidden" name="action" value="save_edit">
     <input type="hidden" name="target" value="<?= $h(fm_rel_path($edit_file, $ROOT)) ?>">
     <textarea name="content" spellcheck="false" wrap="off"
@@ -442,7 +486,7 @@ $h = fn($s) => htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8');
       <button type="submit" class="btn btn-primary" style="padding:10px 22px">
         <i class="fa-solid fa-floppy-disk"></i> Salva modifiche
       </button>
-      <a href="?op=download&f=<?= urlencode(fm_rel_path($edit_file, $ROOT)) ?>" class="btn btn-sm">
+      <a href="<?= $h(fm_url(['op' => 'download', 'f' => fm_rel_path($edit_file, $ROOT)])) ?>" class="btn btn-sm">
         <i class="fa-solid fa-download"></i> Scarica versione corrente
       </a>
       <span style="font-size:11px;color:var(--muted);margin-left:auto">
@@ -457,13 +501,13 @@ $h = fn($s) => htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8');
 
 <!-- ═══ BREADCRUMB ═══ -->
 <div style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:14px;display:flex;align-items:center;gap:6px;font-size:13px;flex-wrap:wrap">
-  <a href="?p=" style="color:var(--p);text-decoration:none;font-weight:700">
+  <a href="<?= $h(fm_url()) ?>" style="color:var(--p);text-decoration:none;font-weight:700">
     <i class="fa-solid fa-house"></i> /
   </a>
   <?php foreach ($crumbs as $i => $c): ?>
     <span style="color:var(--muted)">/</span>
     <?php if ($i < count($crumbs) - 1): ?>
-      <a href="?p=<?= urlencode($c['rel']) ?>" style="color:var(--p);text-decoration:none"><?= $h($c['name']) ?></a>
+      <a href="<?= $h(fm_url(['p' => $c['rel']])) ?>" style="color:var(--p);text-decoration:none"><?= $h($c['name']) ?></a>
     <?php else: ?>
       <strong><?= $h($c['name']) ?></strong>
     <?php endif; ?>
@@ -480,7 +524,7 @@ $h = fn($s) => htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8');
 
     <!-- Upload multi-file -->
     <form method="POST" enctype="multipart/form-data" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-      <?= csrf_field() ?>
+      <?= csrf_field() ?><input type="hidden" name="p" value="<?= $h($current_rel_dir) ?>">
       <input type="hidden" name="action" value="upload">
       <input type="hidden" name="dest" value="<?= $h(fm_rel_path($current_dir, $ROOT)) ?>">
       <input type="file" name="files[]" multiple required
@@ -494,7 +538,7 @@ $h = fn($s) => htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8');
 
     <!-- Nuova cartella -->
     <form method="POST" style="display:flex;gap:6px;align-items:center">
-      <?= csrf_field() ?>
+      <?= csrf_field() ?><input type="hidden" name="p" value="<?= $h($current_rel_dir) ?>">
       <input type="hidden" name="action" value="mkdir">
       <input type="hidden" name="parent" value="<?= $h(fm_rel_path($current_dir, $ROOT)) ?>">
       <input type="text" name="dir_name" placeholder="Nome nuova cartella" required
@@ -512,7 +556,7 @@ $h = fn($s) => htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8');
 
 <!-- ═══ LISTING ═══ -->
 <form method="POST" id="bulkForm">
-  <?= csrf_field() ?>
+  <?= csrf_field() ?><input type="hidden" name="p" value="<?= $h($current_rel_dir) ?>">
   <input type="hidden" name="action" id="bulkAction">
   <div class="card">
     <div class="card-header">
@@ -554,7 +598,7 @@ $h = fn($s) => htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8');
           <td><input type="checkbox" name="items[]" value="<?= $h($e['rel']) ?>" class="rowSel" onchange="updateSel()"></td>
           <td>
             <?php if ($e['is_dir']): ?>
-              <a href="?p=<?= urlencode($e['rel']) ?>" style="text-decoration:none;color:inherit;font-weight:700">
+              <a href="<?= $h(fm_url(['p' => $e['rel']])) ?>" style="text-decoration:none;color:inherit;font-weight:700">
                 <i class="fa-solid <?= $icon ?>" style="color:<?= $color ?>;margin-right:6px"></i><?= $h($e['name']) ?>
               </a>
             <?php else: ?>
@@ -568,22 +612,22 @@ $h = fn($s) => htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8');
           <td style="font-size:11px;color:var(--muted)"><?= date('d/m/Y H:i', $e['mtime']) ?></td>
           <td style="text-align:right;white-space:nowrap">
             <?php if (!$e['is_dir']): ?>
-              <a href="?op=view&f=<?= urlencode($e['rel']) ?>" target="_blank" class="btn btn-sm" title="Visualizza inline">
+              <a href="<?= $h(fm_url(['op' => 'view', 'f' => $e['rel']])) ?>" target="_blank" rel="noopener" class="btn btn-sm" title="Visualizza inline">
                 <i class="fa-solid fa-eye"></i>
               </a>
-              <a href="?op=download&f=<?= urlencode($e['rel']) ?>" class="btn btn-sm" title="Scarica">
+              <a href="<?= $h(fm_url(['op' => 'download', 'f' => $e['rel']])) ?>" class="btn btn-sm" title="Scarica">
                 <i class="fa-solid fa-download"></i>
               </a>
               <?php if ($is_text): ?>
-              <a href="?op=edit&f=<?= urlencode($e['rel']) ?>" class="btn btn-sm" style="background:#dbeafe;color:#1e40af" title="Modifica testo">
+              <a href="<?= $h(fm_url(['op' => 'edit', 'f' => $e['rel']])) ?>" class="btn btn-sm" style="background:#dbeafe;color:#1e40af" title="Modifica testo">
                 <i class="fa-solid fa-pen"></i>
               </a>
               <?php endif; ?>
             <?php endif; ?>
-            <button type="button" onclick="renameItem('<?= $h(addslashes($e['rel'])) ?>', '<?= $h(addslashes($e['name'])) ?>')" class="btn btn-sm" title="Rinomina">
+            <button type="button" data-rel="<?= $h($e['rel']) ?>" data-name="<?= $h($e['name']) ?>" onclick="renameItem(this.dataset.rel, this.dataset.name)" class="btn btn-sm" title="Rinomina">
               <i class="fa-solid fa-i-cursor"></i>
             </button>
-            <button type="button" onclick="deleteItem('<?= $h(addslashes($e['rel'])) ?>', '<?= $h(addslashes($e['name'])) ?>')" class="btn btn-sm" style="background:#fee2e2;color:#991b1b" title="Elimina">
+            <button type="button" data-rel="<?= $h($e['rel']) ?>" data-name="<?= $h($e['name']) ?>" onclick="deleteItem(this.dataset.rel, this.dataset.name)" class="btn btn-sm" style="background:#fee2e2;color:#991b1b" title="Elimina">
               <i class="fa-solid fa-trash"></i>
             </button>
           </td>
@@ -598,13 +642,13 @@ $h = fn($s) => htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8');
 
 <!-- Form nascosti per azioni singole -->
 <form method="POST" id="renameForm" style="display:none">
-  <?= csrf_field() ?>
+  <?= csrf_field() ?><input type="hidden" name="p" value="<?= $h($current_rel_dir) ?>">
   <input type="hidden" name="action" value="rename">
   <input type="hidden" name="source" id="renameSource">
   <input type="hidden" name="new_name" id="renameNewName">
 </form>
 <form method="POST" id="deleteForm" style="display:none">
-  <?= csrf_field() ?>
+  <?= csrf_field() ?><input type="hidden" name="p" value="<?= $h($current_rel_dir) ?>">
   <input type="hidden" name="action" value="delete">
   <input type="hidden" name="target" id="deleteTarget">
 </form>
