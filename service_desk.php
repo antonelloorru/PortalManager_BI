@@ -1284,8 +1284,7 @@ $colClasse = [
   <?php require_once('footer.php'); exit; ?>
 <?php endif; ?>
 
-<?= PmContractFilter::banner($f['contratti'], $vCtr, $qs(['contratti' => null, 'contratti_set' => 1]),
-        'ticket collegati tramite attività DGB e rapportini; assenze delle persone coinvolte') ?>
+<?php /* v1.10.26 — filtro globale: un solo componente (pannello «Filtri»), nessun blocco aggiuntivo */ ?>
 
 <?php if (!$team): ?>
   <div class="alert alert-danger" style="font-size:12px">

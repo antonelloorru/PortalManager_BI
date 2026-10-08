@@ -137,7 +137,7 @@ tr.tr-dd>td{background:#fbfdff;padding:4px 10px 10px 28px;white-space:normal}
   <p style="color:var(--muted);font-size:12px;margin:2px 0 0">Operatività per tecnico e codice linea, metriche di dettaglio, moduli valorizzati e non valorizzati; rapporti di intervento per tipologia di contratto e commessa con la provenienza ticket. Stessi filtri e perimetro della Relazione di Servizio IT.</p>
 </div>
 
-<?= PmContractFilter::banner($f['contratti'], $vCtr, $qs(['contratti' => null, 'contratti_set' => 1])) ?>
+<?php /* v1.10.26 — filtro globale: un solo componente (pannello «Filtri»), nessun blocco aggiuntivo */ ?>
 <?php if ($err !== ''): ?>
   <div class="alert alert-warning"><strong>Dati non disponibili.</strong> <span style="font-size:11px"><?= h($err) ?></span></div>
   <?php require_once('footer.php'); exit; ?>
@@ -205,6 +205,10 @@ tr.tr-dd>td{background:#fbfdff;padding:4px 10px 10px 28px;white-space:normal}
           <?php endforeach; ?>
         </div>
       </div>
+      <div class="pm-group">
+        <h4>Dettagli da includere <span class="pm-multi">(stampa / export della scheda Rapporti di intervento)</span></h4>
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="checkbox" name="det" value="1" <?= $det ? 'checked' : '' ?>> Dettaglio dei moduli di intervento</label>
+      </div>
       <div class="pm-actions">
         <button class="btn btn-primary btn-sm"><i class="fa-solid fa-filter"></i> Applica</button>
         <a class="btn btn-sm" href="<?= url_safe('tech_report', array_filter(['contratti_set' => 1, 'tab' => $tab !== 'tecnici' ? $tab : null])) ?>">Azzera</a>
@@ -226,11 +230,6 @@ tr.tr-dd>td{background:#fbfdff;padding:4px 10px 10px 28px;white-space:normal}
     <?php foreach (['csv' => ['CSV', 'fa-file-csv'], 'xlsx' => ['XLSX', 'fa-file-excel'], 'docx' => ['DOCX', 'fa-file-word'], 'pdf' => ['PDF', 'fa-file-pdf']] as $fx => [$fl, $fi]): ?>
       <a class="btn btn-sm" href="<?= $qs(['rep' => $fx]) ?>"><i class="fa-solid <?= $fi ?>"></i> <?= $fl ?></a>
     <?php endforeach; ?>
-  <?php endif; ?>
-  <?php if ($tab === 'rapporti'): ?>
-    <label style="font-size:12px;display:inline-flex;gap:6px;align-items:center;margin-left:8px">
-      <input type="checkbox" <?= $det ? 'checked' : '' ?> onchange="location.href=this.checked?<?= h(json_encode(html_entity_decode($qs(['det' => '1'])))) ?>:<?= h(json_encode(html_entity_decode($qs(['det' => null])))) ?>">
-      includi il dettaglio dei moduli in stampa ed export</label>
   <?php endif; ?>
 </div>
 
@@ -332,13 +331,13 @@ tr.tr-dd>td{background:#fbfdff;padding:4px 10px 10px 28px;white-space:normal}
   </div>
 
   <section class="tr-sec">
-    <h2>Per tipologia di contratto <small>clic sulla tipologia per filtrare</small></h2>
+    <h2>Per tipologia di contratto <small>filtrabile dal pannello «Filtri» (Tipologia contratto)</small></h2>
     <div class="tr-wrap"><table class="tr-t">
       <thead><tr><th>Tipologia contratto</th><th class="r">Commesse</th><th class="r">Moduli</th><th class="r">Ticket (codice)</th><th class="r">Rif. libero</th><th class="r">Da commessa</th><th>Provenienza</th><th class="r">Ticket distinti</th><th class="r">Tecnici</th><th class="r">Ore</th></tr></thead>
       <tbody>
       <?php if (!$tp): ?><tr><td colspan="10" class="muted" style="text-align:center;padding:18px">Nessun modulo nel periodo con i filtri impostati.</td></tr><?php endif; ?>
       <?php foreach ($tp as $x): $n = max(1, (int)$x['moduli']); ?>
-        <tr><td><a href="<?= $qs(['tipologie' => $x['tipologia']]) ?>"><?= h(ItServiceModel::tipologia($x['tipologia'])) ?></a></td>
+        <tr><td><?= h(ItServiceModel::tipologia($x['tipologia'])) ?></td>
           <td class="r"><?= $h0($x['commesse']) ?></td><td class="r"><?= $h0($x['moduli']) ?></td>
           <td class="r"><?= $h0($x['da_ticket']) ?></td><td class="r"><?= $h0($x['da_testo']) ?></td><td class="r"><?= $h0($x['da_commessa']) ?></td>
           <td><span class="tr-mini" title="ticket / rif. libero / da commessa"><i style="width:<?= round($x['da_ticket'] / $n * 100, 2) ?>%;background:#dc2626"></i><i style="width:<?= round($x['da_testo'] / $n * 100, 2) ?>%;background:#f59e0b"></i><i style="width:<?= round($x['da_commessa'] / $n * 100, 2) ?>%;background:#16a34a"></i></span>

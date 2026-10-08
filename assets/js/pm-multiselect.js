@@ -1,5 +1,5 @@
 /*!
- * PortalManager v1.9.71 — pm-multiselect v2
+ * PortalManager v1.9.71 — pm-multiselect v2 (v1.10.26: tendina flottante)
  * Select con barra di ricerca integrata, applicata AUTOMATICAMENTE in tutto il portale.
  *
  *  - <select multiple>                      → multi-select: ricerca, spunte, "Tutti/Nessuno", chip
@@ -14,6 +14,13 @@
  * Attributi: data-placeholder, data-empty, data-allow-clear, data-search-min.
  * API: PmMultiselect.init(root), .enhance(select), .refresh(select)
  * Compatibile con la v1.9.30 (class="pm-ms", window.PmMultiselect).
+ *
+ * v1.10.26 — tendina FLOTTANTE: all'apertura il pannello delle opzioni viene spostato in <body> e posizionato
+ * con position:fixed sulle coordinate del campo. Prima era position:absolute dentro il pannello dei filtri
+ * (.pm-panel, overflow:hidden) e dentro contenitori scorrevoli: le opzioni venivano tagliate e, scorrendo,
+ * disegnate solo in parte. Ora: altezza della lista calcolata sullo spazio disponibile (sotto o sopra),
+ * riposizionamento su scroll/resize, chiusura se il campo esce dallo schermo, scorrimento della lista
+ * confinato (overscroll-behavior: contain), z-index sopra intestazioni fisse e tabelle sticky.
  */
 (function () {
   'use strict';
@@ -162,21 +169,47 @@
       sel.dispatchEvent(new Event('change', { bubbles: true }));   // attiva anche onchange="this.form.submit()"
       if (closeAfter) close();
     }
+    function place(ev) {
+      if (dropdown.hidden) return;
+      if (ev && ev.type === 'scroll' && ev.target && (ev.target === list || dropdown.contains(ev.target))) return;
+      var r = wrap.getBoundingClientRect();
+      var vh = window.innerHeight, vw = document.documentElement.clientWidth || window.innerWidth;
+      if (r.bottom < 0 || r.top > vh || r.width === 0) { close(); return; }   // campo fuori schermo o nascosto
+      var below = vh - r.bottom - 10, above = r.top - 10;
+      var up = below < 240 && above > below;
+      var avail = Math.max(120, up ? above : below);
+      var head = (search.offsetHeight || 32) + (tools ? (tools.offsetHeight || 24) : 0) + 22;
+      list.style.maxHeight = Math.max(96, Math.min(300, avail - head)) + 'px';
+      dropdown.style.minWidth = Math.round(r.width) + 'px';
+      dropdown.style.maxWidth = Math.min(460, vw - 16) + 'px';
+      var w = dropdown.offsetWidth, h = dropdown.offsetHeight;
+      dropdown.style.left = Math.round(Math.max(8, Math.min(r.left, vw - w - 8))) + 'px';
+      dropdown.style.top = Math.round(up ? Math.max(8, r.top - 4 - h) : r.bottom + 4) + 'px';
+      wrap.classList.toggle(NS + '-up', up);
+    }
     function open() {
       if (sel.disabled) return;
       if (openInstance && openInstance !== api) openInstance.close();
       openInstance = api;
       renderTrigger();                     // riallinea con modifiche fatte da altro JS
+      document.body.appendChild(dropdown); // v1.10.26 — fuori da contenitori con overflow nascosto / scorrevoli
+      dropdown.classList.add(NS + '-floating');
       dropdown.hidden = false; wrap.classList.add('open'); wrap.setAttribute('aria-expanded', 'true');
       search.value = ''; renderList();
-      // se non c'è spazio sotto, apre verso l'alto
-      var r = wrap.getBoundingClientRect();
-      wrap.classList.toggle(NS + '-up', window.innerHeight - r.bottom < 300 && r.top > 300);
-      setTimeout(function () { search.focus(); }, 0);
+      list.scrollTop = 0;
+      place();
+      window.addEventListener('scroll', place, true);
+      window.addEventListener('resize', place);
+      setTimeout(function () { search.focus({ preventScroll: true }); }, 0);
     }
     function close() {
       if (dropdown.hidden) return;
       dropdown.hidden = true; wrap.classList.remove('open'); wrap.setAttribute('aria-expanded', 'false');
+      window.removeEventListener('scroll', place, true);
+      window.removeEventListener('resize', place);
+      dropdown.classList.remove(NS + '-floating');
+      dropdown.style.top = dropdown.style.left = '';
+      wrap.appendChild(dropdown);
       if (openInstance === api) openInstance = null;
     }
     function move(d) {
@@ -187,7 +220,7 @@
     }
 
     trigger.addEventListener('click', function (ev) { if (ev.target.closest('button')) return; dropdown.hidden ? open() : close(); });
-    wrap.addEventListener('keydown', function (ev) {
+    function onKey(ev) {
       if (ev.key === 'Escape') { close(); wrap.focus(); return; }
       if (ev.key === 'ArrowDown') { ev.preventDefault(); if (dropdown.hidden) open(); else move(1); return; }
       if (ev.key === 'ArrowUp') { ev.preventDefault(); move(-1); return; }
@@ -200,7 +233,10 @@
         return;
       }
       if (ev.key === ' ' && ev.target === wrap) { ev.preventDefault(); open(); }
-    });
+      if (ev.key === 'Tab' && !dropdown.hidden && dropdown.contains(ev.target)) { close(); }
+    }
+    wrap.addEventListener('keydown', onKey);
+    dropdown.addEventListener('keydown', onKey);   // la ricerca è nella tendina flottante
     search.addEventListener('input', renderList);
     if (tools) {
       tools.addEventListener('mousedown', function (ev) {
@@ -222,13 +258,13 @@
     new MutationObserver(function () { renderTrigger(); if (!dropdown.hidden) renderList(); })
       .observe(sel, { childList: true, subtree: true });
 
-    var api = { close: close, refresh: renderTrigger };
+    var api = { close: close, refresh: renderTrigger, owns: function (n) { return wrap.contains(n) || dropdown.contains(n); } };
     sel.__pmms = api;
     renderTrigger();
   }
 
   document.addEventListener('click', function (ev) {
-    if (openInstance && !ev.target.closest('.' + NS + '-wrap')) openInstance.close();
+    if (openInstance && !openInstance.owns(ev.target)) openInstance.close();
   });
 
   function init(root) {

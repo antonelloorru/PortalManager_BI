@@ -331,7 +331,7 @@ $qs = function (array $over = []) use ($f, $inc, $INC_ALL) {
   </p>
 </div>
 
-<?= PmContractFilter::banner($f['contratti'], $vCtr, $qs(['contratti' => null, 'contratti_set' => 1])) ?>
+<?php /* v1.10.26 — filtro globale: un solo componente (pannello «Filtri»), nessun blocco aggiuntivo */ ?>
 <?php
   // v1.9.79 — rapportini senza attivita DGB: modalita e fascia oraria non ricavabili
   if ($pronto) {

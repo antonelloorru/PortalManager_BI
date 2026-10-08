@@ -253,8 +253,7 @@ $qs = function (array $over = []) use ($f, $tab, $x) {
   <?php endif; ?>
 </div>
 
-<?= PmContractFilter::banner($f['contratti'], $vCtr, $qs(['contratti' => null, 'contratti_set' => 1]),
-        $f['solo'] === 'aperte' ? 'perimetro: solo commesse aperte' : '') ?>
+<?php /* v1.10.26 — filtro globale: un solo componente (pannello «Filtri»), nessun blocco aggiuntivo */ ?>
 <?php if (!$pronto): ?>
   <div class="alert alert-warning"><strong>Dati non disponibili.</strong>
     Eseguire la migration v1.8.94.

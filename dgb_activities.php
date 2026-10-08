@@ -608,9 +608,7 @@ $qs = function (array $over = []) use ($f, $tab, $gran, $month) {
 </div>
 
 <?php if ($tab === 'analisi' || $tab === 'anomalie'): ?>
-<?= PmContractFilter::banner($f['contratti'], $vCtr,
-        url_safe('dgb_activities', array_filter(['tab' => $tab !== 'analisi' ? $tab : '', 'contratti_set' => 1])),
-        $tab === 'anomalie' ? 'anomalie orarie dei giorni-operatore con attività sui contratti; imputazioni sulla commessa errata o suggerita' : '') ?>
+<?php /* v1.10.26 — filtro globale: un solo componente (pannello «Filtri»), nessun blocco aggiuntivo */ ?>
 <?php endif; ?>
 
 <?php if ($tab === 'analisi' || $tab === 'anomalie'): /* v1.10.12 — un solo filtro principale per Analisi e Anomalie */ ?>
@@ -1083,12 +1081,7 @@ $qs = function (array $over = []) use ($f, $tab, $gran, $month) {
         $nextM = date('Y-m', strtotime($curM . '-01 +1 month'));
       ?>
       <a class="btn btn-sm" title="Mese precedente" href="<?=$qs(['gran'=>'day','month'=>$prevM])?>"><i class="fa-solid fa-chevron-left"></i></a>
-      <form method="get" style="display:inline-flex;gap:4px;align-items:center;margin:0">
-      <?= route_slug_field() ?>
-        <?php foreach (DgbModel::query($f) as $k => $v): ?><input type="hidden" name="<?=h($k)?>" value="<?=h((string)$v)?>"><?php endforeach; ?>
-        <input type="hidden" name="gran" value="day">
-        <input type="month" name="month" value="<?=h($curM)?>" onchange="this.form.submit()">
-      </form>
+      <span class="btn btn-sm" style="cursor:default;pointer-events:none"><?=h(date('m/Y', strtotime($curM . '-01')))?></span>
       <a class="btn btn-sm" title="Mese successivo" href="<?=$qs(['gran'=>'day','month'=>$nextM])?>"><i class="fa-solid fa-chevron-right"></i></a>
       <?php endif; ?>
     </div>

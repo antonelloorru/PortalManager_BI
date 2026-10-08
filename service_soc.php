@@ -167,7 +167,7 @@ require_once('header.php');
   <div class="alert alert-warning"><strong>Nessun ticket SOC nel portale.</strong> Caricare l'export «lista eventi ticket» o configurare il DB SOC in
     <?= $canSync ? '<a href="' . $syncUrl . '">Sincronizzazione gestionale › SOC</a>' : 'Sincronizzazione gestionale › SOC' ?>.</div>
 <?php else: ?>
-<?= PmContractFilter::banner($f['contratti'], $vCtr, $qs(['contratti' => null, 'contratti_set' => 1]), 'ticket con moduli di intervento sulle commesse selezionate') ?>
+<?php /* v1.10.26 — filtro globale: un solo componente (pannello «Filtri»), nessun blocco aggiuntivo */ ?>
 
 <?php $attivi = ($f['cliente'] !== '') + ($f['commessa'] !== '') + (count($f['categoria']) > 0) + ($f['tec'] !== '') + ($f['stato'] !== '') + ($f['esito'] !== '') + ($f['q'] !== '') + (count($f['contratti']) > 0); ?>
 <details class="pm-panel" <?= $attivi > 0 ? 'open' : '' ?>>

@@ -1,4 +1,4 @@
-/* PortalManager v1.9.71 — pm-multiselect v2 */
+/* PortalManager v1.9.71 — pm-multiselect v2 · v1.10.26: tendina flottante (position:fixed in <body>) */
 select.pm-ms-native { position: absolute !important; left: -9999px !important; width: 1px !important; height: 1px !important; opacity: 0; }
 .pm-ms-wrap { position: relative; font: inherit; min-width: 160px; outline: none; }
 .pm-ms-trigger {
@@ -32,9 +32,9 @@ select.pm-ms-native { position: absolute !important; left: -9999px !important; w
 .pm-ms-tools button { background: transparent; border: 1px solid var(--border, #e5e7eb); border-radius: 4px; padding: 2px 6px; cursor: pointer; font-size: 11px; color: inherit; }
 .pm-ms-tools button:hover { border-color: #2563eb; color: #2563eb; }
 .pm-ms-count { margin-left: auto; color: #2563eb; font-weight: 700; }
-.pm-ms-list { list-style: none; margin: 0; padding: 0; max-height: 260px; overflow-y: auto; }
+.pm-ms-list { list-style: none; margin: 0; padding: 0; max-height: 260px; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; scroll-padding: 4px; }
 .pm-ms-group { padding: 6px 8px 2px; font-size: 10px; font-weight: 700; text-transform: uppercase; color: #6b7280; }
-.pm-ms-item { padding: 5px 8px 5px 28px; cursor: pointer; position: relative; border-radius: 4px; font-size: 13px; white-space: nowrap; }
+.pm-ms-item { padding: 5px 8px 5px 28px; cursor: pointer; position: relative; border-radius: 4px; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 18px; line-height: 18px; }
 .pm-ms-item:hover, .pm-ms-item.active { background: rgba(37,99,235,.08); }
 .pm-ms-item.selected { color: #1e40af; font-weight: 600; }
 .pm-ms-item.disabled { opacity: .45; cursor: not-allowed; }
@@ -44,4 +44,12 @@ select.pm-ms-native { position: absolute !important; left: -9999px !important; w
 .pm-ms-tick { position: absolute; left: 9px; top: 50%; transform: translateY(-50%); color: transparent; }
 .pm-ms-item.selected .pm-ms-tick { color: #2563eb; }
 .pm-ms-empty { padding: 8px; color: #6b7280; text-align: center; font-size: 12px; }
-@media print { .pm-ms-wrap { display: none; } }
+/* v1.10.26 — tendina flottante: fuori dai contenitori con overflow nascosto (.pm-panel) o scorrevoli,
+   sopra intestazioni fisse e tabelle sticky; nessun taglio delle opzioni durante lo scorrimento */
+.pm-ms-dropdown.pm-ms-floating {
+  position: fixed; top: 0; left: 0; bottom: auto; z-index: 10050; width: max-content; box-sizing: border-box;
+  font: 13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; color: var(--text, #0f172a);
+  isolation: isolate;
+}
+.pm-ms-dropdown.pm-ms-floating[hidden] { display: none; }
+@media print { .pm-ms-wrap, .pm-ms-dropdown { display: none; } }
