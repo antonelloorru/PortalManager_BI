@@ -147,6 +147,8 @@ class MenuManager
                 // renderer in header.php, che non fa parte di questo pacchetto.
                 'items'   => [
                     ['page' => 'manage_projects',   'label' => 'Commesse / Progetti',         'icon' => 'fa-briefcase'],
+                    // v1.10.24 — ricerca trasversale su tutti gli archivi del modulo, con export CSV/XLSX/DOCX/PDF
+                    ['page' => 'cm_search',         'label' => 'Ricerca',                     'icon' => 'fa-magnifying-glass'],
                     ['page' => 'tech_registry',     'label' => 'Anagrafica Tecnica',          'icon' => 'fa-user-gear'],
                     ['page' => 'tech_units',        'label' => 'Unità Organizzative',         'icon' => 'fa-sitemap'],
                     ['page' => 'professionals',     'label' => 'Professionisti esterni',      'icon' => 'fa-user-tie'],

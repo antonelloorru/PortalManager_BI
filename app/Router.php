@@ -51,7 +51,7 @@ final class Router
         'manage_enum_proposals', 'system_backup', 'credly_sync',
 
         // Gestione Commesse (v1.8.x)
-        'manage_projects', 'project_dashboard', 'project_gantt', 'workload_overview', 'service_desk', 'service_soc', 'it_service', 'dir_report', 'pratix_orders', 'pratix_import', 'sync_commesse',
+        'manage_projects', 'cm_search', 'project_dashboard', 'project_gantt', 'workload_overview', 'service_desk', 'service_soc', 'it_service', 'dir_report', 'pratix_orders', 'pratix_import', 'sync_commesse',
         'dgb_activities', 'manage_rate_bands', 'import_commesse', 'import_commesse_db',
         'tech_registry', 'tech_units',
         // v1.9.99 — Progetti PRJ (prj_dashboard e prj_parameters da v1.10.01, prj_history da v1.10.02)

@@ -104,6 +104,8 @@ final class PermissionCatalog
             'service_soc.php'           => ['Service SOC', 'Ticket del sistema di gestione SOC aggregati con moduli, commesse e dipendenti; import XLSX e sync DB SOC'],
             'it_service.php'             => ['Relazione di Servizio IT', 'Operatività per incaricato, linea, settore, modalità; stampa ed export'],
             'dir_report.php'             => ['Report direzionale', 'Portafoglio commesse, margini, rischio, schede commerciali per agente'],
+            'cm_search.php'              => ['Ricerca', 'Vista tabellare filtrabile su tutti gli archivi del modulo; export CSV/XLSX/DOCX/PDF (ogni archivio richiede la vista della pagina sorgente)'],
+            'cm_search_economics.php'    => ['↳ Ricerca: importi e costi', 'Permesso virtuale: colonne economiche (valori, costi, ricavi, margini, tariffe) nella Ricerca e nei suoi export'],
             'relazione_servizio_it.php'  => ['↳ Relazione servizio IT (legacy)', 'Pagina storica della relazione IT'],
             'report_servizi_it.php'      => ['↳ Report servizi IT (legacy)', 'Pagina storica dei report servizi IT'],
             'project_view.php'           => ['↳ Vista progetto', 'Sub-route: dettaglio progetto realizzato'],
