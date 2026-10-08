@@ -174,6 +174,8 @@ class MenuManager
                     ['page' => 'service_desk',      'label' => 'Service Desk',              'icon' => 'fa-headset'],
                     ['page' => 'service_soc',       'label' => 'Service SOC',               'icon' => 'fa-shield-halved'],
                     ['page' => 'it_service',        'label' => 'Relazione di Servizio IT',  'icon' => 'fa-server'],
+                    // v1.10.25 — Relazione Tecnici: tecnico × codice linea, metriche, moduli valorizzati, rapporti di intervento per tipologia
+                    ['page' => 'tech_report',       'label' => 'Relazione Tecnici',         'icon' => 'fa-user-gear'],
                     ['page' => 'dir_report',        'label' => 'Report direzionale',        'icon' => 'fa-chart-pie'],
                     // v1.10.02 — Progetti PRJ: calcoli salvati e confronti tra progetti
                     ['page' => 'prj_history',       'label' => 'Scenari & confronti progetti', 'icon' => 'fa-scale-balanced'],

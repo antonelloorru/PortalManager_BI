@@ -112,6 +112,9 @@ final class ItServiceModel
             // conoscerne la linea di servizio
             'q'         => trim((string)($q['q'] ?? '')),
             'cliente'   => trim((string)($q['cliente'] ?? '')),
+            // v1.10.25 — Relazione Tecnici: tipologia di contratto (modello della linea) e provenienza ticket del modulo
+            'tipologie' => array_slice($arr($q['tipologie'] ?? []), 0, 50),
+            'prov'      => array_values(array_intersect(array_keys(self::PROV), $arr($q['prov'] ?? []))),
         ];
 
         // dimensioni di raggruppamento, validate contro l'elenco chiuso
@@ -183,6 +186,14 @@ final class ItServiceModel
             $lk = '%' . $f['q'] . '%'; $a[] = $lk; $a[] = $lk; $a[] = $lk;
         }
         if ($f['cliente'] !== '') { $w[] = "s.`cliente` LIKE ?"; $a[] = '%' . $f['cliente'] . '%'; }
+        // v1.10.25 — tipologia di contratto e provenienza ticket (Relazione Tecnici)
+        if (!empty($f['tipologie'])) {
+            $w[] = "COALESCE(NULLIF(s.`modello_contratto`,''),'da_classificare') IN (" . implode(',', array_fill(0, count($f['tipologie']), '?')) . ")";
+            foreach ($f['tipologie'] as $v) $a[] = $v;
+        }
+        if (!empty($f['prov']) && count($f['prov']) < count(self::PROV)) {
+            $w[] = "(SELECT " . self::provSql('irp') . " FROM `cm_intervention_reports` irp WHERE irp.`id` = s.`report_id`) IN ('" . implode("','", $f['prov']) . "')";
+        }
 
         return [implode(' AND ', $w), $a];
     }
@@ -245,7 +256,7 @@ final class ItServiceModel
     /** Filtri attivi oltre al periodo (qualunque dimensione). */
     private static function haFiltri(array $f): bool
     {
-        foreach (['linee','codici','settori','aziende','incaricati','modalita','fasce','durate','sedi','contratti','stati','dipendenti'] as $k)
+        foreach (['linee','codici','settori','aziende','incaricati','modalita','fasce','durate','sedi','contratti','stati','dipendenti','tipologie','prov'] as $k)
             if (!empty($f[$k])) return true;
         if (isset($f['tickets'])) return true;                                       // v1.10.11
         return ($f['ricavo'] ?? '') !== '' || ($f['q'] ?? '') !== '' || ($f['cliente'] ?? '') !== '';
@@ -314,6 +325,8 @@ final class ItServiceModel
         if (($f['ricavo'] ?? '') !== '') $out[] = 'Natura: ' . ($f['ricavo'] === '1' ? 'a ricavo' : 'interne');
         if (($f['q'] ?? '') !== '')       $out[] = 'Ricerca: ' . $f['q'];
         if (($f['cliente'] ?? '') !== '') $out[] = 'Cliente: ' . $f['cliente'];
+        if (!empty($f['tipologie'])) $out[] = 'Tipologia contratto: ' . implode(', ', array_map([self::class, 'tipologia'], $f['tipologie']));
+        if (!empty($f['prov'])) $out[] = 'Provenienza: ' . implode(', ', array_map(fn($k) => self::PROV[$k] ?? $k, $f['prov']));
         return $out;
     }
 
@@ -1162,5 +1175,219 @@ final class ItServiceModel
         ";
         try { $st=$this->pdo->prepare($sql); $st->execute($b); return $st->fetchAll(PDO::FETCH_ASSOC); }
         catch (Throwable $e) { return []; }
+    }
+
+    /* ══ v1.10.25 — Relazione Tecnici ═══════════════════════════════════════════════════════════
+     * Stesso perimetro e stessi filtri della Relazione di Servizio IT (where(), perimetro()):
+     * riga = modulo di intervento della vista v_cm_it_servizio, agganciato al rapportino per id.
+     */
+
+    /** Tipologie di contratto = modello della linea di servizio (cm_contract_models.model). */
+    public const TIPOLOGIE = ['presidio' => 'Presidio', 'a_scalare' => 'A scalare (monte ore)', 'chiavi_mano' => 'Chiavi in mano',
+        'a_chiamata' => 'Su chiamata', 'canone' => 'A canone', 'assistenza' => 'Assistenza e manutenzione', 'interno' => 'Interno (non a ricavo)',
+        'da_classificare' => 'Da classificare'];
+
+    /**
+     * Provenienza del modulo dal campo ticket del rapportino:
+     *   ticket   = riporta un codice ticket (es. WTS_000000070, WES_000000347);
+     *   testo    = campo ticket compilato con un riferimento libero (es. «Presidio», «Monitoraggio giornaliero»);
+     *   commessa = nessun ticket: modulo generato dalla commessa (pianificazione / attività di commessa).
+     */
+    public const PROV = ['ticket' => 'Ticket (codice)', 'testo' => 'Riferimento libero', 'commessa' => 'Da commessa'];
+    public const TICKET_RE = '[A-Za-z]{2,4}_[0-9]{6,}';
+
+    public static function provSql(string $al = 'ir'): string
+    {
+        return "(CASE WHEN NULLIF(TRIM($al.`ticket`),'') IS NULL THEN 'commessa' WHEN $al.`ticket` REGEXP '" . self::TICKET_RE . "' THEN 'ticket' ELSE 'testo' END)";
+    }
+
+    public static function tipologia($v): string
+    {
+        $v = (string)$v;
+        return self::TIPOLOGIE[$v] ?? ($v === '' ? self::TIPOLOGIE['da_classificare'] : $v);
+    }
+
+    /** Valori presenti del filtro tipologia (chiave => etichetta). */
+    public function valoriTipologie(): array
+    {
+        $out = [];
+        try {
+            foreach ($this->pdo->query("SELECT DISTINCT COALESCE(NULLIF(`modello_contratto`,''),'da_classificare') FROM `{$this->v['v_cm_it_servizio']}`")->fetchAll(PDO::FETCH_COLUMN) as $k)
+                $out[(string)$k] = self::tipologia($k);
+        } catch (Throwable $e) {}
+        uksort($out, fn($a, $b) => (array_search($a, array_keys(self::TIPOLOGIE)) === false ? 99 : array_search($a, array_keys(self::TIPOLOGIE)))
+                                 <=> (array_search($b, array_keys(self::TIPOLOGIE)) === false ? 99 : array_search($b, array_keys(self::TIPOLOGIE))));
+        return $out;
+    }
+
+    /**
+     * Giorni lavorabili fra due date: lunedì–venerdì esclusi i festivi nazionali italiani
+     * (1/1, 6/1, Pasquetta, 25/4, 1/5, 2/6, 15/8, 1/11, 8/12, 25/12, 26/12).
+     */
+    public static function giorniLavorabili(string $from, string $to): int
+    {
+        try { $d = new DateTime($from); $e = new DateTime($to); } catch (Throwable $x) { return 0; }
+        if ($e < $d) return 0;
+        $fest = [];
+        for ($y = (int)$d->format('Y'); $y <= (int)$e->format('Y'); $y++) {
+            foreach (['01-01', '01-06', '04-25', '05-01', '06-02', '08-15', '11-01', '12-08', '12-25', '12-26'] as $md) $fest["$y-$md"] = 1;
+            // Pasqua (algoritmo di Meeus/Jones/Butcher) + 1 giorno
+            $a = $y % 19; $b = intdiv($y, 100); $c = $y % 100; $dd = intdiv($b, 4); $ee = $b % 4; $f = intdiv($b + 8, 25); $g = intdiv($b - $f + 1, 3);
+            $h = (19 * $a + $b - $dd - $g + 15) % 30; $i = intdiv($c, 4); $k = $c % 4; $l = (32 + 2 * $ee + 2 * $i - $h - $k) % 7; $m = intdiv($a + 11 * $h + 22 * $l, 451);
+            $mo = intdiv($h + $l - 7 * $m + 114, 31); $da = (($h + $l - 7 * $m + 114) % 31) + 1;
+            $fest[date('Y-m-d', mktime(0, 0, 0, $mo, $da + 1, $y))] = 1;
+        }
+        $n = 0; $guard = 0;
+        while ($d <= $e && $guard++ < 40000) {
+            if ((int)$d->format('N') < 6 && !isset($fest[$d->format('Y-m-d')])) $n++;
+            $d->modify('+1 day');
+        }
+        return $n;
+    }
+
+    /** Join del rapportino (ticket, fascia di costo) per le letture della Relazione Tecnici. */
+    private function trJoin(): string
+    {
+        return " LEFT JOIN `cm_intervention_reports` ir ON ir.`id` = s.`report_id` LEFT JOIN `cm_rate_bands` rbx ON rbx.`id` = ir.`band_id` ";
+    }
+
+    /** Colonne aggregate comuni (attività, ticket, giorni, ore, classi, modalità, fascia di costo). */
+    private function trSelect(): string
+    {
+        $c = $this->oreClassi();
+        $fascia = "NULLIF(TRIM(COALESCE(rbx.`band_name`, ir.`band_raw`)),'')";
+        return "COUNT(DISTINCT s.`report_id`)                           AS attivita,
+                COUNT(DISTINCT NULLIF(TRIM(ir.`ticket`),''))             AS ticket,
+                COUNT(DISTINCT CONCAT(s.`incaricato`,'|',s.`giorno`))    AS giornate_uomo,
+                ROUND(SUM(s.`ore`), 2)                                    AS ore,
+                ROUND(SUM({$c['ord']}), 2)                                AS ore_ordinarie,
+                ROUND(SUM({$c['fuori']}), 2)                              AS ore_fuori_orario,
+                ROUND(SUM({$c['rep']}), 2)                                AS ore_reperibilita,
+                ROUND(SUM({$c['nc']}), 2)                                 AS ore_non_classificate,
+                ROUND(SUM(COALESCE(s.`ore_extra`,0)), 2)                  AS ore_extra,
+                SUM(s.`modalita` = 'presso cliente')                      AS presso_cliente,
+                SUM(s.`modalita` = 'da remoto')                           AS da_remoto,
+                SUM(s.`modalita` = 'smart working')                       AS smart_working,
+                GROUP_CONCAT(DISTINCT $fascia ORDER BY $fascia SEPARATOR ', ') AS fascia_costo";
+    }
+
+    /**
+     * Righe tecnico × codice linea, con i totali per tecnico (giornate-uomo non sommabili fra linee:
+     * lo stesso giorno può avere moduli su più linee) e il totale generale.
+     * @return array{righe:array, tecnici:array<string,array>, totale:array, gg_lavorabili:int}
+     */
+    public function tecniciLinea(array $f, int $limite = 5000): array
+    {
+        [$w, $a] = $this->where($f);
+        $sel = $this->trSelect();
+        $from = "FROM `{$this->v['v_cm_it_servizio']}` s {$this->trJoin()} WHERE $w";
+        $st = $this->pdo->prepare("SELECT s.`incaricato` AS tecnico, MIN(s.`incaricato_ordina`) AS ordina,
+                                          COALESCE(NULLIF(s.`linea_servizio`,''),'(n.d.)') AS codice_linea, MAX(s.`linea_label`) AS linea_label, $sel
+                                     $from GROUP BY s.`incaricato`, codice_linea
+                                    ORDER BY ordina, s.`incaricato`, ore DESC LIMIT " . (int)$limite);
+        $st->execute($a); $righe = $st->fetchAll(PDO::FETCH_ASSOC); $st->closeCursor();
+        $st = $this->pdo->prepare("SELECT s.`incaricato` AS tecnico, MAX(s.`employee_id`) AS employee_id, COUNT(DISTINCT s.`linea_servizio`) AS linee, $sel
+                                     $from GROUP BY s.`incaricato`");
+        $st->execute($a); $tec = []; foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) $tec[(string)$r['tecnico']] = $r; $st->closeCursor();
+        $st = $this->pdo->prepare("SELECT COUNT(DISTINCT s.`incaricato`) AS tecnici, COUNT(DISTINCT s.`linea_servizio`) AS linee, $sel $from");
+        $st->execute($a); $tot = $st->fetch(PDO::FETCH_ASSOC) ?: []; $st->closeCursor();
+        return ['righe' => $righe, 'tecnici' => $tec, 'totale' => $tot, 'gg_lavorabili' => self::giorniLavorabili($f['from'], $f['to'])];
+    }
+
+    /**
+     * Moduli di intervento valorizzati (con tariffa di listino) e non valorizzati, sullo stesso perimetro
+     * (v_cm_it_giorni_base, come «Giorni per operatore»). $perTecnico: una riga per tecnico.
+     */
+    public function valorizzazione(array $f, bool $perTecnico = false): array
+    {
+        $vz = $this->valExpr();
+        $sel = "COUNT(*) AS moduli, COUNT(DISTINCT `operatore`) AS tecnici, COUNT(DISTINCT `commessa`) AS commesse,
+                COUNT(DISTINCT CONCAT(`operatore`,'|',`giorno`)) AS giornate_uomo, ROUND(SUM(`ore`), 2) AS ore,
+                ROUND(SUM(`produzione_teorica`), 2) AS produzione_teorica, ROUND(SUM(`valore_addebitato`), 2) AS valore_addebitato";
+        if ($perTecnico)
+            return $this->giorniQuery($f, "SELECT `operatore` AS tecnico, MIN(`ordina`) AS ordina,
+                    SUM($vz) AS moduli_val, ROUND(SUM(CASE WHEN $vz THEN `ore` ELSE 0 END), 2) AS ore_val,
+                    SUM(NOT $vz) AS moduli_nv, ROUND(SUM(CASE WHEN $vz THEN 0 ELSE `ore` END), 2) AS ore_nv,
+                    ROUND(SUM(`produzione_teorica`), 2) AS produzione_teorica",
+                "GROUP BY `operatore` ORDER BY ordina, `operatore`");
+        $out = [];
+        foreach ($this->giorniQuery($f, "SELECT ($vz) AS v, $sel", "GROUP BY v") as $r) $out[(int)$r['v'] === 1 ? 'val' : 'nv'] = $r;
+        $out['tot'] = $this->giorniQuery($f, "SELECT $sel", "")[0] ?? [];
+        return $out;
+    }
+
+    /** Condizione «valorizzato»: colonna `valorizzata` della vista, altrimenti tariffa presente (viste precedenti). */
+    private ?string $valExpr = null;
+    private function valExpr(): string
+    {
+        if ($this->valExpr !== null) return $this->valExpr;
+        try {
+            $st = $this->pdo->prepare("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = 'valorizzata'");
+            $st->execute([$this->v['v_cm_it_giorni_base']]);
+            $has = (int)$st->fetchColumn() > 0;
+        } catch (Throwable $e) { $has = false; }
+        return $this->valExpr = $has ? "(COALESCE(`valorizzata`,0) = 1)" : "(`produzione_teorica` IS NOT NULL)";
+    }
+
+    /** Rapporti di intervento per tipologia di contratto, con la provenienza. */
+    public function rapportiTipologia(array $f): array
+    {
+        [$w, $a] = $this->where($f);
+        $pv = self::provSql('ir');
+        $st = $this->pdo->prepare("SELECT COALESCE(NULLIF(s.`modello_contratto`,''),'da_classificare') AS tipologia,
+                    COUNT(DISTINCT s.`commessa`) AS commesse, COUNT(DISTINCT s.`report_id`) AS moduli,
+                    COUNT(DISTINCT CASE WHEN $pv = 'ticket' THEN s.`report_id` END)   AS da_ticket,
+                    COUNT(DISTINCT CASE WHEN $pv = 'testo' THEN s.`report_id` END)    AS da_testo,
+                    COUNT(DISTINCT CASE WHEN $pv = 'commessa' THEN s.`report_id` END) AS da_commessa,
+                    COUNT(DISTINCT NULLIF(TRIM(ir.`ticket`),'')) AS ticket, COUNT(DISTINCT s.`incaricato`) AS tecnici, ROUND(SUM(s.`ore`), 2) AS ore
+               FROM `{$this->v['v_cm_it_servizio']}` s {$this->trJoin()} WHERE $w GROUP BY tipologia ORDER BY moduli DESC");
+        $st->execute($a); $out = $st->fetchAll(PDO::FETCH_ASSOC); $st->closeCursor();
+        return $out;
+    }
+
+    /** Rapporti di intervento per commessa (drill-down: id della commessa per il link alla scheda). */
+    public function rapportiCommessa(array $f, int $limite = 3000): array
+    {
+        [$w, $a] = $this->where($f);
+        $pv = self::provSql('ir');
+        $st = $this->pdo->prepare("SELECT s.`commessa`, MAX(s.`cliente`) AS cliente, MAX(s.`linea_servizio`) AS codice_linea,
+                    COALESCE(NULLIF(MAX(s.`modello_contratto`),''),'da_classificare') AS tipologia,
+                    (SELECT MIN(pp.`id`) FROM `cm_projects` pp WHERE pp.`project_code` = s.`commessa`) AS project_id,
+                    (SELECT MIN(COALESCE(NULLIF(pp.`description`,''), pp.`name`)) FROM `cm_projects` pp WHERE pp.`project_code` = s.`commessa`) AS denominazione,
+                    COUNT(DISTINCT s.`report_id`) AS moduli,
+                    COUNT(DISTINCT CASE WHEN $pv = 'ticket' THEN s.`report_id` END)   AS da_ticket,
+                    COUNT(DISTINCT CASE WHEN $pv = 'testo' THEN s.`report_id` END)    AS da_testo,
+                    COUNT(DISTINCT CASE WHEN $pv = 'commessa' THEN s.`report_id` END) AS da_commessa,
+                    COUNT(DISTINCT NULLIF(TRIM(ir.`ticket`),'')) AS ticket, COUNT(DISTINCT s.`incaricato`) AS tecnici,
+                    ROUND(SUM(s.`ore`), 2) AS ore, MIN(s.`giorno`) AS dal, MAX(s.`giorno`) AS al
+               FROM `{$this->v['v_cm_it_servizio']}` s {$this->trJoin()} WHERE $w
+              GROUP BY s.`commessa` ORDER BY moduli DESC, s.`commessa` LIMIT " . (int)$limite);
+        $st->execute($a); $out = $st->fetchAll(PDO::FETCH_ASSOC); $st->closeCursor();
+        return $out;
+    }
+
+    /** Moduli di intervento (dettaglio), facoltativamente di una sola commessa. */
+    public function rapportiModuli(array $f, ?string $commessa = null, int $limite = 2000): array
+    {
+        [$w, $a] = $this->where($f);
+        if ($commessa !== null) { $w .= " AND s.`commessa` = ?"; $a[] = $commessa; }
+        $st = $this->pdo->prepare("SELECT s.`report_id`, s.`modulo`, s.`giorno`, s.`commessa`, s.`cliente`, s.`incaricato` AS tecnico,
+                    s.`linea_servizio` AS codice_linea, COALESCE(NULLIF(s.`modello_contratto`,''),'da_classificare') AS tipologia,
+                    s.`modalita`, ROUND(s.`ore`, 2) AS ore, NULLIF(TRIM(ir.`ticket`),'') AS ticket, " . self::provSql('ir') . " AS provenienza,
+                    ir.`dgb_activity_code` AS attivita_dgb
+               FROM `{$this->v['v_cm_it_servizio']}` s {$this->trJoin()} WHERE $w
+              ORDER BY s.`commessa`, s.`giorno` DESC, s.`report_id` DESC LIMIT " . (int)$limite);
+        $st->execute($a); $out = $st->fetchAll(PDO::FETCH_ASSOC); $st->closeCursor();
+        return $out;
+    }
+
+    /** Numero di moduli del perimetro (per avvisare quando il dettaglio è troncato). */
+    public function contaModuli(array $f, ?string $commessa = null): int
+    {
+        [$w, $a] = $this->where($f);
+        if ($commessa !== null) { $w .= " AND s.`commessa` = ?"; $a[] = $commessa; }
+        $st = $this->pdo->prepare("SELECT COUNT(*) FROM `{$this->v['v_cm_it_servizio']}` s WHERE $w");
+        $st->execute($a); $n = (int)$st->fetchColumn(); $st->closeCursor();
+        return $n;
     }
 }
