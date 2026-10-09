@@ -75,6 +75,7 @@ final class ItServiceModel
         $this->pdo = $pdo;
         require_once __DIR__ . '/PmSnapshot.php';
         require_once __DIR__ . '/PmContractFilter.php';
+        require_once __DIR__ . '/PmUoFilter.php';   // v1.10.30
         $this->v = PmSnapshot::names($pdo, ['v_cm_it_distanze_mancanti', 'v_cm_it_giorni_base', 'v_cm_it_servizio', 'v_cm_sd_costi_valorizzati']);
     }
 
@@ -117,6 +118,8 @@ final class ItServiceModel
             'prov'      => array_values(array_intersect(array_keys(self::PROV), $arr($q['prov'] ?? []))),
             // v1.10.29 — descrizione tariffa del modulo («Fascia C (Ora)»: fascia oraria + unità di misura)
             'tariffe'   => array_slice($arr($q['tariffe'] ?? []), 0, 50),
+            // v1.10.30 — Unità Organizzativa (Anagrafica tecnica) dell'incaricato
+            'uo'        => PmUoFilter::fromRequest($q),
         ];
 
         // dimensioni di raggruppamento, validate contro l'elenco chiuso
@@ -193,6 +196,7 @@ final class ItServiceModel
             $w[] = "COALESCE(NULLIF(s.`modello_contratto`,''),'da_classificare') IN (" . implode(',', array_fill(0, count($f['tipologie']), '?')) . ")";
             foreach ($f['tipologie'] as $v) $a[] = $v;
         }
+        if (!empty($f['uo'])) $w[] = PmUoFilter::empSql($f['uo'], 's.`employee_id`');   // v1.10.30
         if (!empty($f['tariffe'])) {
             $w[] = $this->tariffaFiltro($f['tariffe'], $a);
         }
@@ -261,7 +265,7 @@ final class ItServiceModel
     /** Filtri attivi oltre al periodo (qualunque dimensione). */
     private static function haFiltri(array $f): bool
     {
-        foreach (['linee','codici','settori','aziende','incaricati','modalita','fasce','durate','sedi','contratti','stati','dipendenti','tipologie','prov','tariffe'] as $k)
+        foreach (['linee','codici','settori','aziende','incaricati','modalita','fasce','durate','sedi','contratti','stati','dipendenti','tipologie','prov','tariffe','uo'] as $k)
             if (!empty($f[$k])) return true;
         if (isset($f['tickets'])) return true;                                       // v1.10.11
         return ($f['ricavo'] ?? '') !== '' || ($f['q'] ?? '') !== '' || ($f['cliente'] ?? '') !== '';
@@ -332,6 +336,7 @@ final class ItServiceModel
         if (($f['cliente'] ?? '') !== '') $out[] = 'Cliente: ' . $f['cliente'];
         if (!empty($f['tipologie'])) $out[] = 'Tipologia contratto: ' . implode(', ', array_map([self::class, 'tipologia'], $f['tipologie']));
         if (!empty($f['tariffe'])) $out[] = 'Descrizione tariffa: ' . implode(', ', $f['tariffe']);
+        if (!empty($f['uo'])) $out[] = PmUoFilter::describe($f['uo'], PmUoFilter::options($this->pdo));
         if (!empty($f['prov'])) $out[] = 'Provenienza: ' . implode(', ', array_map(fn($k) => self::PROV[$k] ?? $k, $f['prov']));
         return $out;
     }

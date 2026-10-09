@@ -31,6 +31,7 @@ final class DirModel
         $this->pdo = $pdo;
         require_once __DIR__ . '/PmSnapshot.php';
         require_once __DIR__ . '/PmContractFilter.php';
+        require_once __DIR__ . '/PmUoFilter.php';
         $this->v = PmSnapshot::names($pdo, ['v_cm_dir_andamento', 'v_cm_dir_attenzione', 'v_cm_dir_commessa']);
     }
 
@@ -60,6 +61,8 @@ final class DirModel
             'cliente'  => trim((string)($q['cliente'] ?? '')),
             // v1.9.78 — filtro globale Codice Contratto / PM Project
             'contratti' => PmContractFilter::fromRequest($q),
+            // v1.10.30 — Unità Organizzativa: commesse con moduli o team delle unità scelte
+            'uo'        => PmUoFilter::fromRequest($q),
         ];
         if ($f['from'] !== '' && $f['to'] !== '' && $f['from'] > $f['to']) [$f['from'], $f['to']] = [$f['to'], $f['from']];
         return $f;
@@ -113,6 +116,7 @@ final class DirModel
         }
         $cf = $this->cf($f);
         if ($cf->active()) $w[] = $cf->sql('code', 'c.`commessa`', $a);   // v1.9.78
+        if (!empty($f['uo'])) $w[] = PmUoFilter::projectCodeSql($f['uo'], 'c.`commessa`');   // v1.10.30
         // v1.9.94 — intervallo date: commesse attive nel periodo (durata che interseca [Da, A])
         if ($f['from'] !== '') { $w[] = "(c.`end_date` IS NULL OR c.`end_date` >= ?)";   $a[] = $f['from']; }
         if ($f['to']   !== '') { $w[] = "(c.`start_date` IS NULL OR c.`start_date` <= ?)"; $a[] = $f['to']; }
@@ -229,6 +233,7 @@ final class DirModel
         }
         $cf = $this->cf($f);
         if ($cf->active()) $w[] = $cf->sql('code', 'x.`commessa`', $a);   // v1.9.78
+        if (!empty($f['uo'])) $w[] = PmUoFilter::projectCodeSql($f['uo'], 'x.`commessa`');   // v1.10.30
         // v1.9.94 — intervallo date
         if ($f['from'] !== '') { $w[] = "(pf.`end_date` IS NULL OR pf.`end_date` >= ?)";   $a[] = $f['from']; }
         if ($f['to']   !== '') { $w[] = "(pf.`start_date` IS NULL OR pf.`start_date` <= ?)"; $a[] = $f['to']; }
@@ -270,13 +275,14 @@ final class DirModel
         // v1.9.94 — con l'intervallo date i mesi sono quelli del periodo, non gli ultimi $mesi
         $daYm = $f['from'] !== '' ? substr($f['from'], 0, 7) : null;
         $aYm  = $f['to']   !== '' ? substr($f['to'], 0, 7)   : null;
-        if ($cf->active()) {
+        if ($cf->active() || !empty($f['uo'])) {   // v1.10.30 — anche con il filtro Unità Organizzativa
             $a = []; $w = ["ir.`report_date` IS NOT NULL"];
             if ($daYm === null && $aYm === null) { $w[] = "DATE_FORMAT(ir.`report_date`, '%Y-%m') >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL ? MONTH), '%Y-%m')"; $a[] = $mesi; }
             if ($daYm !== null) { $w[] = "DATE_FORMAT(ir.`report_date`, '%Y-%m') >= ?"; $a[] = $daYm; }
             if ($aYm  !== null) { $w[] = "DATE_FORMAT(ir.`report_date`, '%Y-%m') <= ?"; $a[] = $aYm; }
             if ($f['agente'] !== '') { $w[] = "COALESCE(p.`commercial_ref`, '(non attribuita)') = ?"; $a[] = $f['agente']; }
-            $w[] = $cf->sql('pid', 'ir.`project_id`', $a);
+            if ($cf->active()) $w[] = $cf->sql('pid', 'ir.`project_id`', $a);
+            if (!empty($f['uo'])) $w[] = PmUoFilter::projectSql($f['uo'], 'p.`id`');
             $st = $this->pdo->prepare(
                 "SELECT DATE_FORMAT(ir.`report_date`, '%Y-%m') AS ym,
                         COUNT(DISTINCT ir.`project_id`) AS commesse, COUNT(*) AS interventi,
@@ -412,6 +418,7 @@ final class DirModel
         $wc = '';
         $cf = $this->cf($f);
         if ($cf->active()) $wc = ' WHERE ' . $cf->sql('code', '`commessa`', $a);
+        if (!empty($f['uo'])) $wc .= ($wc === '' ? ' WHERE ' : ' AND ') . PmUoFilter::projectCodeSql($f['uo'], '`commessa`');   // v1.10.30
         $st = $this->pdo->prepare(
             "SELECT COUNT(*) AS tot,
                     SUM(`agente` = ?) AS suo,

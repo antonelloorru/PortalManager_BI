@@ -93,6 +93,7 @@ if ($pronto && $tab !== '') {
     if ($f['q'] !== '')       $ft[] = 'Ricerca: ' . $f['q'];
     foreach (['stato' => 'Stato', 'linee' => 'Linee', 'aziende' => 'Aziende'] as $k => $l) if ($f[$k]) $ft[] = $l . ': ' . implode(', ', $f[$k]);
     if ($f['contratti'])      $ft[] = 'Contratto: ' . implode(', ', $f['contratti']);
+    if ($f['uo'])             $ft[] = PmUoFilter::describe($f['uo'], PmUoFilter::options($pdo));
     $ft[] = 'Commesse attive: ' . $periodoTxt;
     if ($tab === 'acm') { $ft[] = 'Tolleranza In-Line ±' . number_format($x['toll'], 1, ',', '.') . '%'; if ($x['esito']) $ft[] = 'Esito: ' . implode(', ', array_map(fn($e) => DirTipologie::ESITI[$e], $x['esito'])); }
     try {
@@ -175,6 +176,7 @@ if ($pronto && $tab === '' && ($_GET['export'] ?? '') === 'xlsx') {
     // v1.9.78 — perimetro dell'estrazione
     $rf = [['Parametro', 'Valore'], ['Perimetro', ['aperte' => 'solo commesse aperte', 'tutte' => 'tutte le commesse', 'ricavo' => 'solo a ricavo'][$f['solo']]]];
     if ($f['contratti']) $rf[] = ['Contratto / PM Project', implode(', ', array_map(fn($v) => PmContractFilter::label($v, $vCtr), $f['contratti']))];
+    if ($f['uo']) $rf[] = ['Unità Organizzativa', implode(', ', array_map(fn($i) => PmUoFilter::options($pdo)[$i] ?? ('#' . $i), $f['uo']))];
     if ($ag !== '')        $rf[] = ['Agente', $ag];
     foreach (['stato' => 'Stato', 'linee' => 'Linee', 'aziende' => 'Aziende'] as $k => $l) if ($f[$k]) $rf[] = [$l, implode(', ', $f[$k])];
     if ($f['q'] !== '')       $rf[] = ['Ricerca', $f['q']];
@@ -226,7 +228,7 @@ require_once('header.php');
 $qs = function (array $over = []) use ($f, $tab, $x) {
     $p = ['agente' => $f['agente'], 'solo' => $f['solo'],
           'q' => $f['q'], 'cliente' => $f['cliente'], 'from' => $f['from'], 'to' => $f['to'], 'tab' => $tab];
-    foreach (['stato','linee','aziende','contratti'] as $k) if (!empty($f[$k])) $p[$k] = implode(',', $f[$k]);
+    foreach (['stato','linee','aziende','contratti','uo'] as $k) if (!empty($f[$k])) $p[$k] = implode(',', $f[$k]);
     if ($x['esito']) $p['esito'] = implode(',', $x['esito']);   // v1.10.15 — parametri della scheda ACM
     if (isset($_GET['toll']) && $_GET['toll'] !== '') $p['toll'] = (string)$x['toll'];
     return url_safe('dir_report', array_merge(array_filter($p, fn($v) => $v !== '' && $v !== []), $over));
@@ -270,7 +272,7 @@ $qs = function (array $over = []) use ($f, $tab, $x) {
   $attivi = ($ag !== '') + ($f['q'] !== '') + ($f['cliente'] !== '')
           + (count($f['stato']) > 0) + (count($f['linee']) > 0)
           + (count($f['aziende']) > 0) + ($f['solo'] !== 'aperte') + (count($f['contratti']) > 0)
-          + ($f['from'] !== '' || $f['to'] !== '') + ($tab === 'acm' && $x['esito'] ? 1 : 0);
+          + (count($f['uo']) > 0) + ($f['from'] !== '' || $f['to'] !== '') + ($tab === 'acm' && $x['esito'] ? 1 : 0);
 ?>
 <details class="pm-panel" <?= $attivi > 0 ? 'open' : '' ?>>
   <summary>
@@ -326,6 +328,7 @@ $qs = function (array $over = []) use ($f, $tab, $x) {
       <div class="pm-group">
         <h4>Classificazione</h4>
         <div class="pm-grid-auto">
+          <?= PmUoFilter::field(PmUoFilter::options($pdo), $f['uo'], 'commesse con moduli o team dell\'unità') ?>
           <div class="form-group"><label>Stato operativo <span class="pm-multi">(multipla)</span></label>
             <select name="stato[]" multiple size="3">
               <?php foreach ($vSta as $v): ?>

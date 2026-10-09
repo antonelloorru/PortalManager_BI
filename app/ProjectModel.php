@@ -91,6 +91,11 @@ final class ProjectModel
             $sl = array_values(array_filter(array_map('strval', (array)$filters['service_line']), fn($v) => $v !== ''));
             if ($sl) { $where[] = "p.service_line IN (" . implode(',', array_fill(0, count($sl), '?')) . ")"; foreach ($sl as $v) $args[] = $v; }
         }
+        // v1.10.30 — Unità Organizzativa
+        if (!empty($filters['uo'])) {
+            require_once __DIR__ . '/PmUoFilter.php';
+            $where[] = PmUoFilter::projectSql(PmUoFilter::norm($filters['uo']), 'p.id');
+        }
         if (!empty($filters['company_id']))  { $where[] = "p.exec_company_id = ?";      $args[] = (int)$filters['company_id']; }
         if (!empty($filters['client_id']))   { $where[] = "p.client_id = ?";            $args[] = (int)$filters['client_id']; }
         if (isset($filters['value_min']) && $filters['value_min'] !== '' && $filters['value_min'] !== null) { $where[] = "p.value_total >= ?"; $args[] = (float)$filters['value_min']; }

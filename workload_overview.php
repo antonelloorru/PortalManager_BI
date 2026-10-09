@@ -12,6 +12,7 @@
 require_once('access_control.php');
 require_once('functions.php');
 require_once(__DIR__ . '/app/Workload.php');
+require_once(__DIR__ . '/app/PmUoFilter.php');
 
 if (!can('view', 'workload_overview.php')) { redirect('manage_projects'); }
 $u_id = (int)$_SESSION['user_id'];
@@ -39,6 +40,13 @@ $f['project_type']      = trim((string)($_GET['ptype'] ?? ''));
 // v1.7.73: selezione multipla risorse + ordinamento.
 $emp_ids = array_values(array_filter(array_map('intval', (array)($_GET['emps'] ?? []))));
 $f['employee_ids'] = $emp_ids;
+// v1.10.30 — Unità Organizzativa: risorse delle unità scelte (intersecate con la selezione puntuale)
+$uo = PmUoFilter::fromRequest($_GET);
+if ($uo) {
+    $uoIds = PmUoFilter::employeeIds($pdo, $uo);
+    $f['employee_ids'] = $emp_ids ? array_values(array_intersect($emp_ids, $uoIds)) : $uoIds;
+    if (!$f['employee_ids']) $f['employee_ids'] = [-1];
+}
 $sort = in_array($_GET['sort'] ?? '', ['hours_desc','hours_asc','name'], true) ? $_GET['sort'] : 'hours_desc';
 $f['sort'] = $sort;
 $only_overload = ($_GET['ov'] ?? '') === '1';
@@ -145,13 +153,14 @@ if (($_GET['export'] ?? '') === 'xlsx') {
 }
 
 require_once('header.php');
-$qs = function (array $over = []) use ($from,$to,$f,$only_overload,$emp_ids,$sort,$service_line,$dm) {
+$qs = function (array $over = []) use ($from,$to,$f,$only_overload,$emp_ids,$sort,$service_line,$dm,$uo) {
     $p = array_filter(['from'=>$from,'to'=>$to,'proj'=>$f['project_id'],'emp'=>$f['employee_id'],'sl'=>$service_line,
                        'company'=>$f['company_id'],'client'=>$f['client_id'],'ostatus'=>$f['operational_status'],'ptype'=>$f['project_type'],
                        'ov'=>$only_overload?'1':'','sort'=>$sort!=='hours_desc'?$sort:'','dm'=>$dm], fn($v)=>$v!=='' && $v!==0);
     $q = array_merge($p, $over);
     // preserva la selezione multipla di risorse
     if ($emp_ids && !array_key_exists('emps', $over)) $q['emps'] = $emp_ids;
+    if ($uo && !array_key_exists('uo', $over)) $q['uo'] = PmUoFilter::query($uo);   // v1.10.30
     return url_safe('workload_overview', $q);
 };
 // scala colore saturazione
@@ -197,6 +206,8 @@ $satColor = function (float $sat): string {
     <div class="form-group" style="margin:0"><label>Tipologia</label>
       <select name="ptype"><option value="">tutte</option>
         <?php foreach($proj_types as $t):?><option value="<?=h($t)?>" <?=$f['project_type']===$t?'selected':''?>><?=h($t)?></option><?php endforeach;?></select></div>
+    <?= str_replace('<div class="form-group">', '<div class="form-group" style="margin:0;min-width:200px">', PmUoFilter::field(PmUoFilter::options($pdo), $uo, 'risorsa')) ?>
+    <?php foreach($emp_ids as $eid):?><input type="hidden" name="emps[]" value="<?=$eid?>"><?php endforeach;?>
     <div class="form-group" style="margin:0"><label>Ordina risorse per</label>
       <select name="sort">
         <option value="hours_desc" <?=$sort==='hours_desc'?'selected':''?>>ore (decrescente)</option>
@@ -212,7 +223,7 @@ $satColor = function (float $sat): string {
       <?= route_slug_field() ?>
       <input type="hidden" name="from" value="<?=h($from)?>"><input type="hidden" name="to" value="<?=h($to)?>">
       <input type="hidden" name="proj" value="<?=$f['project_id']?>"><input type="hidden" name="sort" value="<?=h($sort)?>"><input type="hidden" name="sl" value="<?=h($service_line)?>">
-      <input type="hidden" name="company" value="<?=$f['company_id']?>"><input type="hidden" name="client" value="<?=$f['client_id']?>"><input type="hidden" name="ostatus" value="<?=h($f['operational_status'])?>"><input type="hidden" name="ptype" value="<?=h($f['project_type'])?>">
+      <input type="hidden" name="company" value="<?=$f['company_id']?>"><input type="hidden" name="client" value="<?=$f['client_id']?>"><input type="hidden" name="ostatus" value="<?=h($f['operational_status'])?>"><input type="hidden" name="ptype" value="<?=h($f['project_type'])?>"><?php foreach($uo as $u):?><input type="hidden" name="uo[]" value="<?=(int)$u?>"><?php endforeach;?>
       <?php if($only_overload):?><input type="hidden" name="ov" value="1"><?php endif;?>
       <select name="emps[]" multiple size="6" style="min-width:280px;padding:6px">
         <?php foreach($employees as $id=>$l):?><option value="<?=$id?>" <?=in_array((int)$id,$emp_ids,true)?'selected':''?>><?=h($l)?></option><?php endforeach;?>
@@ -486,7 +497,7 @@ $mesi_lbl = (function($ym){ if(!$ym) return ''; $M=['','gennaio','febbraio','mar
       <?= route_slug_field() ?>
       <input type="hidden" name="from" value="<?=h($from)?>"><input type="hidden" name="to" value="<?=h($to)?>">
       <input type="hidden" name="proj" value="<?=$f['project_id']?>"><input type="hidden" name="sl" value="<?=h($service_line)?>">
-      <input type="hidden" name="company" value="<?=$f['company_id']?>"><input type="hidden" name="client" value="<?=$f['client_id']?>"><input type="hidden" name="ostatus" value="<?=h($f['operational_status'])?>"><input type="hidden" name="ptype" value="<?=h($f['project_type'])?>">
+      <input type="hidden" name="company" value="<?=$f['company_id']?>"><input type="hidden" name="client" value="<?=$f['client_id']?>"><input type="hidden" name="ostatus" value="<?=h($f['operational_status'])?>"><input type="hidden" name="ptype" value="<?=h($f['project_type'])?>"><?php foreach($uo as $u):?><input type="hidden" name="uo[]" value="<?=(int)$u?>"><?php endforeach;?>
       <input type="hidden" name="sort" value="<?=h($sort)?>"><?php if($only_overload):?><input type="hidden" name="ov" value="1"><?php endif;?>
       <?php foreach($emp_ids as $eid):?><input type="hidden" name="emps[]" value="<?=$eid?>"><?php endforeach;?>
       <div class="form-group" style="margin:0"><label style="font-size:11px">Mese di dettaglio</label>

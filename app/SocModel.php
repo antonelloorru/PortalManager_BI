@@ -19,6 +19,7 @@ final class SocModel
     public function __construct(private PDO $pdo)
     {
         require_once __DIR__ . '/PmContractFilter.php';
+        require_once __DIR__ . '/PmUoFilter.php';   // v1.10.30
     }
 
     public function setting(string $k, string $d): string
@@ -39,7 +40,8 @@ final class SocModel
         $s = static fn($k, $max = 190) => mb_substr(trim((string)($q[$k] ?? '')), 0, $max);
         $f = ['from' => $d($q['from'] ?? ''), 'to' => $d($q['to'] ?? ''), 'cliente' => $s('cliente'), 'commessa' => $s('commessa', 60),
               'categoria' => self::listParam($q['categoria'] ?? []), 'tec' => $s('tec', 150), 'stato' => in_array($q['stato'] ?? '', ['aperti', 'chiusi', 'presidio'], true) ? $q['stato'] : '',
-              'esito' => $s('esito', 60), 'q' => $s('q', 100), 'contratti' => PmContractFilter::fromRequest($q)];
+              'esito' => $s('esito', 60), 'q' => $s('q', 100), 'contratti' => PmContractFilter::fromRequest($q),
+              'uo' => PmUoFilter::fromRequest($q)];   // v1.10.30 — Unità Organizzativa di assegnatario / owner
         if ($f['from'] === '' || $f['to'] === '') {
             $max = null;
             try { $max = $this->pdo->query("SELECT MAX(last_event_at) FROM cm_soc_tickets")->fetchColumn(); } catch (Throwable $e) {}
@@ -102,6 +104,7 @@ final class SocModel
         if ($f['stato'] === 'presidio') { $w[] = $this->presidioCond(); }
         if ($f['q'] !== '')         { $w[] = '(t.ticket_code LIKE ? OR t.title LIKE ?)'; $a[] = '%' . $f['q'] . '%'; $a[] = '%' . $f['q'] . '%'; }
         if ($this->cf($f)->active()) $w[] = $this->cf($f)->sql('ticket', 't.ticket_code', $a);
+        if (!empty($f['uo'])) $w[] = '(' . PmUoFilter::empSql($f['uo'], 't.assignee_employee_id') . ' OR ' . PmUoFilter::empSql($f['uo'], 't.owner_employee_id') . ')';   // v1.10.30
         if ($withPeriod === 'attivi') {
             $w[] = 'EXISTS (SELECT 1 FROM cm_soc_events pe WHERE pe.ticket_code = t.ticket_code AND pe.event_at BETWEEN ? AND ?)';
             $a[] = $f['from'] . ' 00:00:00'; $a[] = $f['to'] . ' 23:59:59';
@@ -369,9 +372,11 @@ final class SocModel
             $ids = [$eid ?: -1];
             $info['tec'] = $eid ? ($this->rows("SELECT CONCAT_WS(' ', last_name, first_name) n FROM employees WHERE id = ?", [$eid])[0]['n'] ?? null) : null;
         }
+        // v1.10.30 — Unità Organizzativa: solo i componenti SOC che vi appartengono
+        if (!empty($f['uo'])) $ids = array_values(array_intersect($ids, PmUoFilter::employeeIds($this->pdo, $f['uo'])));
         $x['dipendenti'] = $ids ?: [-1];
         if ($f['cliente'] !== '' || $f['commessa'] !== '' || $f['categoria'] || $f['esito'] !== '' || $f['stato'] !== '' || $f['q'] !== '') {
-            [$w, $a] = $this->where(['tec' => ''] + $f, 'none');
+            [$w, $a] = $this->where(['tec' => '', 'uo' => []] + $f, 'none');
             $x['tickets'] = array_column($this->rows("SELECT t.ticket_code FROM cm_soc_tickets t WHERE $w", $a), 'ticket_code');
             $info['ticket_filtrati'] = count($x['tickets']);
         }

@@ -356,6 +356,7 @@ if ($pronto && ($_GET['export'] ?? '') === 'xlsx') {
     // v1.9.78 — perimetro dell'estrazione
     $rf = [['Parametro', 'Valore'], ['Periodo', date('d/m/Y', strtotime($f['from'])) . ' – ' . date('d/m/Y', strtotime($f['to']))]];
     if ($f['contratti']) $rf[] = ['Contratto / PM Project', implode(', ', array_map(fn($v) => PmContractFilter::label($v, $vCtr), $f['contratti']))];
+    if ($f['uo'])            $rf[] = ['Unità Organizzativa', implode(', ', array_map(fn($i) => PmUoFilter::options($pdo)[$i] ?? ('#' . $i), $f['uo']))];
     if ($tec !== '')         $rf[] = ['Componente', $tec];
     if ($f['queue'] !== '')  $rf[] = ['Coda', $f['queue']];
     if ($f['level'] !== '')  $rf[] = ['Livello', $f['level']];
@@ -1246,7 +1247,8 @@ require_once('header.php');
 $qs = function (array $over = []) use ($f, $tec) {
     $p = array_filter(['from' => $f['from'], 'to' => $f['to'], 'queue' => $f['queue'],
                        'level' => $f['level'], 'gest' => $f['gest'],
-                       'tec' => $tec, 'contratti' => implode(',', $f['contratti'])], fn($v) => $v !== '');
+                       'tec' => $tec, 'contratti' => implode(',', $f['contratti']),
+                       'uo' => PmUoFilter::query($f['uo'])], fn($v) => $v !== '');
     return url_safe('service_desk', array_merge($p, $over));
 };
 $n  = fn($v) => number_format((float)$v, 0, ',', '.');
@@ -1298,7 +1300,7 @@ $colClasse = [
 <?php // v1.9.8 — pannello uniformato al template di Commesse/Progetti ?>
 <?php
   $attivi = ($tec !== '') + ($f['queue'] !== '') + ($f['level'] !== '') + ($f['gest'] !== '')
-          + (count($f['contratti']) > 0);
+          + (count($f['contratti']) > 0) + (count($f['uo']) > 0);
 ?>
 <details class="pm-panel" <?= $attivi > 0 ? 'open' : '' ?>>
   <summary>
@@ -1330,6 +1332,7 @@ $colClasse = [
       <div class="pm-group">
         <h4>Selezione</h4>
         <div class="pm-grid-auto">
+          <?= PmUoFilter::field(PmUoFilter::options($pdo), $f['uo'], 'presa in carico / tecnico') ?>
           <div class="form-group"><label>Componente del team</label>
             <select name="tec" class="pm-ms"><option value="">— tutta la squadra —</option>
               <?php foreach ($elencoTeam as $t): ?>

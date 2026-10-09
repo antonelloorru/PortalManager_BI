@@ -315,7 +315,7 @@ require_once('header.php');
 $qs = function (array $over = []) use ($f, $inc, $INC_ALL) {
     $p = ['from' => $f['from'], 'to' => $f['to'], 'ricavo' => $f['ricavo'],
           'q' => $f['q'], 'cliente' => $f['cliente']];
-    foreach (['contratti','linee','codici','settori','aziende','incaricati','modalita','fasce','durate','sedi','gb'] as $k)
+    foreach (['contratti','linee','codici','settori','aziende','incaricati','modalita','fasce','durate','sedi','gb','uo'] as $k)
         if (!empty($f[$k])) $p[$k] = implode(',', $f[$k]);
     if (!empty($f['stati'])) $p['stato_commessa'] = implode(',', $f['stati']);   // v1.9.87
     if (count($inc) < count($INC_ALL)) $p['inc'] = $inc; // subset -> inc[] nei link stampa/export
@@ -353,7 +353,7 @@ $qs = function (array $over = []) use ($f, $inc, $INC_ALL) {
 <?php // v1.9.8 — pannello uniformato al template di Commesse/Progetti ?>
 <?php
   $attivi = ($f['q'] !== '') + ($f['cliente'] !== '') + ($f['ricavo'] !== '');
-  foreach (['contratti','stati','linee','codici','settori','aziende','incaricati','modalita','fasce','durate','sedi'] as $k)
+  foreach (['contratti','stati','linee','codici','settori','aziende','incaricati','modalita','fasce','durate','sedi','uo'] as $k)
       $attivi += (count($f[$k]) > 0) ? 1 : 0;
 ?>
 <details class="pm-panel" <?= $attivi > 0 ? 'open' : '' ?>>
@@ -419,6 +419,7 @@ $qs = function (array $over = []) use ($f, $inc, $INC_ALL) {
       <div class="pm-group">
         <h4>Erogazione</h4>
         <div class="pm-grid-auto">
+          <?= PmUoFilter::field(PmUoFilter::options($pdo), $f['uo'], 'incaricato') ?>
           <?php foreach ([
             ['incaricati', 'Incaricato', $vInc], ['sedi', 'Sede di riferimento', $vSed],
             ['modalita', 'Modalità', ['in sede','da remoto','presso cliente','smart working','reperibilita']],

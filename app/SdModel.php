@@ -26,6 +26,7 @@ final class SdModel
         $this->pdo = $pdo;
         require_once __DIR__ . '/PmSnapshot.php';
         require_once __DIR__ . '/PmContractFilter.php';
+        require_once __DIR__ . '/PmUoFilter.php';
         $this->v = PmSnapshot::names($pdo, ['v_cm_assenze_serie', 'v_cm_nomi', 'v_cm_sd_addetti_mese', 'v_cm_sd_attivita', 'v_cm_sd_commesse', 'v_cm_sd_costi_valorizzati', 'v_cm_sd_messaggi', 'v_cm_sd_moduli', 'v_cm_sd_nome_moduli', 'v_cm_sd_obj21_quadro', 'v_cm_sd_obj23_code', 'v_cm_sd_obj23_ripartizione', 'v_cm_sd_obj2_linee', 'v_cm_sd_obj2_quadro', 'v_cm_sd_operativita', 'v_cm_sd_presa_carico', 'v_cm_sd_scheda_tecnico', 'v_cm_sd_team', 'v_cm_sd_tecnici_uo', 'v_cm_sd_tecnico_mese', 'v_cm_sd_ticket']);
     }
 
@@ -54,6 +55,8 @@ final class SdModel
             // portano la commessa: il legame passa dal ticket dell'attivita' DGB
             // (contratto) e dal ticket del rapportino (commessa). Vedi PmContractFilter.
             'contratti' => PmContractFilter::fromRequest($q),
+            // v1.10.30 — Unità Organizzativa (Anagrafica tecnica): il Service Desk identifica le persone per nome
+            'uo'        => PmUoFilter::fromRequest($q),
         ];
 
         $d = static fn($v) => preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)$v) ? $v : '';
@@ -128,14 +131,32 @@ final class SdModel
         return $this->persone = array_values(array_unique(array_filter(array_map('strval', $out), fn($x) => $x !== '')));
     }
 
+    /** v1.10.30 — Nomi delle persone delle Unità Organizzative scelte (minuscolo, entrambi gli ordini). */
+    private ?array $uoNomi = null;
+    private function uoNomi(array $f): array
+    {
+        if ($this->uoNomi === null) $this->uoNomi = PmUoFilter::names($this->pdo, $f['uo'] ?? []);
+        return $this->uoNomi;
+    }
+
+    /** v1.10.30 — " AND <colonna nome persona> IN (persone delle unità)" se il filtro è attivo, "" altrimenti. */
+    public function uoSql(array $f, string $col, array &$a): string
+    {
+        if (empty($f['uo'])) return '';
+        $n = $this->uoNomi($f);
+        if (!$n) return ' AND 0=1';
+        foreach ($n as $x) $a[] = $x;
+        return " AND LOWER(TRIM($col)) IN (" . implode(',', array_fill(0, count($n), '?')) . ")";
+    }
+
     /** Condizione sulle persone per le assenze (vuota se il filtro non e' attivo). */
     private function ctrPersone(array $f, string $col, array &$a): string
     {
-        if (!$this->cf($f)->active()) return '';
+        if (!$this->cf($f)->active()) return $this->uoSql($f, $col, $a);   // v1.10.30
         $p = $this->personeContratto($f);
         if (!$p) return ' AND 0=1';
         foreach ($p as $x) $a[] = $x;
-        return " AND $col IN (" . implode(',', array_fill(0, count($p), '?')) . ")";
+        return " AND $col IN (" . implode(',', array_fill(0, count($p), '?')) . ")" . $this->uoSql($f, $col, $a);
     }
 
     /** Clausola condivisa da pannello, elenchi ed export: un solo punto di verita'. */
@@ -172,6 +193,11 @@ final class SdModel
         if ($f['level'] === 'L2') $w[] = "t.`msg_l2` > 0";
         // v1.9.78 — filtro contratto sui ticket collegati
         if ($this->cf($f)->active()) $w[] = $this->cf($f)->sql('ticket', 't.`ticket`', $a);
+        // v1.10.30 — Unità Organizzativa: ticket presi in carico da una persona delle unità (IN non correlato)
+        if (!empty($f['uo'])) {
+            $uw = $this->uoSql($f, 'pcu.`tecnico`', $a);
+            $w[] = "t.`ticket` IN (SELECT pcu.`ticket` FROM `{$this->v['v_cm_sd_presa_carico']}` pcu WHERE 1=1 $uw)";
+        }
 
         // il JOIN precede i parametri della WHERE nell'ordine di sostituzione
         $join = ''; $pre = [];
@@ -414,6 +440,7 @@ final class SdModel
     {
         $a = [$f['from'] . ' 00:00:00', $f['to'] . ' 23:59:59', $f['tec'] ?? '', $f['tec'] ?? ''];
         $wc = $this->ctr($f, 'ticket', 'm.`ticket_code`', $a);   // v1.9.78
+        $wc .= $this->uoSql($f, 'm.`author_name`', $a);           // v1.10.30
         $st = $this->pdo->prepare(
             // v1.8.91 — ordinato per COGNOME e nome: le due fonti scrivono il
             // nome in ordini opposti, e un ORDER BY sulla colonna ordinerebbe
@@ -946,6 +973,7 @@ final class SdModel
     {
         $sp = $this->sdSplit('m');   // v1.9.75
         $ac = []; $wc = $this->ctr($f, 'code', 'm.`commessa`', $ac);   // v1.9.78
+        $wc .= $this->uoSql($f, 'm.`tecnico`', $ac);                   // v1.10.30
         $st = $this->pdo->prepare(
             "SELECT COUNT(*)                                              AS moduli,
                     ROUND(SUM(m.`ore`), 2)                                AS ore,
@@ -980,6 +1008,7 @@ final class SdModel
         $a1 = [$f['from'].' 00:00:00', $f['to'].' 23:59:59']; $a2 = [$f['from'], $f['to']];   // v1.9.78
         $w1 = $this->ctr($f, 'ticket', 'p.`ticket`', $a1);
         $w2 = $this->ctr($f, 'code', 'm.`commessa`', $a2);
+        $a3 = [];                                                // v1.10.30 — Unità Organizzativa
         $st = $this->pdo->prepare(
             "SELECT t.`nome` AS tecnico, t.`sotto_unita`,
                     COALESCE(nm.`ordina`, LOWER(t.`nome`))                AS ordina,
@@ -1010,8 +1039,9 @@ final class SdModel
                        FROM `{$this->v['v_cm_sd_moduli']}` m {$sp['join']}
                       WHERE m.`giorno` BETWEEN ? AND ? $w2
                       GROUP BY m.`tecnico`) md ON md.`tecnico` = t.`nome`
+              WHERE 1=1 " . $this->uoSql($f, 't.`nome`', $a3) . "
               ORDER BY ordina, t.`nome`");
-        $st->execute(array_merge($a1, $a2));
+        $st->execute(array_merge($a1, $a2, $a3));
         $out = $st->fetchAll(PDO::FETCH_ASSOC);
         $st->closeCursor();
         foreach ($out as &$r) {
@@ -1030,6 +1060,7 @@ final class SdModel
         if ($f['tec'] !== '') $a[] = $f['tec'];
         $tec = $f['tec'] !== '' ? " AND m.`tecnico` = ?" : "";
         $tec .= $this->ctr($f, 'code', 'm.`commessa`', $a);   // v1.9.78
+        $tec .= $this->uoSql($f, 'm.`tecnico`', $a);          // v1.10.30
         if ($this->sdKey() === '') {           // senza codice modulo: fascia del modulo intero (come prima)
             $st = $this->pdo->prepare(
                 "SELECT m.`fascia_oraria`, COUNT(*) AS interventi, ROUND(SUM(m.`ore`), 2) AS ore,
@@ -1073,6 +1104,7 @@ final class SdModel
     {
         $sp = $this->sdSplit('m');   // v1.9.75
         $ac = []; $wc = $this->ctr($f, 'code', 'm.`commessa`', $ac);   // v1.9.78
+        $wc .= $this->uoSql($f, 'm.`tecnico`', $ac);                   // v1.10.30
         $st = $this->pdo->prepare(
             "SELECT m.`codice_linea`, m.`contratto`, m.`modello`, m.`ha_ricavo`,
                     COUNT(*) AS interventi, ROUND(SUM(m.`ore`), 2) AS ore,

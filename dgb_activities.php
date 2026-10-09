@@ -45,6 +45,7 @@ $dgbFiltriSheet = function () use ($f, $vCtr): array {
     $r = [['Parametro', 'Valore']];
     if ($f['from'] !== '' || $f['to'] !== '') $r[] = ['Periodo (data lavoro)', ($f['from'] ?: '…') . ' – ' . ($f['to'] ?: '…')];
     if ($f['contratti']) $r[] = ['Contratto / PM Project', implode(', ', array_map(fn($v) => PmContractFilter::label($v, $vCtr), $f['contratti']))];
+    if ($f['uo']) $r[] = ['Unità Organizzativa', implode(', ', array_map(fn($i) => PmUoFilter::options($GLOBALS['pdo'])[$i] ?? ('#' . $i), $f['uo']))];   // v1.10.30
     // v1.9.97 — filtri multi-valore
     // v1.9.98 — stessi campi della Relazione di Servizio IT
     $lab = ['stati' => ['aperta' => 'Aperta', 'chiusa' => 'Chiusa', 'sospesa' => 'Sospesa', 'non_chiusa' => 'Non chiusa'],
@@ -685,6 +686,7 @@ $qs = function (array $over = []) use ($f, $tab, $gran, $month) {
       <div class="pm-group">
         <h4>Erogazione</h4>
         <div class="pm-grid-auto">
+          <?= PmUoFilter::field(PmUoFilter::options($pdo), $f['uo'], 'incaricato') ?>
           <?= $ms('operator', 'Incaricato', $optOp, $f['operators']) ?>
           <?= $ms('sedi', 'Sede di riferimento', $optSedi, $f['sedi']) ?>
           <?= $ms('mode', 'Modalità', DgbModel::MODALITA, $f['modes']) ?>

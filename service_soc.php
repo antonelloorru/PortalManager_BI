@@ -132,7 +132,7 @@ if ($ready) {
 }
 $qs = function (array $over = []) use ($f, $tab) {
     $p = array_filter(['tab' => $tab, 'from' => $f['from'], 'to' => $f['to'], 'cliente' => $f['cliente'], 'commessa' => $f['commessa'], 'categoria' => $f['categoria'] ?: null,
-                       'tec' => $f['tec'], 'stato' => $f['stato'], 'esito' => $f['esito'], 'q' => $f['q'], 'contratti' => implode(',', $f['contratti'])], fn($v) => $v !== '' && $v !== null);
+                       'tec' => $f['tec'], 'stato' => $f['stato'], 'esito' => $f['esito'], 'q' => $f['q'], 'contratti' => implode(',', $f['contratti']), 'uo' => PmUoFilter::query($f['uo'])], fn($v) => $v !== '' && $v !== null);
     return url_safe('service_soc', array_filter(array_merge($p, $over), fn($v) => $v !== null));
 };
 $n  = fn($v) => number_format((float)$v, 0, ',', '.');
@@ -169,7 +169,7 @@ require_once('header.php');
 <?php else: ?>
 <?php /* v1.10.26 — filtro globale: un solo componente (pannello «Filtri»), nessun blocco aggiuntivo */ ?>
 
-<?php $attivi = ($f['cliente'] !== '') + ($f['commessa'] !== '') + (count($f['categoria']) > 0) + ($f['tec'] !== '') + ($f['stato'] !== '') + ($f['esito'] !== '') + ($f['q'] !== '') + (count($f['contratti']) > 0); ?>
+<?php $attivi = ($f['cliente'] !== '') + ($f['commessa'] !== '') + (count($f['categoria']) > 0) + ($f['tec'] !== '') + ($f['stato'] !== '') + ($f['esito'] !== '') + ($f['q'] !== '') + (count($f['contratti']) > 0) + (count($f['uo']) > 0); ?>
 <details class="pm-panel" <?= $attivi > 0 ? 'open' : '' ?>>
   <summary><i class="fa-solid fa-chevron-right pm-chev"></i> Filtri
     <?php if ($attivi > 0): ?><span class="pm-badge"><?=$attivi?></span><?php endif; ?>
@@ -182,6 +182,7 @@ require_once('header.php');
         <div class="form-group"><label>Dal</label><input type="date" name="from" value="<?=h($f['from'])?>"></div>
         <div class="form-group"><label>Al</label><input type="date" name="to" value="<?=h($f['to'])?>"></div></div></div>
       <div class="pm-group"><h4>Selezione</h4><div class="pm-grid-auto">
+        <?= PmUoFilter::field(PmUoFilter::options($pdo), $f['uo'], 'assegnatario / owner') ?>
         <div class="form-group"><label>Categoria</label><select name="categoria[]" multiple class="pm-ms" data-placeholder="— tutte —" data-allow-clear>
           <?php foreach ($soc->valori('categoria') as $v): ?><option value="<?=h($v)?>" <?=in_array($v, $f['categoria'], true) ? 'selected' : ''?>><?=h($v)?></option><?php endforeach; ?></select></div>
         <?php foreach (['cliente' => 'Cliente', 'commessa' => 'Commessa SOC', 'tec' => 'Componente (incaricato, responsabile o autore)', 'esito' => 'Esito'] as $k => $l): ?>

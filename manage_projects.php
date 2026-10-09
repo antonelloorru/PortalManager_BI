@@ -20,6 +20,7 @@
 require_once('access_control.php');
 require_once('functions.php');
 require_once(__DIR__ . '/app/ProjectModel.php');
+require_once(__DIR__ . '/app/PmUoFilter.php');
 
 // v1.10.01 — scheda «Progetti PRJ» (gare e iniziative da dimensionare), stessa voce di menu.
 // La vista è in app/prj_list.php, con permessi propri (manage_projects_prj.php): accessibile anche a chi non vede le commesse SP.
@@ -92,6 +93,8 @@ $f = [
     'company_id'     => (int)($_GET['company'] ?? 0),
     // v1.10.29 — «Tipo» (linea di servizio): selezione multipla (sl[] oppure elenco separato da virgole)
     'service_line'   => array_values(array_slice(array_filter(array_map('trim', is_array($_GET['sl'] ?? null) ? $_GET['sl'] : explode(',', (string)($_GET['sl'] ?? ''))), fn($v) => $v !== ''), 0, 50)),
+    // v1.10.30 — Unità Organizzativa: commesse con moduli di intervento o team delle unità scelte
+    'uo'             => PmUoFilter::fromRequest($_GET),
     'type'           => trim($_GET['type'] ?? ''),
     'has_link'       => $_GET['link'] ?? '',
     'has_dgb'        => $_GET['dgb'] ?? '',
@@ -275,7 +278,7 @@ $qs = function(array $over = []) use ($f) {
     $map = [
         'q'=>$f['q'], 'abbr'=>$f['abbr'], 'cref'=>$f['commercial_ref'], 'cliente'=>$f['client_raw'],
         'descr'=>$f['descr'], 'client'=>$f['client_id'], 'company'=>$f['company_id'],
-        'sl'=>implode(',', $f['service_line']), 'type'=>$f['type'], 'link'=>$f['has_link'], 'dgb'=>$f['has_dgb'], 'prj'=>$f['has_prj'],
+        'sl'=>implode(',', $f['service_line']), 'uo'=>PmUoFilter::query($f['uo']), 'type'=>$f['type'], 'link'=>$f['has_link'], 'dgb'=>$f['has_dgb'], 'prj'=>$f['has_prj'],
         'status'=>$f['status'], 'commercial'=>$f['commercial'], 'econ'=>$f['econ'], 'econ_today'=>$f['econ_today'],
         'cverify'=>$f['compliance_to_verify'], 'cpre'=>$f['compliance_preauth'],
         'aopen'=>$f['anom_open']?1:'', 'ablocking'=>$f['anom_blocking']?1:'',
@@ -474,6 +477,7 @@ $total_projects = (int)$pdo->query("SELECT COUNT(*) FROM cm_projects")->fetchCol
           <div class="form-group"><label>Tipo <span class="pm-multi">(linea di servizio · multipla)</span></label>
             <select name="sl[]" multiple size="4" class="pm-ms" data-placeholder="Tutti">
               <?php foreach($service_lines as $s):?><option value="<?=h($s)?>" <?=in_array($s, $f['service_line'], true)?'selected':''?>><?=h($s)?></option><?php endforeach;?></select></div>
+          <?= PmUoFilter::field(PmUoFilter::options($pdo), $f['uo'], 'moduli o team') ?>
         </div>
       </div>
 

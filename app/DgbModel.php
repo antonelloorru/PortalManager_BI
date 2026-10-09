@@ -19,6 +19,8 @@
  *  - distribuzione carico per incaricato (sede vs remoto) con baseline;
  *  - data quality (ticket orfani, piani vuoti).
  */
+require_once __DIR__ . '/PmUoFilter.php';   // v1.10.30 — usato anche dai metodi statici dei filtri
+
 final class DgbModel
 {
     private PDO $pdo;
@@ -193,6 +195,8 @@ final class DgbModel
             // v1.9.78 — filtro globale (sostituisce il filtro a scelta singola `contract`,
             // che resta accettato nei link come selezione di un contratto DGB)
             'contratti'   => PmContractFilter::fromRequest($in),
+            // v1.10.30 — Unità Organizzativa dell'incaricato (operatore DGB → dipendente → unità)
+            'uo'          => PmUoFilter::fromRequest($in),
         ];
     }
 
@@ -269,7 +273,7 @@ final class DgbModel
     public static function activeCount(array $f): int
     {
         $n = 0;
-        foreach (['operators','statuses','report_types','modes','schedules','clienti','linee','tipi','contratti',
+        foreach (['operators','statuses','report_types','modes','schedules','clienti','linee','tipi','contratti','uo',
                   'stati','codici','settori','aziende','sedi','fasce','durate'] as $k) $n += !empty($f[$k]) ? 1 : 0;
         foreach (['q','from','to','oncall','rep','extra','ticket','modulo','sforo','cliente','ricavo'] as $k) $n += (($f[$k] ?? '') !== '') ? 1 : 0;
         return $n + (((float)($f['stdh'] ?? 8)) != 8.0 ? 1 : 0);
@@ -286,6 +290,7 @@ final class DgbModel
             if (!empty($f[$k])) $p[$g] = implode(',', $f[$k]);
         if (($f['gb'] ?? ['incaricato', 'contratto']) !== ['incaricato', 'contratto']) $p['gb'] = implode(',', $f['gb']);
         if (!empty($f['contratti'])) $p['contratti'] = implode(',', $f['contratti']);
+        if (!empty($f['uo'])) $p['uo'] = PmUoFilter::query($f['uo']);   // v1.10.30
         foreach (['from','to','q','oncall','rep','extra','ticket','modulo','sforo','cliente','ricavo'] as $k) if (($f[$k] ?? '') !== '') $p[$k] = $f[$k];
         if ((float)$f['stdh'] != 8.0) $p['stdh'] = $f['stdh'];
         return $p;
@@ -345,6 +350,7 @@ final class DgbModel
     private function allocConds(array $f, array &$args, string $x): array
     {
         $w = [];
+        if (!empty($f['uo'])) $w[] = PmUoFilter::dgbOperatorSql($f['uo'], "$x.id_operator");   // v1.10.30
         if ($f['operators']) { $w[] = "$x.id_operator IN (" . implode(',', array_fill(0, count($f['operators']), '?')) . ")"; array_push($args, ...$f['operators']); }
         if ($f['report_types']) { $w[] = "$x.exec_report_type IN (" . implode(',', array_fill(0, count($f['report_types']), '?')) . ")"; array_push($args, ...$f['report_types']); }
         if ($f['modes']) { $w[] = self::modalitaSql($x) . " IN (" . implode(',', array_fill(0, count($f['modes']), '?')) . ")"; array_push($args, ...$f['modes']); }
@@ -501,6 +507,7 @@ final class DgbModel
         if (($f['from'] ?? '') !== '') { $w[] = 'giorno >= ?'; $a[] = $f['from']; }
         if (($f['to'] ?? '') !== '')   { $w[] = 'giorno <= ?'; $a[] = $f['to']; }
         if (!empty($f['operators'])) { $w[] = 'operator_id IN (' . implode(',', array_fill(0, count($f['operators']), '?')) . ')'; array_push($a, ...array_map('intval', $f['operators'])); }
+        if (!empty($f['uo'])) $w[] = PmUoFilter::dgbOperatorSql($f['uo'], 'operator_id');   // v1.10.30
         return [implode(' AND ', $w) . $this->ctrOperatoreGiorno($f, 'operator_id', 'giorno', $a), $a];
     }
 

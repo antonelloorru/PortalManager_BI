@@ -32,7 +32,7 @@ if ($cmx === '') $cmx = null;
 
 $qs = function (array $over = []) use ($f, $tab, $det) {
     $p = ['from' => $f['from'], 'to' => $f['to'], 'ricavo' => $f['ricavo'], 'q' => $f['q'], 'cliente' => $f['cliente'], 'tab' => $tab !== 'tecnici' ? $tab : '', 'det' => $det ? '1' : ''];
-    foreach (['contratti', 'linee', 'codici', 'settori', 'aziende', 'incaricati', 'modalita', 'fasce', 'durate', 'sedi', 'tipologie', 'prov', 'tariffe'] as $k)
+    foreach (['contratti', 'linee', 'codici', 'settori', 'aziende', 'incaricati', 'modalita', 'fasce', 'durate', 'sedi', 'tipologie', 'prov', 'tariffe', 'uo'] as $k)
         if (!empty($f[$k])) $p[$k] = implode(',', $f[$k]);
     if (!empty($f['stati'])) $p['stato_commessa'] = implode(',', $f['stati']);
     $p = array_merge($p, $over);
@@ -145,7 +145,7 @@ tr.tr-dd>td{background:#fbfdff;padding:4px 10px 10px 28px;white-space:normal}
 
 <?php
   $attivi = ($f['q'] !== '') + ($f['cliente'] !== '') + ($f['ricavo'] !== '');
-  foreach (['contratti', 'stati', 'linee', 'codici', 'settori', 'aziende', 'incaricati', 'modalita', 'fasce', 'durate', 'sedi', 'tipologie', 'prov', 'tariffe'] as $k) $attivi += count($f[$k]) > 0 ? 1 : 0;
+  foreach (['contratti', 'stati', 'linee', 'codici', 'settori', 'aziende', 'incaricati', 'modalita', 'fasce', 'durate', 'sedi', 'tipologie', 'prov', 'tariffe', 'uo'] as $k) $attivi += count($f[$k]) > 0 ? 1 : 0;
 ?>
 <details class="pm-panel" <?= $attivi > 0 ? 'open' : '' ?>>
   <summary><i class="fa-solid fa-chevron-right pm-chev"></i> Filtri
@@ -200,6 +200,7 @@ tr.tr-dd>td{background:#fbfdff;padding:4px 10px 10px 28px;white-space:normal}
       <div class="pm-group">
         <h4>Erogazione</h4>
         <div class="pm-grid-auto">
+          <?= PmUoFilter::field(PmUoFilter::options($pdo), $f['uo'], 'tecnico') ?>
           <?php foreach ([['incaricati', 'Tecnico / incaricato', $vInc], ['sedi', 'Sede di riferimento', $vSed],
                           ['modalita', 'Modalità', ['in sede', 'da remoto', 'presso cliente', 'smart working', 'reperibilita']],
                           ['fasce', 'Fascia oraria', ['in orario', 'fuori orario', 'non rilevata']], ['durate', 'Durata', ['giornata', 'mezza giornata', 'non rilevata']]] as [$k, $lbl, $vals]): ?>
