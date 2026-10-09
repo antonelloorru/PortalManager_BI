@@ -30,16 +30,20 @@ $TR = new TechReport($m, $eco);
 $tab = isset(TechReport::TABS[$_GET['tab'] ?? '']) ? (string)$_GET['tab'] : 'tecnici';
 // v1.10.32 — filtri di colonna del Controllo Reperibilità (cf[i]): vista, stampa ed export
 $f['cf'] = $tab === 'reperibilita' ? TechReport::colFiltri($_GET['cf'] ?? []) : [];
+// v1.10.35 — scheda ServiceDesk: filtro di esclusione per Unità Organizzativa (predefinito «Service Desk»; uo_escl=0 = nessuna)
+$sdUo = $m->sdUnitId();
+$f['uo_escl'] = isset($_GET['uo_escl']) ? PmUoFilter::norm($_GET['uo_escl']) : ($sdUo ? [$sdUo] : []);
 $det = ($_GET['det'] ?? '') === '1';
 $cmx = isset($_GET['commessa']) ? mb_substr(trim((string)$_GET['commessa']), 0, 60) : null;
 if ($cmx === '') $cmx = null;
 
-$qs = function (array $over = []) use ($f, $tab, $det) {
+$qs = function (array $over = []) use ($f, $tab, $det) {   // v1.10.35: uo_escl nella scheda ServiceDesk
     $p = ['from' => $f['from'], 'to' => $f['to'], 'ricavo' => $f['ricavo'], 'q' => $f['q'], 'cliente' => $f['cliente'], 'tab' => $tab !== 'tecnici' ? $tab : '', 'det' => $det ? '1' : ''];
     foreach (['contratti', 'linee', 'codici', 'settori', 'aziende', 'incaricati', 'modalita', 'fasce', 'durate', 'sedi', 'tipologie', 'prov', 'tariffe', 'uo'] as $k)
         if (!empty($f[$k])) $p[$k] = implode(',', $f[$k]);
     if (!empty($f['stati'])) $p['stato_commessa'] = implode(',', $f['stati']);
     if (!empty($f['cf']) && !array_key_exists('tab', $over)) $p['cf'] = $f['cf'];   // v1.10.32 — solo nella stessa scheda
+    if ($tab === 'servicedesk' && !array_key_exists('tab', $over)) $p['uo_escl'] = $f['uo_escl'] ? PmUoFilter::query($f['uo_escl']) : '0';   // v1.10.35
     $p = array_merge($p, $over);
     return url_safe('tech_report', array_filter($p, fn($v) => $v !== '' && $v !== [] && $v !== null));
 };
@@ -77,7 +81,7 @@ if ($repFmt !== '' || $print) {
     $data = $TR->data($tab, $f, $tab === 'rapporti' && $det, $tab === 'rapporti' ? $cmx : null,
                       in_array($fmt, ['docx', 'pdf', 'print'], true) ? TechReport::MAX_DOC : TechReport::MAX_FILE);
     $rep  = $TR->build($tab, $f, $data, $filtriTxt, $fmt, $tab === 'rapporti' ? $cmx : null);
-    $base = 'relazione_tecnici_' . ($tab === 'reperibilita' ? 'controllo_reperibilita_' : '') . ($tab === 'rapporti' ? 'rapporti_' . ($cmx !== null ? PmReport::safe($cmx) . '_' : '') : '') . $f['from'] . '_' . $f['to'];
+    $base = 'relazione_tecnici_' . ($tab === 'reperibilita' ? 'controllo_reperibilita_' : '') . ($tab === 'servicedesk' ? 'servicedesk_' : '') . ($tab === 'rapporti' ? 'rapporti_' . ($cmx !== null ? PmReport::safe($cmx) . '_' : '') : '') . $f['from'] . '_' . $f['to'];
     write_log('TechReport', 'info', ($print ? 'Stampa' : 'Export ' . $repFmt) . ' Relazione Tecnici › ' . TechReport::TABS[$tab] . ($cmx !== null ? " (commessa $cmx)" : ''), $u_id,
         ['scheda' => $tab, 'formato' => $fmt, 'periodo' => $f['from'] . '..' . $f['to'], 'commessa' => $cmx, 'dettaglio' => $det]);
     if ($print) { header('Content-Type: text/html; charset=utf-8'); echo $rep->toHtml(true); exit; }
@@ -218,6 +222,17 @@ tr.tr-dd>td{background:#fbfdff;padding:4px 10px 10px 28px;white-space:normal}
           <?php endforeach; ?>
         </div>
       </div>
+      <?php if ($tab === 'servicedesk'): ?>
+      <div class="pm-group">
+        <h4>Esclusioni <span class="pm-multi">(scheda ServiceDesk · ticket gestiti da altri team)</span></h4>
+        <div class="pm-grid-auto">
+          <input type="hidden" name="uo_escl[]" value="0">
+          <div class="form-group"><label>Unità Organizzative escluse <span class="pm-multi">(multipla · predefinita Service Desk)</span></label>
+            <select name="uo_escl[]" multiple size="4" class="pm-ms" data-placeholder="Nessuna esclusione">
+              <?php foreach (PmUoFilter::options($pdo) as $uid => $un): ?><option value="<?= (int)$uid ?>" <?= in_array((int)$uid, $f['uo_escl'], true) ? 'selected' : '' ?>><?= h($un) ?></option><?php endforeach; ?></select></div>
+        </div>
+      </div>
+      <?php endif; ?>
       <div class="pm-group">
         <h4>Dettagli da includere <span class="pm-multi">(stampa / export della scheda Rapporti di intervento)</span></h4>
         <label style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="checkbox" name="det" value="1" <?= $det ? 'checked' : '' ?>> Dettaglio dei moduli di intervento</label>
@@ -331,6 +346,72 @@ tr.tr-dd>td{background:#fbfdff;padding:4px 10px 10px 28px;white-space:normal}
     <div class="tr-note">Valorizzati = moduli con tariffa di listino della commessa; non valorizzati = commessa senza listino o combinazione fascia/unità non prevista (dettaglio dei motivi nella Relazione di Servizio IT).</div>
   </section>
 
+<?php elseif ($tab === 'servicedesk'):
+    $K = $D['kpi']; $SC = $D['contratti']; $SU = $D['uo']; $sdEco = !empty($D['eco']); ?>
+  <?php /* v1.10.35 — 1) KPI aggregati · 2) metriche con la formula SQL · 3) esclusione per Unità Organizzativa · 4) dettaglio per contratto */ ?>
+  <div class="tr-kpi">
+    <div style="--c:#2563eb"><b><?= $h0($K['contratti']) ?></b><span>Contratti <?= h(ItServiceModel::SD_LINEA) ?></span><small><?= $h0($K['contratti_moduli']) ?> con moduli nel periodo</small></div>
+    <?php if ($sdEco): ?><div style="--c:#0f766e"><b><?= $h2($K['valore']) ?> €</b><span>Valore totale contratti</span><small>competenza nel periodo <?= $h2($K['valore_periodo']) ?> €</small></div><?php endif; ?>
+    <div style="--c:#7c3aed"><b><?= $K['media_risorse'] === null ? '—' : $h2($K['media_risorse']) ?></b><span>Media risorse per contratto</span><small><?= $h0($K['risorse']) ?> risorse distinte</small></div>
+    <div style="--c:#0891b2"><b><?= $h0($K['ticket']) ?></b><span>Ticket gestiti</span><small><?= $h0($K['moduli']) ?> moduli · <?= $h0($K['rif_liberi']) ?> rif. liberi non contati</small></div>
+    <div style="--c:#dc2626"><b><?= $h0($K['ticket_altri']) ?> <small style="display:inline;font-size:14px;color:#dc2626"><?= $pc($K['pct_altri']) ?></small></b><span>Ticket gestiti da altri team</span><small>UO escluse: <?= h($D['escl_nomi'] !== '' ? $D['escl_nomi'] : 'nessuna unità') ?></small></div>
+  </div>
+
+  <section class="tr-sec">
+    <h2>Metriche <small>valore e traduzione in query (COUNT / SUM / AVG) sul perimetro dei filtri</small></h2>
+    <div class="tr-wrap"><table class="tr-t">
+      <thead><tr><th>Metrica</th><th class="r">Valore</th><th>Formula SQL</th><th>Perimetro</th></tr></thead>
+      <tbody>
+      <?php foreach (TechReport::sdMetriche($D) as [$mn, $mf, $mp, $mv]): ?>
+        <tr><td><strong><?= h($mn) ?></strong></td><td class="r"><?= h($mv) ?></td><td style="white-space:normal;font-family:ui-monospace,Consolas,monospace;font-size:11px;color:#334155;max-width:620px"><?= h($mf) ?></td><td style="white-space:normal;font-size:11px;color:#64748b"><?= h($mp) ?></td></tr>
+      <?php endforeach; ?>
+      </tbody></table></div>
+  </section>
+
+  <section class="tr-sec">
+    <h2>Ticket per Unità Organizzativa <small>filtro di esclusione: <?= h($D['escl_nomi'] !== '' ? $D['escl_nomi'] : 'nessuna unità') ?> (modificabile dal pannello «Filtri» › Esclusioni)</small></h2>
+    <div class="tr-wrap"><table class="tr-t" style="max-width:980px">
+      <thead><tr><th>Unità Organizzativa</th><th class="r">Moduli</th><th class="r">Risorse</th><th class="r">Ore</th><th class="r">Ticket</th><th>Quota sul totale ticket</th></tr></thead>
+      <tbody>
+      <?php if (!$SU): ?><tr><td colspan="6" class="muted" style="text-align:center;padding:18px">Nessun modulo <?= h(ItServiceModel::SD_LINEA) ?> nel periodo con i filtri impostati.</td></tr><?php endif; ?>
+      <?php foreach ($SU as $u): $q = TechReport::pct($u['ticket'], $K['ticket']); ?>
+        <tr<?= $u['escluso'] ? ' style="background:#f1f5f9;color:#64748b"' : '' ?>><td><?= h($u['uo']) ?><?php if ($u['escluso']): ?> <span class="tr-pv" style="background:#e2e8f0;color:#475569">esclusa</span><?php endif; ?></td>
+          <td class="r"><?= $h0($u['moduli']) ?></td><td class="r"><?= $h0($u['risorse']) ?></td><td class="r"><?= $h2($u['ore']) ?></td><td class="r"><?= $h0($u['ticket']) ?></td>
+          <td><span class="tr-mini"><i style="width:<?= (float)($q ?? 0) ?>%;background:<?= $u['escluso'] ? '#94a3b8' : '#dc2626' ?>"></i></span> <span style="font-size:11px"><?= $pc($q) ?></span></td></tr>
+      <?php endforeach; ?>
+      <?php if ($SU): ?>
+        <tr class="tot"><td>Altri team (escluse le unità escluse)</td><td colspan="3"></td><td class="r"><?= $h0($K['ticket_altri']) ?></td><td><?= $pc($K['pct_altri']) ?> del totale</td></tr>
+        <tr class="tot"><td>Totale ticket distinti</td><td class="r"><?= $h0($K['moduli']) ?></td><td class="r"><?= $h0($K['risorse']) ?></td><td class="r"><?= $h2($K['ore']) ?></td><td class="r"><?= $h0($K['ticket']) ?></td><td>solo unità escluse: <?= $h0($K['ticket_solo_escl']) ?></td></tr>
+      <?php endif; ?>
+      </tbody></table></div>
+    <div class="tr-note">Un ticket lavorato da più unità è contato una volta nel totale e in ciascuna unità che vi ha lavorato: la somma per unità può superare il totale. «Altri team» = ticket con almeno un modulo di una risorsa fuori dalle unità escluse; «solo unità escluse» = ticket lavorati esclusivamente dalle unità escluse.</div>
+  </section>
+
+  <section class="tr-sec">
+    <h2>Per contratto <?= h(ItServiceModel::SD_LINEA) ?> <small><?= $h0(count($SC)) ?> contratti · attivi nel periodo o con moduli nel periodo</small></h2>
+    <div class="tr-wrap"><table class="tr-t">
+      <thead><tr><?php foreach (TechReport::sdHCtr($sdEco) as $i => $hd): ?><th class="<?= $i >= 6 ? 'r' : '' ?>"><?= h($hd) ?></th><?php endforeach; ?></tr></thead>
+      <tbody>
+      <?php foreach ($SC as $c): $v = TechReport::sdCtr($c, $sdEco); $off = $sdEco ? 0 : 2; ?>
+        <tr<?= (int)$c['moduli'] === 0 ? ' class="muted-row"' : '' ?>>
+          <td><?php if ($can_pd): ?><a href="<?= url_safe('project_dashboard', ['id' => (int)$c['id']]) ?>" title="Scheda commessa"><?= h($v[0]) ?></a><?php else: ?><?= h($v[0]) ?><?php endif; ?></td>
+          <td title="<?= h($v[1]) ?>"><?= h(mb_strimwidth($v[1], 0, 36, '…')) ?></td><td title="<?= h($v[2]) ?>"><?= h(mb_strimwidth($v[2], 0, 32, '…')) ?></td>
+          <td><?= h($v[3]) ?></td><td><?= h($v[4]) ?></td><td><?= h($v[5]) ?></td>
+          <?php if ($sdEco): ?><td class="r"><?= $h2($v[6]) ?></td><td class="r"><?= $h2($v[7]) ?></td><?php endif; ?>
+          <td class="r"><?= $h0($v[8 - $off]) ?></td><td class="r"><?= $h0($v[9 - $off]) ?></td><td class="r"><?= $h2($v[10 - $off]) ?></td>
+          <td class="r"><?= $h0($v[11 - $off]) ?></td><td class="r"><?= $h0($v[12 - $off]) ?></td><td class="r"><?= $pc($v[13 - $off]) ?></td>
+        </tr>
+      <?php endforeach; ?>
+      <?php if ($SC): ?>
+        <tr class="tot"><td>Totale</td><td colspan="5"><?= $h0(count($SC)) ?> contratti</td>
+          <?php if ($sdEco): ?><td class="r"><?= $h2($K['valore']) ?></td><td class="r"><?= $h2($K['valore_periodo']) ?></td><?php endif; ?>
+          <td class="r"><?= $h0($K['moduli']) ?></td><td class="r">media <?= $K['media_risorse'] === null ? '—' : $h2($K['media_risorse']) ?></td><td class="r"><?= $h2($K['ore']) ?></td>
+          <td class="r"><?= $h0($K['ticket']) ?></td><td class="r"><?= $h0($K['ticket_altri']) ?></td><td class="r"><?= $pc($K['pct_altri']) ?></td></tr>
+      <?php endif; ?>
+      </tbody></table></div>
+    <div class="tr-note">Contratti = commesse con linea di servizio <?= h(ItServiceModel::SD_LINEA) ?> la cui durata interseca il periodo, o con moduli nel periodo; si applicano i filtri globali di contratto (Codice contratto / PM Project, stato, cliente, ricerca). Moduli, risorse, ore e ticket seguono tutti i filtri del pannello. <?= $sdEco ? 'Valore nel periodo = pro-rata mensile del valore totale sulla durata del contratto.' : 'I valori economici richiedono il permesso «Relazione Tecnici: valori» (tech_report_economics.php).' ?> Righe in grigio: nessun modulo nel periodo.</div>
+  </section>
+  <style>.tr-t tr.muted-row td{color:#94a3b8}</style>
 <?php elseif ($tab === 'reperibilita'):
     $RR = $D['righe']; $dh = fn($v) => $v ? date('d/m/Y H:i', strtotime((string)$v)) : '';
     $vis = array_slice($RR, 0, 5000); ?>

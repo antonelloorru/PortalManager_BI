@@ -1582,4 +1582,133 @@ final class ItServiceModel
         $st->execute($a); $n = (int)$st->fetchColumn(); $st->closeCursor();
         return $n;
     }
+
+    /* ── v1.10.35 — Relazione Tecnici › ServiceDesk: metriche aggregate dei contratti WTS-SD ──────────────────────
+     *
+     * Tre livelli separati:
+     *   A. perimetro contratti  — cm_projects con service_line = 'WTS-SD' attivi nel periodo (durata ∩ [Da, A]) o con moduli
+     *                             nel periodo; filtri globali di contratto (Codice contratto / PM Project, stato, cliente, ricerca);
+     *   B. perimetro moduli     — v_cm_it_servizio con where($f) (TUTTI i filtri globali) AND linea_servizio = 'WTS-SD';
+     *   C. filtro di esclusione — Unità Organizzative escluse (default «Service Desk»): un ticket è «gestito da altri team»
+     *                             se almeno un suo modulo è di una risorsa NON appartenente alle unità escluse.
+     * Ticket = codice ticket del modulo (provenienza «ticket», REGEXP TICKET_RE), contato una volta (COUNT DISTINCT).
+     */
+    public const SD_LINEA = 'WTS-SD';
+    public const SD_UO    = 'Service Desk';
+
+    /** Id dell'Unità Organizzativa «Service Desk» (esclusione predefinita); null se non definita. */
+    public function sdUnitId(): ?int
+    {
+        try {
+            $st = $this->pdo->prepare("SELECT id FROM cm_tech_units WHERE LOWER(TRIM(name)) = LOWER(?) ORDER BY id LIMIT 1");
+            $st->execute([self::SD_UO]); $id = $st->fetchColumn(); $st->closeCursor();
+            return $id !== false ? (int)$id : null;
+        } catch (Throwable $e) { return null; }
+    }
+
+    /** Condizione «modulo di una risorsa delle unità escluse» (alias s = v_cm_it_servizio, ir = cm_intervention_reports). */
+    private static function esclSql(array $escl): string
+    {
+        if (!$escl) return '0 = 1';
+        return "(COALESCE(s.`employee_id`, 0) IN (" . PmUoFilter::empSub($escl) . ") OR COALESCE(ir.`technician_professional_id`, 0) IN (" . PmUoFilter::profSub($escl) . "))";
+    }
+
+    /** Espressioni SQL delle metriche (mostrate nella scheda come definizione: traduzione 1:1 in COUNT / SUM / AVG). */
+    public static function sdDefinizioni(): array
+    {
+        $tk = "TRIM(ir.ticket)  /* solo provenienza 'ticket': ir.ticket REGEXP '" . self::TICKET_RE . "' */";
+        return [
+            ['Contratti WTS-SD', "COUNT(DISTINCT p.id)", "cm_projects p WHERE p.service_line = '" . self::SD_LINEA . "' AND p.start_date <= :a AND p.end_date >= :da (o con moduli nel periodo)"],
+            ['Valore totale contratti', "SUM(p.value_total)", 'stesso perimetro'],
+            ['Valore di competenza nel periodo', "SUM(p.value_total / (PERIOD_DIFF(YM(p.end_date), YM(p.start_date)) + 1) * GREATEST(0, PERIOD_DIFF(YM(LEAST(p.end_date, :a)), YM(GREATEST(p.start_date, :da))) + 1))", 'pro-rata mensile, come Report direzionale (ProRata)'],
+            ['Media risorse per contratto', "AVG(n) FROM (SELECT s.commessa, COUNT(DISTINCT s.incaricato) n FROM v_cm_it_servizio s WHERE <filtri> AND s.linea_servizio = '" . self::SD_LINEA . "' GROUP BY s.commessa)", 'contratti con moduli nel periodo'],
+            ['Ticket gestiti (totale)', "COUNT(DISTINCT $tk)", "moduli WTS-SD del perimetro"],
+            ['Ticket gestiti da altri team', "COUNT(DISTINCT CASE WHEN NOT <risorsa nelle UO escluse> THEN $tk END)", 'almeno un modulo di una risorsa fuori dalle UO escluse'],
+            ['Quota ticket altri team', "100 * [ticket altri team] / [ticket totale]", '%'],
+        ];
+    }
+
+    public function serviceDesk(array $f, array $escl): array
+    {
+        $tkOk = "(" . self::provSql('ir') . " = 'ticket')";
+        $ex = self::esclSql($escl);
+        // B. moduli WTS-SD del perimetro: aggregati per commessa e totali (DISTINCT sull'intero perimetro, non somma di righe)
+        [$w, $a] = $this->where($f);
+        $w .= " AND s.`linea_servizio` = ?"; $a[] = self::SD_LINEA;
+        $cols = "COUNT(*) AS moduli, COUNT(DISTINCT s.`incaricato`) AS risorse, ROUND(SUM(s.`ore`), 2) AS ore,
+                 COUNT(DISTINCT CASE WHEN $tkOk THEN TRIM(ir.`ticket`) END) AS ticket,
+                 COUNT(DISTINCT CASE WHEN $tkOk AND NOT $ex THEN TRIM(ir.`ticket`) END) AS ticket_altri,
+                 COUNT(DISTINCT CASE WHEN $tkOk AND $ex THEN TRIM(ir.`ticket`) END) AS ticket_escl,
+                 COUNT(DISTINCT CASE WHEN NOT $ex THEN s.`incaricato` END) AS risorse_altri,
+                 SUM(" . self::provSql('ir') . " = 'testo') AS rif_liberi";
+        $from = "FROM `{$this->v['v_cm_it_servizio']}` s {$this->trJoin()} WHERE $w";
+        $st = $this->pdo->prepare("SELECT s.`commessa`, $cols $from GROUP BY s.`commessa`");
+        $st->execute($a); $mod = [];
+        foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) $mod[(string)$r['commessa']] = $r;
+        $st->closeCursor();
+        $st = $this->pdo->prepare("SELECT $cols $from");
+        $st->execute($a); $tot = $st->fetch(PDO::FETCH_ASSOC) ?: []; $st->closeCursor();
+
+        // C. ripartizione per Unità Organizzativa della risorsa (ticket distinti per unità; un ticket può comparire in più unità)
+        $fromUo = "FROM `{$this->v['v_cm_it_servizio']}` s {$this->trJoin()}
+                   LEFT JOIN `cm_tech_profiles` tpx ON tpx.`is_active` = 1 AND ((s.`employee_id` IS NOT NULL AND tpx.`employee_id` = s.`employee_id`)
+                                                       OR (s.`employee_id` IS NULL AND tpx.`professional_id` = ir.`technician_professional_id`))
+                   LEFT JOIN `cm_tech_units` u ON u.`id` = tpx.`unit_id` WHERE $w";
+        $st = $this->pdo->prepare("SELECT COALESCE(u.`id`, 0) AS uo_id, COALESCE(u.`name`, '(nessuna unità)') AS uo,
+                    COUNT(*) AS moduli, COUNT(DISTINCT s.`incaricato`) AS risorse, ROUND(SUM(s.`ore`), 2) AS ore,
+                    COUNT(DISTINCT CASE WHEN $tkOk THEN TRIM(ir.`ticket`) END) AS ticket
+               $fromUo GROUP BY uo_id, uo ORDER BY ticket DESC, moduli DESC");
+        $st->execute($a); $perUo = $st->fetchAll(PDO::FETCH_ASSOC); $st->closeCursor();
+        foreach ($perUo as &$u) $u['escluso'] = in_array((int)$u['uo_id'], $escl, true);
+        unset($u);
+
+        // A. perimetro contratti WTS-SD: attivi nel periodo o con moduli nel periodo, filtri globali di contratto
+        $wc = ["p.`service_line` = ?"]; $ac = [self::SD_LINEA];
+        $per = "(COALESCE(p.`start_date`, '1000-01-01') <= ? AND COALESCE(p.`end_date`, '9999-12-31') >= ?)"; $ac[] = $f['to']; $ac[] = $f['from'];
+        if ($mod) { $per = "($per OR p.`project_code` IN (" . implode(',', array_fill(0, count($mod), '?')) . "))"; foreach (array_keys($mod) as $c) $ac[] = (string)$c; }
+        $wc[] = $per;
+        if ($c = $this->ctrCond('p.`project_code`', $f, $ac)) $wc[] = $c;
+        if ($c = self::statoCond('pst.`id` = p.`id`', $f)) $wc[] = $c;
+        if (($f['cliente'] ?? '') !== '') { $wc[] = "COALESCE(cl.`name`, p.`client_raw`) LIKE ?"; $ac[] = '%' . $f['cliente'] . '%'; }
+        if (($f['q'] ?? '') !== '') { $wc[] = "(p.`project_code` LIKE ? OR p.`name` LIKE ? OR COALESCE(cl.`name`, p.`client_raw`) LIKE ?)"; $lk = '%' . $f['q'] . '%'; array_push($ac, $lk, $lk, $lk); }
+        $ym = static fn(string $e) => "DATE_FORMAT($e, '%Y%m')";
+        $comp = "CASE WHEN p.`start_date` IS NULL OR p.`end_date` IS NULL OR p.`end_date` < p.`start_date` THEN NULL
+                      ELSE COALESCE(p.`value_total`, 0) / (PERIOD_DIFF(" . $ym('p.`end_date`') . ", " . $ym('p.`start_date`') . ") + 1)
+                           * GREATEST(0, PERIOD_DIFF(" . $ym('LEAST(p.`end_date`, ?)') . ", " . $ym('GREATEST(p.`start_date`, ?)') . ") + 1) END";
+        $st = $this->pdo->prepare("SELECT p.`id`, p.`project_code` AS commessa, p.`name` AS denominazione, COALESCE(cl.`name`, p.`client_raw`) AS cliente,
+                    p.`start_date`, p.`end_date`, p.`operational_status` AS stato, COALESCE(p.`value_total`, 0) AS valore, ROUND($comp, 2) AS valore_periodo
+               FROM `cm_projects` p LEFT JOIN `clients` cl ON cl.`id` = p.`client_id`
+              WHERE " . implode(' AND ', $wc) . " ORDER BY p.`project_code`");
+        $st->execute(array_merge([$f['to'], $f['from']], $ac));
+        $ctr = $st->fetchAll(PDO::FETCH_ASSOC); $st->closeCursor();
+        $vuoto = ['moduli' => 0, 'risorse' => 0, 'ore' => 0, 'ticket' => 0, 'ticket_altri' => 0, 'ticket_escl' => 0, 'risorse_altri' => 0, 'rif_liberi' => 0];
+        $nAtt = 0; $sumRis = 0;
+        foreach ($ctr as &$c) {
+            $c += $mod[(string)$c['commessa']] ?? $vuoto;
+            $c['attivo'] = (string)($c['start_date'] ?? '') <= $f['to'] && (string)($c['end_date'] ?? '9999-12-31') >= $f['from'];
+            if ((int)$c['moduli'] > 0) { $nAtt++; $sumRis += (int)$c['risorse']; }
+        }
+        unset($c);
+        $tk = (int)($tot['ticket'] ?? 0); $tkA = (int)($tot['ticket_altri'] ?? 0);
+        $kpi = [
+            'contratti'        => count($ctr),
+            'contratti_attivi' => count(array_filter($ctr, fn($c) => $c['attivo'])),
+            'contratti_moduli' => $nAtt,
+            'valore'           => round(array_sum(array_map(fn($c) => (float)$c['valore'], $ctr)), 2),
+            'valore_periodo'   => round(array_sum(array_map(fn($c) => (float)$c['valore_periodo'], $ctr)), 2),
+            'media_risorse'    => $nAtt > 0 ? round($sumRis / $nAtt, 2) : null,
+            'risorse'          => (int)($tot['risorse'] ?? 0),
+            'moduli'           => (int)($tot['moduli'] ?? 0),
+            'ore'              => (float)($tot['ore'] ?? 0),
+            'ticket'           => $tk,
+            'ticket_altri'     => $tkA,
+            'ticket_escl'      => (int)($tot['ticket_escl'] ?? 0),
+            'ticket_solo_escl' => $tk - $tkA,
+            'pct_altri'        => $tk > 0 ? round($tkA / $tk * 100, 1) : null,
+            'rif_liberi'       => (int)($tot['rif_liberi'] ?? 0),
+        ];
+        $on = PmUoFilter::options($this->pdo);
+        return ['kpi' => $kpi, 'contratti' => $ctr, 'uo' => $perUo, 'escl' => $escl,
+                'escl_nomi' => implode(', ', array_map(fn($i) => $on[$i] ?? ('#' . $i), $escl))];
+    }
 }

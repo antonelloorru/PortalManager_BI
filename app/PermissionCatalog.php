@@ -104,7 +104,7 @@ final class PermissionCatalog
             'service_soc.php'           => ['Service SOC', 'Ticket del sistema di gestione SOC aggregati con moduli, commesse e dipendenti; import XLSX e sync DB SOC'],
             'it_service.php'             => ['Relazione di Servizio IT', 'Operatività per incaricato, linea, settore, modalità; stampa ed export'],
             'tech_report.php'            => ['Relazione Tecnici', 'Tecnico × codice linea, metriche di dettaglio, moduli valorizzati / non valorizzati, rapporti di intervento per tipologia e provenienza; stampa ed export'],
-            'tech_report_economics.php'  => ['↳ Relazione Tecnici: valori', 'Permesso virtuale: produzione teorica e valore addebitato dei moduli nella Relazione Tecnici e nei suoi export'],
+            'tech_report_economics.php'  => ['↳ Relazione Tecnici: valori', 'Permesso virtuale: produzione teorica e valore addebitato dei moduli, valore dei contratti WTS-SD (scheda ServiceDesk) nella Relazione Tecnici e nei suoi export'],
             'dir_report.php'             => ['Report direzionale', 'Portafoglio commesse, margini, rischio, schede commerciali per agente'],
             'cm_search.php'              => ['Ricerca', 'Vista tabellare filtrabile su tutti gli archivi del modulo; export CSV/XLSX/DOCX/PDF (ogni archivio richiede la vista della pagina sorgente)'],
             'cm_search_economics.php'    => ['↳ Ricerca: importi e costi', 'Permesso virtuale: colonne economiche (valori, costi, ricavi, margini, tariffe) nella Ricerca e nei suoi export'],

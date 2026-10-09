@@ -20,7 +20,11 @@ require_once __DIR__ . '/PmReport.php';
 
 final class TechReport
 {
-    public const TABS = ['tecnici' => 'Tecnici', 'rapporti' => 'Rapporti di intervento', 'reperibilita' => 'Controllo Reperibilità'];
+    public const TABS = ['tecnici' => 'Tecnici', 'rapporti' => 'Rapporti di intervento', 'reperibilita' => 'Controllo Reperibilità', 'servicedesk' => 'ServiceDesk'];
+
+    /** v1.10.35 — colonne della scheda ServiceDesk (export). */
+    public const H_SD_CTR = ['Commessa', 'Denominazione', 'Cliente', 'Inizio', 'Fine', 'Stato', 'Valore totale €', 'Valore nel periodo €', 'Moduli', 'Risorse', 'Ore', 'Ticket', 'Ticket altri team', '% altri team'];
+    public const H_SD_UO  = ['Unità Organizzativa', 'Esclusa', 'Moduli', 'Risorse', 'Ore', 'Ticket', '% sul totale ticket'];
     public const MAX_FILE = 50000;   // moduli nel dettaglio XLSX / CSV
     public const MAX_DOC  = 1500;    // moduli nel dettaglio DOCX / PDF / stampa
 
@@ -55,6 +59,16 @@ final class TechReport
     // ── dati ─────────────────────────────────────────────────────────
     public function data(string $tab, array $f, bool $dettaglio = false, ?string $commessa = null, int $maxModuli = 0): array
     {
+        if ($tab === 'servicedesk') {
+            $d = $this->m->serviceDesk($f, $f['uo_escl'] ?? []);
+            $d['eco'] = $this->eco;
+            if (!$this->eco) {   // valori economici solo con tech_report_economics.php: rimossi lato server, non solo nascosti
+                $d['kpi']['valore'] = $d['kpi']['valore_periodo'] = null;
+                foreach ($d['contratti'] as &$c) $c['valore'] = $c['valore_periodo'] = null;
+                unset($c);
+            }
+            return $d;
+        }
         if ($tab === 'reperibilita') {
             $d = $this->m->controlloReperibilita($f);
             $d['cf'] = self::colFiltri($f['cf'] ?? []);
@@ -142,6 +156,28 @@ final class TechReport
         }));
     }
 
+    /** v1.10.35 — metriche della scheda ServiceDesk: [nome, formula, perimetro, valore formattato]. */
+    public static function sdMetriche(array $d): array
+    {
+        $k = $d['kpi']; $n0 = fn($v) => number_format((float)$v, 0, ',', '.'); $n2 = fn($v) => number_format((float)$v, 2, ',', '.');
+        $val = [$n0($k['contratti']), $k['valore'] === null ? 'riservato' : $n2($k['valore']) . ' €', $k['valore_periodo'] === null ? 'riservato' : $n2($k['valore_periodo']) . ' €', $k['media_risorse'] === null ? '—' : $n2($k['media_risorse']),
+                $n0($k['ticket']), $n0($k['ticket_altri']), $k['pct_altri'] === null ? '—' : number_format((float)$k['pct_altri'], 1, ',', '.') . '%'];
+        return array_map(fn($x, $v) => [$x[0], $x[1], $x[2], $v], ItServiceModel::sdDefinizioni(), $val);
+    }
+
+    public static function sdHCtr(bool $eco): array
+    {
+        return $eco ? self::H_SD_CTR : array_values(array_diff_key(self::H_SD_CTR, [6 => 1, 7 => 1]));
+    }
+
+    public static function sdCtr(array $c, bool $eco = true): array
+    {
+        $r = [(string)$c['commessa'], (string)$c['denominazione'], (string)$c['cliente'], $c['start_date'] ? date('d/m/Y', strtotime($c['start_date'])) : '', $c['end_date'] ? date('d/m/Y', strtotime($c['end_date'])) : '',
+                (string)$c['stato'], (float)$c['valore'], $c['valore_periodo'] === null ? null : (float)$c['valore_periodo'], (int)$c['moduli'], (int)$c['risorse'], (float)$c['ore'],
+                (int)$c['ticket'], (int)$c['ticket_altri'], self::pct($c['ticket_altri'], $c['ticket'])];
+        return $eco ? $r : array_values(array_diff_key($r, [6 => 1, 7 => 1]));
+    }
+
     public static function pct($a, $b): ?float { return (float)$b > 0 ? round((float)$a / (float)$b * 100, 1) : null; }
 
     // ── report ───────────────────────────────────────────────────────
@@ -150,10 +186,28 @@ final class TechReport
         $per = date('d/m/Y', strtotime($f['from'])) . ' – ' . date('d/m/Y', strtotime($f['to']));
         $n0 = static fn($v) => number_format((float)$v, 0, ',', '.');
         $n2 = static fn($v) => number_format((float)$v, 2, ',', '.');
-        $title = $tab === 'tecnici' ? 'Relazione Tecnici' : ($tab === 'reperibilita' ? 'Controllo Reperibilità' : 'Rapporti di intervento' . ($commessa !== null ? ' — commessa ' . $commessa : ''));
+        $title = $tab === 'servicedesk' ? 'ServiceDesk — contratti ' . ItServiceModel::SD_LINEA : ($tab === 'tecnici' ? 'Relazione Tecnici' : ($tab === 'reperibilita' ? 'Controllo Reperibilità' : 'Rapporti di intervento' . ($commessa !== null ? ' — commessa ' . $commessa : '')));
         $r = new PmReport($title, 'Periodo ' . $per . ' · generato il ' . date('d/m/Y H:i'), 'L');
         $r->meta($filtri !== '' ? 'Filtri: ' . $filtri : 'Nessun filtro oltre al periodo');
 
+        if ($tab === 'servicedesk') {
+            $k = $d['kpi'];
+            $esclTxt = $d['escl_nomi'] ?? '';
+            $r->meta('Esclusione (ticket gestiti da altri team): ' . ($esclTxt !== '' ? 'Unità Organizzative ' . $esclTxt : 'nessuna unità'));
+            $cards = [['label' => 'Contratti ' . ItServiceModel::SD_LINEA, 'value' => $n0($k['contratti']), 'color' => '2563EB', 'sub' => $n0($k['contratti_moduli']) . ' con moduli nel periodo']];
+            if ($this->eco) $cards[] = ['label' => 'Valore totale contratti', 'value' => $n2($k['valore']) . ' €', 'color' => '0F766E', 'sub' => 'competenza nel periodo ' . $n2($k['valore_periodo']) . ' €'];
+            $cards[] = ['label' => 'Media risorse per contratto', 'value' => $k['media_risorse'] === null ? '—' : number_format((float)$k['media_risorse'], 2, ',', '.'), 'color' => '7C3AED', 'sub' => $n0($k['risorse']) . ' risorse distinte'];
+            $cards[] = ['label' => 'Ticket gestiti', 'value' => $n0($k['ticket']), 'color' => '0891B2', 'sub' => $n0($k['moduli']) . ' moduli'];
+            $cards[] = ['label' => 'Ticket altri team', 'value' => $n0($k['ticket_altri']), 'color' => 'DC2626', 'sub' => ($k['pct_altri'] === null ? '—' : number_format((float)$k['pct_altri'], 1, ',', '.') . '%') . ($esclTxt !== '' ? ' · UO escluse: ' . $esclTxt : '')];
+            $r->kpi($cards);
+            $r->table('Metriche', ['Metrica', 'Valore', 'Formula SQL', 'Perimetro'], array_map(fn($x) => [$x[0], $x[3], $x[1], $x[2]], self::sdMetriche($d)));
+            $r->table('Per Unità Organizzativa', self::H_SD_UO, array_map(fn($u) => [(string)$u['uo'], $u['escluso'] ? 'sì' : '', (int)$u['moduli'], (int)$u['risorse'], (float)$u['ore'], (int)$u['ticket'], self::pct($u['ticket'], $k['ticket'])], $d['uo']),
+                ['dec' => [4 => 2, 6 => 1], 'right' => [2, 3, 4, 5, 6]]);
+            if ($this->eco) $r->table('Per contratto ' . ItServiceModel::SD_LINEA, self::H_SD_CTR, array_map([self::class, 'sdCtr'], $d['contratti']), ['dec' => [6 => 2, 7 => 2, 10 => 2, 13 => 1], 'right' => [6, 7, 8, 9, 10, 11, 12, 13]]);
+            else $r->table('Per contratto ' . ItServiceModel::SD_LINEA, self::sdHCtr(false), array_map(fn($c) => self::sdCtr($c, false), $d['contratti']), ['dec' => [8 => 2, 11 => 1], 'right' => [6, 7, 8, 9, 10, 11]]);
+            $r->note('Contratti = commesse con linea di servizio ' . ItServiceModel::SD_LINEA . ' attive nel periodo o con moduli nel periodo (filtri globali di contratto) · Valore nel periodo = pro-rata mensile del valore totale sulla durata · Risorse = incaricati distinti dei moduli; media sui contratti con moduli nel periodo · Ticket = codici ticket distinti dei moduli (provenienza «ticket»; i riferimenti liberi non sono contati) · Ticket altri team = ticket con almeno un modulo di una risorsa fuori dalle Unità Organizzative escluse. Un ticket lavorato da più unità è contato una volta nel totale e in ciascuna unità.');
+            return $r;
+        }
         if ($tab === 'reperibilita') {
             $rr = $d['righe'];
             $r->kpi([
