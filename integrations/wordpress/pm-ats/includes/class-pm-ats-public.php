@@ -233,13 +233,15 @@ final class PM_ATS_Public
 
     /**
      * v1.3.4 — Testata «Lavora con noi» che si ridimensiona con la larghezza della finestra.
-     * scale (predefinito): immagine intera, larghezza 100% e altezza proporzionale (srcset dalla Libreria media se l'immagine vi è
+     * band (predefinito, v1.3.6): fascia ad altezza fissa (wt_hero_height), larga quanto la finestra; l'immagine si adatta in
+     *        larghezza e viene ritagliata in verticale (object-fit: cover, punto wt_hero_pos), senza cambiare l'altezza.
+     * scale: immagine intera, larghezza 100% e altezza proporzionale (srcset dalla Libreria media se l'immagine vi è
      *        caricata, così il browser sceglie la dimensione adatta allo schermo); titolo sovrapposto con corpo fluido.
      * cover: fascia ad altezza proporzionale alla larghezza (aspect-ratio) con immagine ritagliata a riempimento.
      */
     public static function heroHtml(array $s): string
     {
-        $fit   = in_array($s['wt_hero_fit'] ?? '', ['scale', 'cover'], true) ? $s['wt_hero_fit'] : 'scale';
+        $fit   = in_array($s['wt_hero_fit'] ?? '', ['band', 'scale', 'cover'], true) ? $s['wt_hero_fit'] : 'band';
         // v1.3.5 — larghezza: «window» esce dal contenitore del tema (riga Divi 80% / max 1080 px) e occupa la finestra intera
         $full  = ($s['wt_hero_width'] ?? 'window') !== 'container' ? ' pm-ats-wt-hero-full' : '';
         $url   = (string)($s['wt_hero_image'] ?? '');
@@ -254,6 +256,14 @@ final class PM_ATS_Public
         if ($id === 0) $id = (int)attachment_url_to_postid($url);
         $img = $id > 0 ? wp_get_attachment_image($id, 'full', false, ['class' => 'pm-ats-wt-hero-img', 'alt' => '', 'sizes' => '100vw', 'loading' => 'eager', 'decoding' => 'async', 'fetchpriority' => 'high']) : '';
         if ($img === '') $img = '<img class="pm-ats-wt-hero-img" src="' . esc_url($url) . '" alt="" loading="eager" decoding="async" fetchpriority="high">';
+        if ($fit === 'band') {
+            // v1.3.6 — fascia ad altezza fissa: la larghezza segue la finestra, l'altezza resta costante; l'immagine riempie la
+            // fascia (object-fit: cover) e si adatta in orizzontale, ritagliando in verticale attorno al punto scelto
+            $h   = min(900, max(150, (int)($s['wt_hero_height'] ?? 400)));
+            $pos = ['top' => 'center top', 'center' => 'center center', 'bottom' => 'center bottom'][$s['wt_hero_pos'] ?? 'center'] ?? 'center center';
+            return '<section class="pm-ats-wt-hero pm-ats-wt-hero-band' . $full . '" style="--pm-ats-hero-h:' . $h . 'px;--pm-ats-hero-pos:' . esc_attr($pos) . '">'
+                 . $img . '<div class="pm-ats-wt-hero-over">' . $title . '</div></section>';
+        }
         return '<section class="pm-ats-wt-hero pm-ats-wt-hero-scale' . $full . '">' . $img . '<div class="pm-ats-wt-hero-over">' . $title . '</div></section>';
     }
 

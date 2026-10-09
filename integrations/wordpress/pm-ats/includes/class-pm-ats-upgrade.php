@@ -45,6 +45,12 @@ final class PM_ATS_Upgrade
             $cur['layout'] = 'accordion';
             if (class_exists('PM_ATS_Log')) PM_ATS_Log::add('upgrade', 200, 'layout pagina posizioni → Lavora con noi (elenco + modulo a destra)');
         }
+        // v1.3.6 (schema 9): la testata «immagine intera proporzionale» cambiava altezza con la finestra; si passa una volta
+        // alla fascia ad altezza fissa (l'immagine si adatta solo in larghezza). Si può tornare all'opzione precedente in Aspetto.
+        if (is_array($cur) && $prevSchema > 0 && $prevSchema < 9 && ($cur['wt_hero_fit'] ?? 'scale') === 'scale') {
+            $cur['wt_hero_fit'] = 'band';
+            if (class_exists('PM_ATS_Log')) PM_ATS_Log::add('upgrade', 200, 'testata → fascia ad altezza fissa (l\'immagine si adatta in larghezza)');
+        }
         if (is_array($cur)) update_option(PM_ATS_Settings::OPTION, array_merge(PM_ATS_Settings::defaults(), $cur));
         update_option(self::OPT_SETTINGS, PM_ATS_SETTINGS_VERSION);
 

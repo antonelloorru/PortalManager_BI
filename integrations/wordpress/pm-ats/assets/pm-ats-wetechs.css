@@ -1,4 +1,4 @@
-/*! PortalManager ATS — pm-ats-wetechs.css · @version 1.3.5 */
+/*! PortalManager ATS — pm-ats-wetechs.css · @version 1.3.6 */
 /* Layout «Fisarmonica con modulo a lato» — replica della pagina di riferimento wetechs.it/lavora-con-noi (tema Divi):
    valori misurati sulla pagina (colori, font, dimensioni, raggi, spaziature). Classi proprie .pm-ats-wt-* (nessuna classe
    Divi, per non attivare gli script del tema). Colori: --pm-ats-title (#234d85) e --pm-ats-accent (#ec7f31) dalle
@@ -33,6 +33,15 @@
 .pm-ats-wt .pm-ats-wt-hero.pm-ats-wt-hero-full.pm-ats-wt-hero-cover{height:clamp(150px,calc(var(--pm-ats-hero-w,100vw) * .328),560px)}
 .pm-ats-wt .pm-ats-wt-hero-full .pm-ats-wt-h1{font-size:clamp(24px,calc(var(--pm-ats-hero-w,100vw) * .052),60px)}
 .pm-ats-wt .pm-ats-wt-hero.pm-ats-wt-hero-full.pm-ats-wt-hero-scale .pm-ats-wt-hero-over .pm-ats-wt-row{padding:0 0 clamp(8px,calc(var(--pm-ats-hero-w,100vw) * .04),50px)}
+/* v1.3.6 — fascia ad altezza fissa: larghezza = finestra, altezza costante; l'immagine riempie la fascia adattandosi in
+   larghezza (object-fit: cover) e viene ritagliata in verticale attorno al punto scelto (--pm-ats-hero-pos) */
+.pm-ats-wt .pm-ats-wt-hero.pm-ats-wt-hero-band{position:relative;height:var(--pm-ats-hero-h,400px)!important;min-height:0;padding:0!important;overflow:hidden;line-height:0;background:#00457a}
+.pm-ats-wt .pm-ats-wt-hero-band .pm-ats-wt-hero-img{position:absolute;top:0;left:0;width:100%!important;height:100%!important;max-width:none!important;max-height:none!important;
+  margin:0;border:0;border-radius:0;box-shadow:none;object-fit:cover;object-position:var(--pm-ats-hero-pos,center center)}
+.pm-ats-wt .pm-ats-wt-hero-band .pm-ats-wt-hero-over{position:absolute;inset:0;display:flex;align-items:flex-end;line-height:1.3;
+  background:linear-gradient(1deg,#00457a 4%,rgba(255,255,255,0) 64%)}
+.pm-ats-wt .pm-ats-wt-hero.pm-ats-wt-hero-band .pm-ats-wt-hero-over .pm-ats-wt-row{padding:0 0 40px}
+.pm-ats-wt .pm-ats-wt-hero-band .pm-ats-wt-h1{font-size:clamp(28px,4vw,60px)}
 /* contenitori del tema che tagliano il contenuto debordante: la testata a piena larghezza deve restare visibile */
 .pm-ats-wt-hero-host{overflow:visible!important}
 /* corpo a due colonne (et_pb_section_1 / et_pb_row_1 / et_pb_column_1_2) */

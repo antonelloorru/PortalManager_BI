@@ -5,12 +5,20 @@ Versioning semantico `MAJOR.MINOR.PATCH`. Allineati a ogni rilascio: header `Ver
 
 | Costante | Valore | Significato |
 |---|---|---|
-| PM_ATS_VERSION | 1.3.5 | versione del plugin |
+| PM_ATS_VERSION | 1.3.6 | versione del plugin |
 | PM_ATS_API_VERSION | 1 | protocollo REST `pm-ats/v1` (cambia solo con modifiche incompatibili) |
 | PM_ATS_DB_VERSION | 1 | schema tabelle `pm_ats_applications`, `pm_ats_log` |
-| PM_ATS_SETTINGS_VERSION | 8 | schema dell'opzione `pm_ats_settings` |
+| PM_ATS_SETTINGS_VERSION | 9 | schema dell'opzione `pm_ats_settings` |
 | PM_ATS_TEMPLATE_VERSION | 1.3.4 | template sovrascrivibili dal tema |
 | PM_ATS_MIN_PM | 1.10.20 | PortalManager minimo per tutte le funzioni |
+
+## 1.3.6 — 2026-10-09 (PortalManager v1.10.38)
+- **Fascia ad altezza fissa** (`wt_hero_fit = band`, predefinito; schema impostazioni 9):
+  - la 1.3.5 manteneva l'immagine intera proporzionale: allargando o stringendo la finestra cambiava l'altezza della testata (adattamento verticale);
+  - ora la testata è larga quanto la finestra e alta `wt_hero_height` px (150–900, predefinito 400) a qualunque larghezza: l'immagine `<img>` (srcset) riempie la fascia con `object-fit: cover`, si adatta in larghezza ed è ritagliata in verticale attorno a `wt_hero_pos` (alto/centro/basso);
+  - titolo `clamp(28px, 4vw, 60px)`, gradiente del riferimento.
+- Migrazione una tantum: `scale` → `band` (Registro: «testata → fascia ad altezza fissa»); `scale` e `cover` restano selezionabili.
+- Impostazioni › Aspetto › Sezione di testata: «Altezza della fascia» (px) e «Parte visibile dell'immagine».
 
 ## 1.3.5 — 2026-10-09 (PortalManager v1.10.37)
 - **Testata a tutta larghezza della finestra** (`wt_hero_width`, schema impostazioni 8):

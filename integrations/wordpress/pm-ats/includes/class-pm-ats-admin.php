@@ -319,12 +319,19 @@ final class PM_ATS_Admin
                   <span class="pm-ats-media-prev"><?php if ($hp !== ''): ?><img src="<?php echo esc_url($hp); ?>" alt=""><?php endif; ?></span>
                 </span>
                 <select name="<?php echo $f('wt_hero_fit'); ?>">
+                  <option value="band" <?php selected($s['wt_hero_fit'], 'band'); ?>><?php esc_html_e('Fascia ad altezza fissa: l\'immagine si adatta solo in larghezza', 'pm-ats'); ?></option>
                   <option value="scale" <?php selected($s['wt_hero_fit'], 'scale'); ?>><?php esc_html_e('Immagine intera, ridimensionata con la larghezza della finestra', 'pm-ats'); ?></option>
                   <option value="cover" <?php selected($s['wt_hero_fit'], 'cover'); ?>><?php esc_html_e('Fascia proporzionale alla finestra, immagine ritagliata', 'pm-ats'); ?></option></select>
+<br><label><?php esc_html_e('Altezza della fascia', 'pm-ats'); ?> <input type="number" min="150" max="900" step="10" name="<?php echo $f('wt_hero_height'); ?>" value="<?php echo (int)$s['wt_hero_height']; ?>" class="small-text"> px</label>
+                <label style="margin-left:10px"><?php esc_html_e('Parte visibile dell\'immagine', 'pm-ats'); ?>
+                <select name="<?php echo $f('wt_hero_pos'); ?>">
+                  <option value="top" <?php selected($s['wt_hero_pos'], 'top'); ?>><?php esc_html_e('alto', 'pm-ats'); ?></option>
+                  <option value="center" <?php selected($s['wt_hero_pos'], 'center'); ?>><?php esc_html_e('centro', 'pm-ats'); ?></option>
+                  <option value="bottom" <?php selected($s['wt_hero_pos'], 'bottom'); ?>><?php esc_html_e('basso', 'pm-ats'); ?></option></select></label><br>
                 <select name="<?php echo $f('wt_hero_width'); ?>">
                   <option value="window" <?php selected($s['wt_hero_width'], 'window'); ?>><?php esc_html_e('Larghezza: tutta la finestra del browser', 'pm-ats'); ?></option>
                   <option value="container" <?php selected($s['wt_hero_width'], 'container'); ?>><?php esc_html_e('Larghezza: contenitore della pagina (riga/colonna del tema)', 'pm-ats'); ?></option></select>
-                <p class="description"><?php esc_html_e('L\'altezza della testata e il titolo si adattano alla larghezza dello schermo. Carica o scegli l\'immagine dalla Libreria media: il browser scarica la dimensione adatta allo schermo (srcset).', 'pm-ats'); ?></p></td></tr>
+                <p class="description"><?php esc_html_e('«Fascia ad altezza fissa»: la testata è larga quanto la finestra e alta quanto indicato; allargando o stringendo la finestra l\'immagine si adatta in larghezza e l\'altezza non cambia. Carica o scegli l\'immagine dalla Libreria media: il browser scarica la dimensione adatta allo schermo (srcset).', 'pm-ats'); ?></p></td></tr>
               <tr><th><?php esc_html_e('Titolo', 'pm-ats'); ?></th><td><?php $txt('wt_title', 'text'); ?><p class="description"><?php esc_html_e('Il testo fra parentesi graffe {…} è evidenziato con il colore d\'accento.', 'pm-ats'); ?></p></td></tr>
               <tr><th><?php esc_html_e('Introduzione', 'pm-ats'); ?></th><td><textarea name="<?php echo $f('wt_intro'); ?>" rows="3" class="large-text"><?php echo esc_textarea($s['wt_intro']); ?></textarea></td></tr>
               <tr><th><?php esc_html_e('Titoli elenco / modulo', 'pm-ats'); ?></th><td><?php $txt('wt_list_title', 'text'); ?> <?php $txt('wt_form_title', 'text'); ?></td></tr>
