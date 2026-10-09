@@ -56,6 +56,15 @@ final class SdReport
             ['label' => 'Da presidiare', 'value' => $nn($h['scoperti'] ?? 0), 'color' => 'DC2626'],
         ]);
         $r->note('Tasso di escalation sui ticket presi in carico dal Service Desk, non sul totale.');
+        // v1.10.36 — voce separata «Ticket e Attività dei clienti»: non sommata agli aggregati dei moduli
+        $ac = $sd->attivitaClienti($f);
+        $r->heading(SdModel::CLIENTI_ETICHETTA, 2);
+        $r->kpi([
+            ['label' => 'Ticket', 'value' => $nn($ac['ticket']), 'color' => '0E7490', 'sub' => SdModel::CLIENTI_COMMESSA],
+            ['label' => 'Attività', 'value' => $nn($ac['attivita']), 'color' => '0E7490', 'sub' => 'moduli dell\'UO Service Desk'],
+            ['label' => 'Ore', 'value' => $n1($ac['ore']), 'color' => '0E7490', 'sub' => $nn($ac['tecnici']) . ' tecnici'],
+        ]);
+        $r->note('Voce separata: attività erogate dall\'UO Service Desk sul contratto ' . SdModel::CLIENTI_COMMESSA . ' (' . $ac['denominazione'] . '). Sono escluse da Analisi del team, moduli per codice linea, aziende, scheda del componente e OBJ_2: non vanno sommate a quei totali.');
 
         $brk = $sd->breakdown($f);
         $r->bars('Come sono stati gestiti', array_map(fn($b) => [(string)$b['gestione'], (float)$b['ticket']], $brk), 'ticket');

@@ -64,6 +64,8 @@ try {
     $tDett   = $sd->teamDettaglio($f);
     $tFascia = $sd->teamFascia($f);
     $tContr  = $sd->teamContratto($f);
+    // v1.10.36 — voce separata «Ticket e Attività dei clienti» (WTS_3119, UO Service Desk), scorporata dagli aggregati
+    $aCli    = $sd->attivitaClienti($f);
     $elencoCode = $sd->elencoCode();
     // v1.9.6 — elenco dei componenti per il filtro, ordinato per cognome
     $elencoTeam = $sd->elencoTeam();
@@ -102,7 +104,7 @@ try {
     $h = $brk = $trend = $scop = $ops = $code = $team = $elencoCode = $elencoTeam = []; $vCtr = [];
     $assQ = []; $assT = $assM = [];
     $tec = ''; $sch = []; $confronto = []; $codLin = []; $aziende = [];
-    $tQuadro = []; $tDett = $tFascia = $tContr = [];
+    $tQuadro = []; $tDett = $tFascia = $tContr = []; $aCli = [];
     $o2Q = []; $o2Lin = $o2Add = $o23Rip = $o23Cod = [];
     $o21Q = []; $o21Fat = $o22Int = $o23Tec = $listino = [];
     $cQ = []; $cRie = $cCom = $cTar = [];
@@ -362,6 +364,10 @@ if ($pronto && ($_GET['export'] ?? '') === 'xlsx') {
     if ($f['level'] !== '')  $rf[] = ['Livello', $f['level']];
     if ($f['gest'] !== '')   $rf[] = ['Classe di gestione', $f['gest']];
     if ($f['contratti'])     $rf[] = ['Nota', 'Ticket filtrati tramite il ticket delle attività DGB e dei rapportini del contratto; assenze delle persone che vi hanno lavorato'];
+    // v1.10.36 — voce separata e regola di scorporo
+    $acx = $sd->attivitaClienti($f);
+    $rf[] = [SdModel::CLIENTI_ETICHETTA, $acx['ticket'] . ' ticket · ' . $acx['attivita'] . ' attività · ' . $acx['ore'] . ' h (' . SdModel::CLIENTI_COMMESSA . ', UO Service Desk)'];
+    $rf[] = ['Scorporo', 'Le attività ' . SdModel::CLIENTI_COMMESSA . ' dell\'UO Service Desk sono escluse dai fogli dei moduli (Codici linea, Team, Contratti) e riportate solo nella voce separata'];
     $rf[] = ['Generato il', date('d/m/Y H:i')];
     $w->addSheet('Filtri', $rf);
     $w->download("service_desk{$suff}_{$f['from']}_{$f['to']}.xlsx");
@@ -583,6 +589,12 @@ if ($pronto && ($_GET['print'] ?? '') === '1') {
       <div class="l">Escalation</div><div class="s"><?=$nn($h['escalation'])?> ticket</div></div>
     <div><div class="v"><?=$nn($h['scoperti'])?></div><div class="l">Da presidiare</div>
       <div class="s"><?= (int)$h['scoperti'] > 0 ? 'richiedono intervento' : 'nessuno' ?></div></div>
+  </div>
+  <?php // v1.10.36 — voce separata, fuori dalla griglia degli aggregati ?>
+  <div class="kpi" style="margin-top:3mm">
+    <div style="border:1.5px dashed #0e7490"><div class="v" style="color:#0e7490"><?=$nn($aCli['ticket'] ?? 0)?> · <?=$nn($aCli['attivita'] ?? 0)?></div>
+      <div class="l"><?=h(SdModel::CLIENTI_ETICHETTA)?></div>
+      <div class="s">ticket · attività — <?=h(SdModel::CLIENTI_COMMESSA)?>, UO Service Desk · voce separata, esclusa dai totali dei moduli</div></div>
   </div>
   <p class="nota">Il tasso di escalation è calcolato sui soli ticket presi in carico
     (<?=$nn($h['presi_in_carico'])?>), non sul totale: i ticket nati su code specialistiche non sono
@@ -1385,8 +1397,8 @@ $colClasse = [
 <?php if (!empty($repErr)): ?><div class="alert alert-danger">Report non generato: <?=h($repErr)?></div><?php endif; ?>
 <?= PmReport::toolbar($qs, SdReport::tecnici($sd, $f), $tec !== '', 'tec', 'componente', can('export', 'service_desk.php'), ['Stampa' => ['print' => '1']]) ?>
 
-<!-- ── i quattro indicatori ─────────────────────────────────────────────── -->
-<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px">
+<!-- ── i quattro indicatori + v1.10.36 voce separata «Ticket e Attività dei clienti» ───────────────────────── -->
+<div style="display:grid;grid-template-columns:repeat(4,1fr) minmax(220px,1.15fr);gap:12px;margin-bottom:16px">
   <?php
     $sc = (int)$h['scoperti'];
     foreach ([
@@ -1405,6 +1417,21 @@ $colClasse = [
       <div style="font-size:10px;color:var(--muted);margin-top:3px"><?=h($sub)?></div>
     </div>
   <?php endforeach; ?>
+  <?php // v1.10.36 — voce separata: conteggio isolato, NON sommato agli aggregati dei moduli della pagina ?>
+  <div class="card sd-cli" style="text-align:center;padding:12px;border:2px dashed #0e7490;background:#ecfeff"
+       title="Attività erogate dall'UO Service Desk sul contratto <?=h(SdModel::CLIENTI_COMMESSA)?>: scorporate da Analisi del Team, operatività, codici linea, aziende e OBJ_2">
+    <div style="display:flex;justify-content:center;gap:14px;align-items:baseline">
+      <span><span style="font-size:24px;font-weight:800;color:#0e7490"><?=$n($aCli['ticket'] ?? 0)?></span>
+        <span style="font-size:10px;font-weight:700;color:#0e7490">TICKET</span></span>
+      <span><span style="font-size:24px;font-weight:800;color:#0e7490"><?=$n($aCli['attivita'] ?? 0)?></span>
+        <span style="font-size:10px;font-weight:700;color:#0e7490">ATTIVITÀ</span></span>
+    </div>
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:#334155"><?=h(SdModel::CLIENTI_ETICHETTA)?></div>
+    <div style="font-size:10px;color:var(--muted);margin-top:3px">
+      <?php if (!empty($aCli['project_id']) && can('view', 'project_dashboard.php')): ?><a href="<?=url_safe('project_dashboard', ['id' => (int)$aCli['project_id']])?>" style="font-weight:700"><?=h(SdModel::CLIENTI_COMMESSA)?></a><?php else: ?><strong><?=h(SdModel::CLIENTI_COMMESSA)?></strong><?php endif; ?>
+      · UO Service Desk · <?=$n1($aCli['ore'] ?? 0)?> h · <?=$n($aCli['tecnici'] ?? 0)?> tecnici</div>
+    <div style="font-size:9.5px;color:#0e7490;margin-top:2px;font-weight:600">voce separata · esclusa dai totali dei moduli</div>
+  </div>
 </div>
 
 <?php // ── v1.8.86 — scheda del singolo componente ──────────────────────── ?>
@@ -1900,7 +1927,8 @@ if (!empty($trendG['rows'])):
       <span class="card-title"><i class="fa-solid fa-users-gear"></i> Analisi del Team</span>
       <span style="font-size:11px;color:var(--muted);margin-left:8px">
         <?=$n(count($tDett))?> componenti<?= $tec !== '' ? ' — vista ristretta a ' . h($tec) : '' ?>
-        · ticket e moduli sono attività distinte, non sommabili</span>
+        · ticket e moduli sono attività distinte, non sommabili
+        <?php if ((int)($aCli['attivita'] ?? 0) > 0): ?> · <span style="color:#0e7490;font-weight:600">esclusi <?=$n($aCli['attivita'])?> moduli <?=h(SdModel::CLIENTI_COMMESSA)?> (voce «<?=h(SdModel::CLIENTI_ETICHETTA)?>»)</span><?php endif; ?></span>
     </div>
 
     <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:12px">
@@ -2133,7 +2161,8 @@ if (!empty($trendG['rows'])):
         Attività del Service Desk: fatturabile e interna</span>
       <span style="font-size:11px;color:var(--muted);margin-left:8px">
         <?=$n($o21Q['tecnici_uo'] ?? 0)?> tecnici dell'unità organizzativa ·
-        dai <strong>moduli di intervento</strong>, non dai ticket</span>
+        dai <strong>moduli di intervento</strong>, non dai ticket
+        <?php if ((int)($aCli['attivita'] ?? 0) > 0): ?> · <span style="color:#0e7490;font-weight:600">esclusa <?=h(SdModel::CLIENTI_COMMESSA)?> (voce separata)</span><?php endif; ?></span>
     </div>
 
     <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:10px">

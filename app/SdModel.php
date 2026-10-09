@@ -98,6 +98,53 @@ final class SdModel
         return $this->cf($f)->andSql($kind, $col, $a);
     }
 
+    /* ── v1.10.36 — «Ticket e Attività dei clienti» ─────────────────────────────────────────────────────────────────
+     * Collocazione: voce separata nel quadro del periodo (pagina, stampa, report, XLSX).
+     * Regola: attività (moduli di intervento) erogate dall'UO Service Desk (v_cm_sd_moduli: componenti del team) sul
+     *         contratto CLIENTI_COMMESSA; ticket = codici ticket distinti di quei moduli.
+     * Scorporo: tutti gli aggregati dei moduli del Service Desk (Analisi del Team, operatività, codici linea, aziende,
+     *           scheda del componente, OBJ_2.1/2.2/2.3) escludono la commessa: la voce non è sommata ai totali.
+     */
+    public const CLIENTI_COMMESSA  = 'WTS_3119';
+    public const CLIENTI_ETICHETTA = 'Ticket e Attività dei clienti';
+    public const TICKET_RE         = '[A-Za-z]{2,4}_[0-9]{6,}';   // = ItServiceModel::TICKET_RE
+
+    /** Condizione di scorporo sugli aggregati dei moduli (colonna con il codice commessa). */
+    private function scorporo(string $col): string
+    {
+        return " AND COALESCE($col, '') <> '" . self::CLIENTI_COMMESSA . "'";
+    }
+
+    /** La voce separata: COUNT moduli / COUNT DISTINCT ticket dell'UO Service Desk sul contratto CLIENTI_COMMESSA. */
+    public function attivitaClienti(array $f): array
+    {
+        $a = [$f['from'], $f['to'], self::CLIENTI_COMMESSA];
+        $w = "m.`giorno` BETWEEN ? AND ? AND m.`commessa` = ?";
+        if (($f['tec'] ?? '') !== '') { $w .= " AND m.`tecnico` = ?"; $a[] = $f['tec']; }
+        $w .= $this->ctr($f, 'code', 'm.`commessa`', $a);
+        $w .= $this->uoSql($f, 'm.`tecnico`', $a);
+        $out = ['commessa' => self::CLIENTI_COMMESSA, 'denominazione' => '', 'attivita' => 0, 'ticket' => 0, 'rif_liberi' => 0, 'senza_ticket' => 0,
+                'ore' => 0.0, 'tecnici' => 0, 'giornate' => 0];
+        try {
+            $st = $this->pdo->prepare(
+                "SELECT COUNT(*) AS attivita,
+                        COUNT(DISTINCT CASE WHEN ir.`ticket` REGEXP '" . self::TICKET_RE . "' THEN TRIM(ir.`ticket`) END) AS ticket,
+                        SUM(NULLIF(TRIM(COALESCE(ir.`ticket`,'')),'') IS NOT NULL AND NOT (ir.`ticket` REGEXP '" . self::TICKET_RE . "')) AS rif_liberi,
+                        SUM(NULLIF(TRIM(COALESCE(ir.`ticket`,'')),'') IS NULL) AS senza_ticket,
+                        ROUND(SUM(m.`ore`), 2) AS ore, COUNT(DISTINCT m.`tecnico`) AS tecnici,
+                        COUNT(DISTINCT CONCAT(m.`tecnico`, '|', m.`giorno`)) AS giornate
+                   FROM `{$this->v['v_cm_sd_moduli']}` m LEFT JOIN `cm_intervention_reports` ir ON ir.`id` = m.`report_id`
+                  WHERE $w");
+            $st->execute($a); $r = $st->fetch(PDO::FETCH_ASSOC) ?: []; $st->closeCursor();
+            foreach (['attivita', 'ticket', 'rif_liberi', 'senza_ticket', 'tecnici', 'giornate'] as $k) $out[$k] = (int)($r[$k] ?? 0);
+            $out['ore'] = (float)($r['ore'] ?? 0);
+            $st = $this->pdo->prepare("SELECT `id`, `name` FROM `cm_projects` WHERE `project_code` = ? LIMIT 1");
+            $st->execute([self::CLIENTI_COMMESSA]); $p = $st->fetch(PDO::FETCH_ASSOC) ?: []; $st->closeCursor();
+            $out['denominazione'] = (string)($p['name'] ?? ''); $out['project_id'] = (int)($p['id'] ?? 0);
+        } catch (Throwable $e) {}
+        return $out;
+    }
+
     /** Opzioni del filtro contratto (elenco globale: i ticket possono riguardare qualunque commessa). */
     public function valoriContratti(): array
     {
@@ -626,7 +673,7 @@ final class SdModel
     public function moduliContratto(string $tecnico, array $f): array
     {
         $a = [$tecnico, $f['from'], $f['to']];
-        $wc = $this->ctr($f, 'code', 'r.`project_code`', $a);   // v1.9.78
+        $wc = $this->ctr($f, 'code', 'r.`project_code`', $a) . $this->scorporo('r.`project_code`');   // v1.9.78 · v1.10.36 scorporo
         $st = $this->pdo->prepare(
             "SELECT COALESCE(cm.`label`, p.`service_line`, '(nessuna linea)') AS contratto,
                     COALESCE(p.`service_line`, '(nessuna)')       AS codice,
@@ -653,7 +700,7 @@ final class SdModel
     public function moduliRiepilogo(string $tecnico, array $f): array
     {
         $a = [$tecnico, $f['from'], $f['to']];
-        $wc = $this->ctr($f, 'code', 'r.`project_code`', $a);   // v1.9.78
+        $wc = $this->ctr($f, 'code', 'r.`project_code`', $a) . $this->scorporo('r.`project_code`');   // v1.9.78 · v1.10.36 scorporo
         $st = $this->pdo->prepare(
             "SELECT COUNT(*)                                      AS moduli,
                     ROUND(SUM(COALESCE(r.`quantity_hours`,0)), 2) AS ore,
@@ -690,7 +737,7 @@ final class SdModel
     public function moduliCodice(string $tecnico, array $f): array
     {
         $a = [$tecnico, $f['from'], $f['to']];
-        $wc = $this->ctr($f, 'code', 'r.`project_code`', $a);   // v1.9.78
+        $wc = $this->ctr($f, 'code', 'r.`project_code`', $a) . $this->scorporo('r.`project_code`');   // v1.9.78 · v1.10.36 scorporo
         $st = $this->pdo->prepare(
             "SELECT COALESCE(p.`service_line`, '(nessuna)')   AS codice,
                     COALESCE(cm.`label`, p.`service_line`)    AS etichetta,
@@ -719,7 +766,7 @@ final class SdModel
     public function codiciLinea(array $f): array
     {
         $ac = [];
-        $wc = $this->ctr($f, 'code', 'r.`project_code`', $ac);   // v1.9.78
+        $wc = $this->ctr($f, 'code', 'r.`project_code`', $ac) . $this->scorporo('r.`project_code`');   // v1.9.78 · v1.10.36 scorporo
         $st = $this->pdo->prepare(
             "SELECT COALESCE(p.`service_line`, '(nessuna)')   AS codice,
                     COALESCE(cm.`label`, p.`service_line`)    AS etichetta,
@@ -755,7 +802,7 @@ final class SdModel
     public function aziendeEsecutrici(array $f): array
     {
         $ac = [];
-        $wc = $this->ctr($f, 'code', 'r.`project_code`', $ac);   // v1.9.78
+        $wc = $this->ctr($f, 'code', 'r.`project_code`', $ac) . $this->scorporo('r.`project_code`');   // v1.9.78 · v1.10.36 scorporo
         $st = $this->pdo->prepare(
             "SELECT COALESCE(az.`name`, '(non attribuita)')   AS azienda,
                     COUNT(*)                                  AS moduli,
@@ -849,7 +896,7 @@ final class SdModel
             $a2 = $a1; $a3 = [$f['from'], $f['to']];
             $w1 = $this->ctr($f, 'ticket', 'pc.`ticket`', $a1);
             $w2 = $this->ctr($f, 'ticket', '`ticket_code`', $a2);
-            $w3 = $this->ctr($f, 'code', '`commessa`', $a3);
+            $w3 = $this->ctr($f, 'code', '`commessa`', $a3) . $this->scorporo('`commessa`');   // v1.10.36 scorporo
             $st = $this->pdo->prepare(
                 "SELECT o.`tecnico`, o.`livello`, o.`sotto_unita`,
                         COALESCE(p.`presi`, 0)                    AS presi_in_carico,
@@ -972,7 +1019,7 @@ final class SdModel
     public function teamQuadro(array $f): array
     {
         $sp = $this->sdSplit('m');   // v1.9.75
-        $ac = []; $wc = $this->ctr($f, 'code', 'm.`commessa`', $ac);   // v1.9.78
+        $ac = []; $wc = $this->ctr($f, 'code', 'm.`commessa`', $ac) . $this->scorporo('m.`commessa`');   // v1.9.78 · v1.10.36 scorporo
         $wc .= $this->uoSql($f, 'm.`tecnico`', $ac);                   // v1.10.30
         $st = $this->pdo->prepare(
             "SELECT COUNT(*)                                              AS moduli,
@@ -1007,7 +1054,7 @@ final class SdModel
         $sp = $this->sdSplit('m');   // v1.9.75
         $a1 = [$f['from'].' 00:00:00', $f['to'].' 23:59:59']; $a2 = [$f['from'], $f['to']];   // v1.9.78
         $w1 = $this->ctr($f, 'ticket', 'p.`ticket`', $a1);
-        $w2 = $this->ctr($f, 'code', 'm.`commessa`', $a2);
+        $w2 = $this->ctr($f, 'code', 'm.`commessa`', $a2) . $this->scorporo('m.`commessa`');   // v1.10.36 scorporo
         $a3 = [];                                                // v1.10.30 — Unità Organizzativa
         $st = $this->pdo->prepare(
             "SELECT t.`nome` AS tecnico, t.`sotto_unita`,
@@ -1059,7 +1106,7 @@ final class SdModel
         $a = [$f['from'], $f['to']];
         if ($f['tec'] !== '') $a[] = $f['tec'];
         $tec = $f['tec'] !== '' ? " AND m.`tecnico` = ?" : "";
-        $tec .= $this->ctr($f, 'code', 'm.`commessa`', $a);   // v1.9.78
+        $tec .= $this->ctr($f, 'code', 'm.`commessa`', $a) . $this->scorporo('m.`commessa`');   // v1.9.78 · v1.10.36 scorporo
         $tec .= $this->uoSql($f, 'm.`tecnico`', $a);          // v1.10.30
         if ($this->sdKey() === '') {           // senza codice modulo: fascia del modulo intero (come prima)
             $st = $this->pdo->prepare(
@@ -1103,7 +1150,7 @@ final class SdModel
     public function teamContratto(array $f): array
     {
         $sp = $this->sdSplit('m');   // v1.9.75
-        $ac = []; $wc = $this->ctr($f, 'code', 'm.`commessa`', $ac);   // v1.9.78
+        $ac = []; $wc = $this->ctr($f, 'code', 'm.`commessa`', $ac) . $this->scorporo('m.`commessa`');   // v1.9.78 · v1.10.36 scorporo
         $wc .= $this->uoSql($f, 'm.`tecnico`', $ac);                   // v1.10.30
         $st = $this->pdo->prepare(
             "SELECT m.`codice_linea`, m.`contratto`, m.`modello`, m.`ha_ricavo`,
@@ -1492,7 +1539,7 @@ final class SdModel
                 $r = $this->pdo->query("SELECT * FROM `{$this->v['v_cm_sd_obj21_quadro']}`")->fetch(PDO::FETCH_ASSOC);
                 return $r ?: [];
             }
-            $ac = []; $wc = $this->ctr($f, 'code', '`commessa`', $ac);   // v1.9.78
+            $ac = []; $wc = $this->ctr($f, 'code', '`commessa`', $ac) . $this->scorporo('`commessa`');   // v1.9.78 · v1.10.36 scorporo
             $st = $this->pdo->prepare(
                 "SELECT (SELECT COUNT(*) FROM `{$this->v['v_cm_sd_tecnici_uo']}`)          AS tecnici_uo,
                         COUNT(*)                                             AS interventi,
@@ -1553,7 +1600,7 @@ final class SdModel
                 $a[] = $f['from']; $a[] = $f['to'];
             }
             if (($f['tec'] ?? '') !== '') { $w .= " AND `tecnico` = ?"; $a[] = $f['tec']; }
-            $w .= $this->ctr($f, 'code', '`commessa`', $a);   // v1.9.78
+            $w .= $this->ctr($f, 'code', '`commessa`', $a) . $this->scorporo('`commessa`');   // v1.9.78 · v1.10.36 scorporo
 
             $st = $this->pdo->prepare(
                 "SELECT `codice_linea`, `contratto`, `modello`,
@@ -1592,7 +1639,7 @@ final class SdModel
             if (!empty($f['from']) && !empty($f['to'])) {
                 $w = "`giorno` BETWEEN ? AND ?"; $a[] = $f['from']; $a[] = $f['to'];
             }
-            $w .= $this->ctr($f, 'code', '`commessa`', $a);   // v1.9.78
+            $w .= $this->ctr($f, 'code', '`commessa`', $a) . $this->scorporo('`commessa`');   // v1.9.78 · v1.10.36 scorporo
             $st = $this->pdo->prepare(
                 "SELECT t.`nome` AS tecnico, t.`unita`, t.`ordina`,
                         COALESCE(a.`interventi`, 0)              AS interventi,
@@ -1709,7 +1756,7 @@ final class SdModel
                 $w = "`giorno` BETWEEN ? AND ?"; $a[] = $f['from']; $a[] = $f['to'];
             }
             if (($f['tec'] ?? '') !== '') { $w .= " AND `tecnico` = ?"; $a[] = $f['tec']; }
-            $w .= $this->ctr($f, 'code', '`commessa`', $a);   // v1.9.78
+            $w .= $this->ctr($f, 'code', '`commessa`', $a);   // v1.9.78 — costi: perimetro valorizzato (non solo UO Service Desk), nessuno scorporo (v1.10.36)
             $st = $this->pdo->prepare("$select FROM `{$this->v['v_cm_sd_costi_valorizzati']}` WHERE $w $coda");
             $st->execute($a);
             $out = $st->fetchAll(PDO::FETCH_ASSOC);

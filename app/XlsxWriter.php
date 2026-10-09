@@ -123,15 +123,19 @@ final class XlsxWriter
         // xl/styles.xml (stile bold per la prima riga)
         $zip->addFromString('xl/styles.xml', $this->buildStylesXml());
 
+        // v1.10.36 — i fogli PRIMA di sharedStrings.xml: la costruzione dei fogli interna anche le stringhe numeriche con
+        // zero iniziale ('0123', '08'), escluse dal pre-processo; serializzando la tabella prima, quegli indici restavano
+        // fuori tabella e il file risultava corrotto (stessa correzione della XlsxWriter di root, v1.7.99).
+        $sheetXml = []; $idx = 1;
+        foreach ($this->sheets as $name => $rows) {
+            $sheetXml[$idx++] = $this->buildSheetXml($rows, $this->hcolors[$name] ?? []);
+        }
+
         // xl/sharedStrings.xml
         $zip->addFromString('xl/sharedStrings.xml', $this->buildSharedStringsXml());
 
         // xl/worksheets/sheetN.xml
-        $idx = 1;
-        foreach ($this->sheets as $name => $rows) {
-            $zip->addFromString("xl/worksheets/sheet$idx.xml", $this->buildSheetXml($rows, $this->hcolors[$name] ?? []));
-            $idx++;
-        }
+        foreach ($sheetXml as $i => $xml) $zip->addFromString("xl/worksheets/sheet$i.xml", $xml);
 
         $zip->close();
     }
