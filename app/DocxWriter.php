@@ -136,7 +136,7 @@ final class DocxWriter
             $tbl .= '<w:tr>';
             foreach ($header as $i => $c) {
                 $tbl .= self::tc((string)$c, [
-                    'bold' => true, 'color' => 'FFFFFF', 'fill' => self::HDR,
+                    'bold' => true, 'color' => 'FFFFFF', 'fill' => preg_match('/^#?([0-9A-Fa-f]{6})$/', (string)($o['hcolors'][$i] ?? ''), $hm) ? strtoupper($hm[1]) : self::HDR,   // v1.10.33
                     'align' => isset($right[$i]) ? 'right' : 'left', 'size' => 14, 'caps' => true,
                 ]);
             }

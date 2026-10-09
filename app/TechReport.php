@@ -29,8 +29,26 @@ final class TechReport
 
     /** v1.10.32 — colonne del Controllo Reperibilità (vista, filtri di colonna, export). */
     // v1.10.33 — Cliente, Codice Commessa e Tipo per ciascuno dei due interventi (reperibilità e giorno successivo)
-    public const H_REP = ['Tecnico / Incaricato', 'Data/Ora Reperibilità', 'Rif. Modulo Intervento (reperibilità)', 'Cliente (reperibilità)', 'Codice Commessa (reperibilità)', 'Tipo (reperibilità)',
-                          'Data/Ora Giorno Succ.', 'Rif. Modulo Intervento (giorno succ.)', 'Cliente (giorno succ.)', 'Codice Commessa (giorno succ.)', 'Tipo (giorno succ.)'];
+    // v1.10.34 — intestazioni come richieste; i due gruppi si distinguono per colore (HREP_COLORI) e, nel CSV, per suffisso
+    public const H_REP = ['Tecnico / Incaricato', 'Data/Ora Reperibilità', 'Rif. Modulo Intervento (reperibilità)', 'Cliente', 'Codice Commessa', 'Tipo',
+                          'Data/Ora Giorno Succ.', 'Rif. Modulo Intervento (giorno succ.)', 'Cliente', 'Codice Commessa', 'Tipo'];
+    public const C_NEUTRO = '475569';   // tecnico / incaricato
+    public const C_REP    = 'A0442C';   // rosso mattone: intervento in reperibilità
+    public const C_GS     = '15803D';   // verde: giorno successivo
+
+    /** Gruppo di ogni colonna di H_REP: n = neutro, r = reperibilità, g = giorno successivo. */
+    public const H_REP_GRUPPO = ['n', 'r', 'r', 'r', 'r', 'r', 'g', 'g', 'g', 'g', 'g'];
+
+    public static function hRepColori(): array
+    {
+        return array_map(fn($g) => ['n' => self::C_NEUTRO, 'r' => self::C_REP, 'g' => self::C_GS][$g], self::H_REP_GRUPPO);
+    }
+
+    /** Intestazioni univoche (CSV, descrizione dei filtri di colonna): suffisso del gruppo sulle colonne ripetute. */
+    public static function hRepEstese(): array
+    {
+        return array_map(fn($h, $g) => $g === 'n' || str_contains($h, '(') || str_starts_with($h, 'Data/Ora') ? $h : $h . ($g === 'r' ? ' (reperibilità)' : ' (giorno succ.)'), self::H_REP, self::H_REP_GRUPPO);
+    }
 
     public function __construct(private ItServiceModel $m, private bool $eco = false) {}
 
@@ -139,13 +157,14 @@ final class TechReport
         if ($tab === 'reperibilita') {
             $rr = $d['righe'];
             $r->kpi([
-                ['label' => 'Interventi in reperibilità', 'value' => $n0($d['notturni']), 'color' => '7C3AED', 'sub' => $n0($d['tecnici_notte']) . ' tecnici · inizio 18:01–08:59'],
-                ['label' => 'Con attività il giorno succ.', 'value' => $n0($d['casi']), 'color' => 'DC2626', 'sub' => (($p = self::pct($d['casi'], $d['notturni'])) !== null ? number_format($p, 1, ',', '.') . '%' : '') . ($d['cf'] ? ' · ' . $n0(count($rr)) . ' con i filtri di colonna' : '')],
+                ['label' => 'Interventi in reperibilità', 'value' => $n0($d['notturni']), 'color' => self::C_REP, 'sub' => $n0($d['tecnici_notte']) . ' tecnici · modalità Reperibilità, 18:01–08:59'],
+                ['label' => 'Con attività il giorno succ.', 'value' => $n0($d['casi']), 'color' => self::C_GS, 'sub' => (($p = self::pct($d['casi'], $d['notturni'])) !== null ? number_format($p, 1, ',', '.') . '%' : '') . ($d['cf'] ? ' · ' . $n0(count($rr)) . ' con i filtri di colonna' : '')],
                 ['label' => 'Tecnici', 'value' => $n0($d['tecnici']), 'color' => '2563EB', 'sub' => 'con almeno un caso'],
             ]);
-            if ($d['cf']) $r->meta('Filtri di colonna: ' . implode(' · ', array_map(fn($i, $v) => self::H_REP[$i] . ' contiene «' . $v . '»', array_keys($d['cf']), $d['cf'])));
-            $r->table('Controllo Reperibilità', self::H_REP, array_map([self::class, 'rep'], $rr));
-            $r->note('Reperibilità = modulo con inizio fra le 18:01 e le 08:59 svolto nel turno notturno (fine entro le 09:00) o segnato in reperibilità; i moduli diurni che iniziano prima delle 09:00 (es. 08:00–17:00) sono esclusi. Turno del giorno di inizio se dopo le 18:01, del giorno precedente se prima delle 09:00. Giorno succ. = primo giorno lavorativo (lun–ven, esclusi i festivi nazionali) dopo il giorno del turno; si riporta il primo modulo dello stesso tecnico con inizio fra le 09:00 e le 18:00 e non prima della fine dell\'intervento in reperibilità. Cliente, Codice Commessa e Tipo (linea di servizio) sono riportati per ciascuno dei due interventi; i filtri della pagina si applicano agli interventi in reperibilità.');
+            if ($d['cf']) $r->meta('Filtri di colonna: ' . implode(' · ', array_map(fn($i, $v) => self::hRepEstese()[$i] . ' contiene «' . $v . '»', array_keys($d['cf']), $d['cf'])));
+            // v1.10.34 — intestazioni colorate per gruppo (HTML, XLSX, DOCX, PDF); nel CSV, senza colori, intestazioni con suffisso
+            $r->table('Controllo Reperibilità', $fmt === 'csv' ? self::hRepEstese() : self::H_REP, array_map([self::class, 'rep'], $rr), ['hcolors' => self::hRepColori()]);
+            $r->note('Reperibilità = modulo in modalità Reperibilità (come il filtro Modalità della pagina) con inizio fra le 18:01 e le 08:59; turno del giorno di inizio se dopo le 18:01, del giorno precedente se prima delle 09:00. Giorno succ. = primo giorno lavorativo (lun–ven, esclusi i festivi nazionali) dopo il giorno del turno; si riporta il primo modulo NON in reperibilità dello stesso tecnico con inizio fra le 09:00 e le 18:00 e non prima della fine dell\'intervento in reperibilità. Cliente, Codice Commessa e Tipo (linea di servizio) sono riportati per ciascuno dei due interventi; i filtri della pagina si applicano agli interventi in reperibilità.');
             return $r;
         }
         if ($tab === 'tecnici') {

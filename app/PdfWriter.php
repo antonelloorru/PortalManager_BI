@@ -146,12 +146,21 @@ final class PdfWriter
             }
         }
         $lh = $size + 2.2;
-        $drawRow = function (array $r, bool $head, bool $zebra, bool $bold) use ($ncol, $w, $size, $pad, $lh, $right, $cell): void {
+        $hcol = $o['hcolors'] ?? [];
+        $drawRow = function (array $r, bool $head, bool $zebra, bool $bold) use ($ncol, $w, $size, $pad, $lh, $right, $cell, $hcol): void {
             $lines = []; $max = 1;
             for ($c = 0; $c < $ncol; $c++) { $lines[$c] = $this->wrap($cell($r[$c] ?? ''), $w[$c] - 2 * $pad, $size, $head || $bold); $max = max($max, count($lines[$c])); }
             $h = $max * $lh + 2 * $pad - 1;
             $tw = array_sum($w);
-            if ($head) $this->rect(self::M, $this->y - $h, $tw, $h, self::HDR);
+            if ($head) {
+                $this->rect(self::M, $this->y - $h, $tw, $h, self::HDR);
+                // v1.10.33 — colore di intestazione per colonna (hcolors)
+                $hx = self::M;
+                for ($c = 0; $c < $ncol; $c++) {
+                    if (preg_match('/^#?([0-9A-Fa-f]{6})$/', (string)($hcol[$c] ?? ''), $hm)) $this->rect($hx, $this->y - $h, $w[$c], $h, array_map('hexdec', str_split($hm[1], 2)));
+                    $hx += $w[$c];
+                }
+            }
             elseif ($zebra) $this->rect(self::M, $this->y - $h, $tw, $h, self::ZEB);
             $x = self::M;
             for ($c = 0; $c < $ncol; $c++) {

@@ -335,8 +335,8 @@ tr.tr-dd>td{background:#fbfdff;padding:4px 10px 10px 28px;white-space:normal}
     $RR = $D['righe']; $dh = fn($v) => $v ? date('d/m/Y H:i', strtotime((string)$v)) : '';
     $vis = array_slice($RR, 0, 5000); ?>
   <div class="tr-kpi">
-    <div style="--c:#7c3aed"><b><?= $h0($D['notturni']) ?></b><span>Interventi in reperibilità</span><small><?= $h0($D['tecnici_notte']) ?> tecnici · inizio 18:01–08:59</small></div>
-    <div style="--c:#dc2626"><b><?= $h0(count($RR)) ?></b><span>Con attività il giorno succ.</span><small><?= $pc(TechReport::pct(count($RR), $D['notturni'])) ?> degli interventi</small></div>
+    <div style="--c:#a0442c"><b><?= $h0($D['notturni']) ?></b><span>Interventi in reperibilità</span><small><?= $h0($D['tecnici_notte']) ?> tecnici · modalità Reperibilità, 18:01–08:59</small></div>
+    <div style="--c:#15803d"><b><?= $h0(count($RR)) ?></b><span>Con attività il giorno succ.</span><small><?= $pc(TechReport::pct(count($RR), $D['notturni'])) ?> degli interventi</small></div>
     <div style="--c:#2563eb"><b><?= $h0($D['tecnici']) ?></b><span>Tecnici</span><small>con almeno un caso</small></div>
   </div>
 
@@ -344,9 +344,9 @@ tr.tr-dd>td{background:#fbfdff;padding:4px 10px 10px 28px;white-space:normal}
     <h2>Controllo Reperibilità <small>intervento in reperibilità → primo intervento ordinario (09:00–18:00) del giorno lavorativo successivo · <span id="trRepN"><?= $h0(count($vis)) ?></span> righe</small></h2>
     <div class="tr-wrap"><table class="tr-t" id="trRep">
       <thead>
-        <tr><th colspan="1"></th><th colspan="5" class="tr-rep-h">Intervento in reperibilità (18:01–08:59)</th><th colspan="5" class="tr-gs-h">Primo intervento del giorno lavorativo successivo (09:00–18:00)</th></tr>
-        <tr><?php foreach (TechReport::H_REP as $i => $hd): ?><th class="<?= $i >= 1 && $i <= 5 ? 'tr-rep-h' : ($i >= 6 ? 'tr-gs-h' : '') ?>"><?= h(preg_replace('/ \((reperibilità|giorno succ\.)\)$/u', '', $hd)) ?></th><?php endforeach; ?></tr>
-        <tr class="tr-cf"><?php foreach (TechReport::H_REP as $i => $hd): ?><th><input type="search" data-col="<?= $i ?>" value="<?= h($D['cf'][$i] ?? '') ?>" placeholder="filtra…" aria-label="Filtra <?= h($hd) ?>"></th><?php endforeach; ?></tr>
+        <tr><th class="tr-n-h"></th><th colspan="5" class="tr-rep-h">Intervento in reperibilità (modalità Reperibilità, 18:01–08:59)</th><th colspan="5" class="tr-gs-h">Primo intervento ordinario del giorno lavorativo successivo (09:00–18:00)</th></tr>
+        <tr><?php foreach (TechReport::H_REP as $i => $hd): ?><th class="tr-<?= TechReport::H_REP_GRUPPO[$i] ?>-h"><?= h($hd) ?></th><?php endforeach; ?></tr>
+        <tr class="tr-cf"><?php foreach (TechReport::H_REP as $i => $hd): ?><th><input type="search" data-col="<?= $i ?>" value="<?= h($D['cf'][$i] ?? '') ?>" placeholder="filtra…" aria-label="Filtra <?= h(TechReport::hRepEstese()[$i]) ?>"></th><?php endforeach; ?></tr>
       </thead>
       <tbody>
       <?php if (!$RR): ?><tr class="tr-empty"><td colspan="<?= count(TechReport::H_REP) ?>" class="muted" style="text-align:center;padding:18px">Nessun intervento in reperibilità seguito da attività ordinaria il giorno lavorativo successivo, con i filtri impostati.</td></tr><?php endif; ?>
@@ -367,9 +367,12 @@ tr.tr-dd>td{background:#fbfdff;padding:4px 10px 10px 28px;white-space:normal}
       <?php endforeach; ?>
       </tbody></table></div>
     <?php if (count($RR) > count($vis) || $D['troncato']): ?><div class="tr-note">Vista limitata: <?= $h0(count($vis)) ?> righe su <?= $h0(count($RR)) ?><?= $D['troncato'] ? ' (interventi in reperibilità oltre il limite di elaborazione: restringere il periodo)' : '' ?>. L'export XLSX / CSV contiene tutte le righe.</div><?php endif; ?>
-    <div class="tr-note">Reperibilità = modulo con inizio fra le 18:01 e le 08:59 (turno del giorno di inizio se dopo le 18:01, del giorno precedente se prima delle 09:00) · Giorno succ. = primo giorno lavorativo (lun–ven, esclusi i festivi nazionali) dopo il turno: si riporta il primo modulo dello stesso tecnico con inizio 09:00–18:00 e non prima della fine dell'intervento in reperibilità · esclusi i moduli diurni che iniziano prima delle 09:00 (es. 08:00–17:00): conta come reperibilità il modulo che termina entro le 09:00 o è segnato in reperibilità · Cliente, Codice Commessa e Tipo (linea di servizio) sono riportati per ciascuno dei due interventi · i filtri del pannello si applicano agli interventi in reperibilità, i filtri di colonna alla tabella.</div>
+    <div class="tr-note">Reperibilità = modulo in modalità Reperibilità (come il filtro Modalità) con inizio fra le 18:01 e le 08:59 (turno del giorno di inizio se dopo le 18:01, del giorno precedente se prima delle 09:00) · Giorno succ. = primo giorno lavorativo (lun–ven, esclusi i festivi nazionali) dopo il turno: si riporta il primo modulo NON in reperibilità dello stesso tecnico con inizio 09:00–18:00 e non prima della fine dell'intervento in reperibilità · Cliente, Codice Commessa e Tipo (linea di servizio) sono riportati per ciascuno dei due interventi · i filtri del pannello si applicano agli interventi in reperibilità, i filtri di colonna alla tabella.</div>
   </section>
-  <style>.tr-rep{background:#faf5ff}.tr-gs{background:#f0fdf4}.tr-t thead th.tr-rep-h{background:#5b21b6}.tr-t thead th.tr-gs-h{background:#166534}.tr-t thead tr:nth-child(2) th{top:25px}.tr-t thead tr.tr-cf th{top:50px;background:#334155;padding:3px 4px}.tr-cf input{width:100%;min-width:90px;font-size:11px;padding:2px 5px;border:1px solid #cbd5e1;border-radius:4px}</style>
+  <style>/* v1.10.34 — gruppi: tecnico neutro, reperibilità rosso mattone, giorno successivo verde */
+  .tr-rep{background:#fbf1ee}.tr-gs{background:#f0fdf4}
+  .tr-t thead th.tr-n-h{background:#<?= TechReport::C_NEUTRO ?>}.tr-t thead th.tr-r-h,.tr-t thead th.tr-rep-h{background:#<?= TechReport::C_REP ?>}.tr-t thead th.tr-g-h,.tr-t thead th.tr-gs-h{background:#<?= TechReport::C_GS ?>}
+  .tr-t thead tr:nth-child(2) th{top:25px}.tr-t thead tr.tr-cf th{top:50px;background:#334155;padding:3px 4px}.tr-cf input{width:100%;min-width:90px;font-size:11px;padding:2px 5px;border:1px solid #cbd5e1;border-radius:4px}</style>
   <script>
   (function () {
     var t = document.getElementById('trRep'); if (!t) return;

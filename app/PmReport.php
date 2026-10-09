@@ -33,7 +33,8 @@ final class PmReport
 
     /**
      * @param string $title  titolo della sezione (anche nome del foglio XLSX)
-     * @param array{right?:int[],dec?:int|array<int,int>,total?:bool} $o  right = colonne numeriche a destra; total = ultima riga totale
+     * @param array{right?:int[],dec?:int|array<int,int>,total?:bool,hcolors?:array<int,string>} $o  right = colonne numeriche a destra; total = ultima riga totale;
+     *        hcolors = v1.10.33 colore di sfondo (RRGGBB) dell'intestazione per colonna (HTML, XLSX, DOCX, PDF)
      */
     public function table(string $title, array $header, array $rows, array $o = []): self
     {
@@ -127,7 +128,7 @@ final class PmReport
                 case 'table':
                     if ($b[1] !== '' && empty($b[4]['notitle'])) $d->heading($b[1], 2);
                     if (!$b[3]) { $d->note('Nessun dato.'); break; }
-                    $d->table($b[2], array_map(fn($r) => self::fmtRow($r, $b[4]), $b[3]), ['right' => self::rightCols($b[2], $b[3], $b[4])]);
+                    $d->table($b[2], array_map(fn($r) => self::fmtRow($r, $b[4]), $b[3]), ['right' => self::rightCols($b[2], $b[3], $b[4]), 'hcolors' => $b[4]['hcolors'] ?? []]);
                     break;
                 case 'bars':
                     $dec = self::barDec($b[2]);
@@ -156,7 +157,7 @@ final class PmReport
                 case 'table':
                     if ($b[1] !== '' && empty($b[4]['notitle'])) $p->heading($b[1], 2);
                     if (!$b[3]) { $p->note('Nessun dato.'); break; }
-                    $p->table($b[2], array_map(fn($r) => self::fmtRow($r, $b[4]), $b[3]), ['right' => self::rightCols($b[2], $b[3], $b[4]), 'total' => !empty($b[4]['total'])]);
+                    $p->table($b[2], array_map(fn($r) => self::fmtRow($r, $b[4]), $b[3]), ['right' => self::rightCols($b[2], $b[3], $b[4]), 'total' => !empty($b[4]['total']), 'hcolors' => $b[4]['hcolors'] ?? []]);
                     break;
                 case 'bars':
                     $dec = self::barDec($b[2]);
@@ -197,7 +198,7 @@ final class PmReport
             $name = mb_substr($name, 0, 28); $base = $name; $k = 2;
             while (isset($used[mb_strtolower($name)])) $name = mb_substr($base, 0, 25) . ' ' . $k++;
             $used[mb_strtolower($name)] = 1;
-            if ($b[0] === 'table') $w->addSheet($name, array_merge([$b[2]], array_map(fn($r) => array_map(fn($v) => $v === null ? '' : self::itNum($v), array_values($r)), $b[3])));
+            if ($b[0] === 'table') $w->addSheet($name, array_merge([$b[2]], array_map(fn($r) => array_map(fn($v) => $v === null ? '' : self::itNum($v), array_values($r)), $b[3])), $b[4]['hcolors'] ?? []);
             elseif ($b[0] === 'stacked') $w->addSheet($name, array_merge([array_merge(['Voce'], array_column($b[3], 'label'), ['Totale'])], array_map(fn($r) => array_merge([(string)$r[0]], array_map('floatval', $r[1]), [array_sum($r[1])]), $b[2])));
             else $w->addSheet($name, array_merge([['Voce', 'Valore' . ($b[3] !== '' ? " ({$b[3]})" : '')]], array_map(fn($r) => [(string)$r[0], (float)$r[1]], $b[2])));
         }
@@ -285,7 +286,8 @@ final class PmReport
                     $tot = !empty($b[4]['total']);
                     if ($tot && $rows !== $b[3]) $rows[] = end($b[3]);
                     $o .= '<div class="pm-rep-tw"><table class="data-table pm-rep-t" data-pm-nofilter><thead><tr>';
-                    foreach ($b[2] as $i => $x) $o .= '<th' . (isset($right[$i]) ? ' class="r"' : '') . '>' . $h($x) . '</th>';
+                    foreach ($b[2] as $i => $x) $o .= '<th' . (isset($right[$i]) ? ' class="r"' : '')
+                        . (preg_match('/^#?([0-9A-Fa-f]{6})$/', (string)($b[4]['hcolors'][$i] ?? ''), $hm) ? ' style="background:#' . $hm[1] . ';color:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact"' : '') . '>' . $h($x) . '</th>';   // v1.10.33 hcolors
                     $o .= '</tr></thead><tbody>';
                     $n = count($rows);
                     foreach ($rows as $ri => $r) {

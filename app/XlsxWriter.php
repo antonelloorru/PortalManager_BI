@@ -33,7 +33,11 @@ final class XlsxWriter
     private array $sharedStrings = [];
     private array $stringIndex = [];
 
-    public function addSheet(string $name, array $rows): self
+    /** v1.10.33 — colori di intestazione per foglio: [nome foglio => [indice colonna => 'RRGGBB']] */
+    private array $hcolors = [];
+
+    /** @param array<int,string> $headerColors  v1.10.33 — colore di sfondo (RRGGBB) per colonna della prima riga; vuoto = stile standard */
+    public function addSheet(string $name, array $rows, array $headerColors = []): self
     {
         // Sanitizza nome sheet (max 31 char, no caratteri proibiti)
         $name = self::sanitizeSheetName($name);
@@ -45,6 +49,9 @@ final class XlsxWriter
             $i++;
         }
         $this->sheets[$name] = $rows;
+        $hc = [];
+        foreach ($headerColors as $c => $hex) if (preg_match('/^#?([0-9A-Fa-f]{6})$/', (string)$hex, $m)) $hc[(int)$c] = strtoupper($m[1]);
+        if ($hc) $this->hcolors[$name] = $hc;
         return $this;
     }
 
@@ -122,7 +129,7 @@ final class XlsxWriter
         // xl/worksheets/sheetN.xml
         $idx = 1;
         foreach ($this->sheets as $name => $rows) {
-            $zip->addFromString("xl/worksheets/sheet$idx.xml", $this->buildSheetXml($rows));
+            $zip->addFromString("xl/worksheets/sheet$idx.xml", $this->buildSheetXml($rows, $this->hcolors[$name] ?? []));
             $idx++;
         }
 
@@ -191,25 +198,38 @@ final class XlsxWriter
 </workbook>';
     }
 
+    /** Stili: 0 = default, 1 = intestazione standard, 2.. = intestazioni colorate (v1.10.33). */
+    private function headerColorList(): array
+    {
+        $all = [];
+        foreach ($this->hcolors as $hc) foreach ($hc as $hex) $all[$hex] = 1;
+        return array_keys($all);
+    }
+
     private function buildStylesXml(): string
     {
-        // 2 stili: 0 = default, 1 = bold (per header)
+        $extra = $this->headerColorList();
+        $fills = ''; $xfs = '';
+        foreach ($extra as $i => $hex) {
+            $fills .= "\n  <fill><patternFill patternType=\"solid\"><fgColor rgb=\"FF$hex\"/><bgColor indexed=\"64\"/></patternFill></fill>";
+            $xfs   .= "\n  <xf numFmtId=\"0\" fontId=\"1\" fillId=\"" . (3 + $i) . "\" borderId=\"0\" xfId=\"0\" applyFont=\"1\" applyFill=\"1\"/>";
+        }
         return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
 <fonts count="2">
   <font><sz val="11"/><name val="Calibri"/></font>
   <font><b/><sz val="11"/><name val="Calibri"/><color rgb="FFFFFFFF"/></font>
 </fonts>
-<fills count="3">
+<fills count="' . (3 + count($extra)) . '">
   <fill><patternFill patternType="none"/></fill>
   <fill><patternFill patternType="gray125"/></fill>
-  <fill><patternFill patternType="solid"><fgColor rgb="FF0EA5E9"/><bgColor indexed="64"/></patternFill></fill>
+  <fill><patternFill patternType="solid"><fgColor rgb="FF0EA5E9"/><bgColor indexed="64"/></patternFill></fill>' . $fills . '
 </fills>
 <borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="2">
+<cellXfs count="' . (2 + count($extra)) . '">
   <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
-  <xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>
+  <xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>' . $xfs . '
 </cellXfs>
 </styleSheet>';
     }
@@ -226,8 +246,10 @@ final class XlsxWriter
      uniqueCount="' . count($this->sharedStrings) . '">' . $items . '</sst>';
     }
 
-    private function buildSheetXml(array $rows): string
+    private function buildSheetXml(array $rows, array $hc = []): string
     {
+        $hStyle = [];
+        if ($hc) { $pos = array_flip($this->headerColorList()); foreach ($hc as $c => $hex) $hStyle[$c] = 2 + $pos[$hex]; }
         // Calcola larghezze colonne per autosizing
         $widths = [];
         foreach ($rows as $row) {
@@ -250,7 +272,7 @@ final class XlsxWriter
             $cells = '';
             foreach ($row as $cIdx => $val) {
                 $cellRef = self::cellRef($cIdx, $rIdx);
-                $style = ($rIdx === 0) ? ' s="1"' : '';
+                $style = ($rIdx === 0) ? ' s="' . ($hStyle[$cIdx] ?? 1) . '"' : '';
 
                 if ($val === null || $val === '') {
                     continue;
