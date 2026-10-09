@@ -28,7 +28,9 @@ final class TechReport
     public const H_DET  = ['Tecnico', 'Codice linea', 'Linea di servizio', 'Giornate-uomo', 'Ore cons.', 'Ordinarie', 'Fuori orario', 'Reperib.', 'Extra dich.', 'Presso cl.', 'Remoto', 'Smart'];
 
     /** v1.10.32 — colonne del Controllo Reperibilità (vista, filtri di colonna, export). */
-    public const H_REP = ['Tecnico / Incaricato', 'Data/Ora Reperibilità', 'Rif. Modulo Intervento (reperibilità)', 'Data/Ora Giorno Succ.', 'Rif. Modulo Intervento (giorno succ.)', 'Cliente', 'Codice Commessa', 'Tipo'];
+    // v1.10.33 — Cliente, Codice Commessa e Tipo per ciascuno dei due interventi (reperibilità e giorno successivo)
+    public const H_REP = ['Tecnico / Incaricato', 'Data/Ora Reperibilità', 'Rif. Modulo Intervento (reperibilità)', 'Cliente (reperibilità)', 'Codice Commessa (reperibilità)', 'Tipo (reperibilità)',
+                          'Data/Ora Giorno Succ.', 'Rif. Modulo Intervento (giorno succ.)', 'Cliente (giorno succ.)', 'Codice Commessa (giorno succ.)', 'Tipo (giorno succ.)'];
 
     public function __construct(private ItServiceModel $m, private bool $eco = false) {}
 
@@ -93,7 +95,9 @@ final class TechReport
     public static function rep(array $x): array
     {
         $dh = static fn($v) => $v ? date('d/m/Y H:i', strtotime((string)$v)) : '';
-        return [$x['tecnico'], $dh($x['rep_inizio']), $x['rep_modulo'], $dh($x['succ_inizio']), $x['succ_modulo'], $x['cliente'], $x['commessa'], $x['tipo']];
+        $fh = static fn($v) => $v ? date('H:i', strtotime((string)$v)) : '';
+        return [$x['tecnico'], $dh($x['rep_inizio']) . ($x['rep_fine'] ? '–' . $fh($x['rep_fine']) : ''), $x['rep_modulo'], $x['cliente'], $x['commessa'], $x['tipo'],
+                $dh($x['succ_inizio']) . ($x['succ_fine'] ? '–' . $fh($x['succ_fine']) : ''), $x['succ_modulo'], $x['succ_cliente'], $x['succ_commessa'], $x['succ_tipo']];
     }
 
     /** v1.10.32 — filtri di colonna (cf[i], «contiene», senza distinzione di maiuscole e accenti) sulle righe di H_REP. */
@@ -141,7 +145,7 @@ final class TechReport
             ]);
             if ($d['cf']) $r->meta('Filtri di colonna: ' . implode(' · ', array_map(fn($i, $v) => self::H_REP[$i] . ' contiene «' . $v . '»', array_keys($d['cf']), $d['cf'])));
             $r->table('Controllo Reperibilità', self::H_REP, array_map([self::class, 'rep'], $rr));
-            $r->note('Reperibilità = modulo con inizio fra le 18:01 e le 08:59 (turno del giorno di inizio se dopo le 18:01, del giorno precedente se prima delle 09:00). Giorno succ. = primo giorno lavorativo (lun–ven, esclusi i festivi nazionali) dopo il giorno del turno; si riporta il primo modulo dello stesso tecnico con inizio fra le 09:00 e le 18:00 e non prima della fine dell\'intervento in reperibilità. Cliente, Codice Commessa e Tipo (linea di servizio) si riferiscono all\'intervento in reperibilità; i filtri della pagina si applicano agli interventi in reperibilità.');
+            $r->note('Reperibilità = modulo con inizio fra le 18:01 e le 08:59 svolto nel turno notturno (fine entro le 09:00) o segnato in reperibilità; i moduli diurni che iniziano prima delle 09:00 (es. 08:00–17:00) sono esclusi. Turno del giorno di inizio se dopo le 18:01, del giorno precedente se prima delle 09:00. Giorno succ. = primo giorno lavorativo (lun–ven, esclusi i festivi nazionali) dopo il giorno del turno; si riporta il primo modulo dello stesso tecnico con inizio fra le 09:00 e le 18:00 e non prima della fine dell\'intervento in reperibilità. Cliente, Codice Commessa e Tipo (linea di servizio) sono riportati per ciascuno dei due interventi; i filtri della pagina si applicano agli interventi in reperibilità.');
             return $r;
         }
         if ($tab === 'tecnici') {

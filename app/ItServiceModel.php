@@ -1271,7 +1271,9 @@ final class ItServiceModel
      * v1.10.32 — Controllo Reperibilità (Relazione Tecnici).
      *
      * 1. Interventi in reperibilità: moduli del perimetro filtrato (where(): tutti i filtri globali di pagina) con inizio
-     *    nella fascia 18:01–08:59. Il turno notturno appartiene al giorno in cui inizia: inizio 18:01–23:59 → turno del
+     *    nella fascia 18:01–08:59 e svolti nel turno notturno: fine entro le 09:00 del mattino successivo all'inizio del turno,
+     *    oppure modulo segnato in reperibilità (on_call / modalità). v1.10.33: esclusi i moduli diurni che iniziano prima
+     *    delle 09:00 (es. 08:00–17:00), che non sono reperibilità. Il turno notturno appartiene al giorno in cui inizia: inizio 18:01–23:59 → turno del
      *    giorno stesso; inizio 00:00–08:59 → turno del giorno precedente.
      * 2. Giorno successivo: primo giorno lavorativo (lun–ven non festivo) dopo il giorno del turno.
      * 3. Correlazione: primo modulo dello STESSO tecnico (dipendente o professionista) in quel giorno con inizio nella fascia
@@ -1282,6 +1284,12 @@ final class ItServiceModel
     public const REP_NOTTE = ['18:01:00', '09:00:00'];   // TIME >= [0] OR TIME < [1]
     public const REP_GIORNO = ['09:00:00', '18:00:59'];  // TIME BETWEEN [0] AND [1]
 
+    /** v1.10.33 — modulo segnato in reperibilità: stessa regola della colonna «Reperib.» (oreClassi). */
+    private static function repFlagSql(): string
+    {
+        return "(LOWER(TRIM(COALESCE(s.`modalita`,''))) LIKE 'reperibilit%' OR COALESCE(ir.`on_call`,0) = 1)";
+    }
+
     public function controlloReperibilita(array $f, int $limite = 20000): array
     {
         [$w, $a] = $this->where($f);
@@ -1290,6 +1298,9 @@ final class ItServiceModel
                FROM `{$this->v['v_cm_it_servizio']}` s {$this->trJoin()}
               WHERE $w AND ir.`start_at` IS NOT NULL
                 AND (TIME(ir.`start_at`) >= '" . self::REP_NOTTE[0] . "' OR TIME(ir.`start_at`) < '" . self::REP_NOTTE[1] . "')
+                AND (" . self::repFlagSql() . "
+                     OR (ir.`end_at` IS NOT NULL AND ir.`end_at` > ir.`start_at`
+                         AND ir.`end_at` <= TIMESTAMP(DATE(ir.`start_at`) + INTERVAL (TIME(ir.`start_at`) >= '" . self::REP_NOTTE[0] . "') DAY, '" . self::REP_NOTTE[1] . "')))
               ORDER BY s.`incaricato`, ir.`start_at` LIMIT " . (int)$limite);
         $st->execute($a); $notte = $st->fetchAll(PDO::FETCH_ASSOC); $st->closeCursor();
 
@@ -1312,8 +1323,10 @@ final class ItServiceModel
             $gg = array_keys($giorni); sort($gg);
             $ph = implode(',', array_fill(0, count($gg), '?'));
             $sd = $this->pdo->prepare("SELECT ir.`id`, ir.`report_code` AS modulo, ir.`start_at`, ir.`end_at`, ir.`technician_id`, ir.`technician_professional_id`,
-                        COALESCE(p.`project_code`, ir.`project_code`) AS commessa, ir.`project_id`
+                        COALESCE(p.`project_code`, ir.`project_code`) AS commessa, ir.`project_id`,
+                        COALESCE(cl.`name`, NULLIF(TRIM(ir.`client_raw`),''), pc.`name`) AS cliente, p.`service_line` AS tipo
                    FROM `cm_intervention_reports` ir LEFT JOIN `cm_projects` p ON p.`id` = ir.`project_id`
+                   LEFT JOIN `clients` cl ON cl.`id` = ir.`client_id` LEFT JOIN `clients` pc ON pc.`id` = p.`client_id`
                   WHERE ir.`start_at` >= ? AND ir.`start_at` < ? AND DATE(ir.`start_at`) IN ($ph)
                     AND TIME(ir.`start_at`) BETWEEN '" . self::REP_GIORNO[0] . "' AND '" . self::REP_GIORNO[1] . "'
                     AND (" . implode(' OR ', $cond) . ")
@@ -1336,6 +1349,7 @@ final class ItServiceModel
             $righe[] = ['tecnico' => (string)$r['tecnico'], 'rep_inizio' => (string)$r['start_at'], 'rep_fine' => $r['end_at'], 'rep_modulo' => (string)$r['modulo'],
                         'turno' => $r['turno'], 'succ_inizio' => (string)$g['start_at'], 'succ_fine' => $g['end_at'], 'succ_modulo' => (string)$g['modulo'],
                         'succ_commessa' => (string)$g['commessa'], 'succ_project_id' => (int)$g['project_id'],
+                        'succ_cliente' => (string)($g['cliente'] ?? ''), 'succ_tipo' => (string)($g['tipo'] ?? ''),
                         'cliente' => (string)$r['cliente'], 'commessa' => (string)$r['commessa'], 'project_id' => (int)$r['project_id'],
                         'tipo' => (string)$r['tipo'], 'tipo_label' => (string)($r['linea_label'] ?? '')];
             $tec[$k] = 1;

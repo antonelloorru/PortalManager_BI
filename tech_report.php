@@ -344,28 +344,32 @@ tr.tr-dd>td{background:#fbfdff;padding:4px 10px 10px 28px;white-space:normal}
     <h2>Controllo Reperibilità <small>intervento in reperibilità → primo intervento ordinario (09:00–18:00) del giorno lavorativo successivo · <span id="trRepN"><?= $h0(count($vis)) ?></span> righe</small></h2>
     <div class="tr-wrap"><table class="tr-t" id="trRep">
       <thead>
-        <tr><?php foreach (TechReport::H_REP as $hd): ?><th><?= h($hd) ?></th><?php endforeach; ?></tr>
+        <tr><th colspan="1"></th><th colspan="5" class="tr-rep-h">Intervento in reperibilità (18:01–08:59)</th><th colspan="5" class="tr-gs-h">Primo intervento del giorno lavorativo successivo (09:00–18:00)</th></tr>
+        <tr><?php foreach (TechReport::H_REP as $i => $hd): ?><th class="<?= $i >= 1 && $i <= 5 ? 'tr-rep-h' : ($i >= 6 ? 'tr-gs-h' : '') ?>"><?= h(preg_replace('/ \((reperibilità|giorno succ\.)\)$/u', '', $hd)) ?></th><?php endforeach; ?></tr>
         <tr class="tr-cf"><?php foreach (TechReport::H_REP as $i => $hd): ?><th><input type="search" data-col="<?= $i ?>" value="<?= h($D['cf'][$i] ?? '') ?>" placeholder="filtra…" aria-label="Filtra <?= h($hd) ?>"></th><?php endforeach; ?></tr>
       </thead>
       <tbody>
-      <?php if (!$RR): ?><tr class="tr-empty"><td colspan="8" class="muted" style="text-align:center;padding:18px">Nessun intervento in reperibilità seguito da attività ordinaria il giorno lavorativo successivo, con i filtri impostati.</td></tr><?php endif; ?>
-      <?php foreach ($vis as $x): ?>
+      <?php if (!$RR): ?><tr class="tr-empty"><td colspan="<?= count(TechReport::H_REP) ?>" class="muted" style="text-align:center;padding:18px">Nessun intervento in reperibilità seguito da attività ordinaria il giorno lavorativo successivo, con i filtri impostati.</td></tr><?php endif; ?>
+      <?php foreach ($vis as $x): $v = TechReport::rep($x);   // v1.10.33 — 11 colonne, cliente / commessa / tipo per ciascun intervento ?>
         <tr>
-          <td><?= h($x['tecnico']) ?></td>
-          <td title="Turno del <?= h($dt($x['turno'])) ?><?= $x['rep_fine'] ? ' · fine ' . h($dh($x['rep_fine'])) : '' ?>"><?= h($dh($x['rep_inizio'])) ?></td>
-          <td><?= h($x['rep_modulo']) ?></td>
-          <td title="<?= $x['succ_fine'] ? 'Fine ' . h($dh($x['succ_fine'])) : '' ?>"><?= h($dh($x['succ_inizio'])) ?></td>
-          <td><?= h($x['succ_modulo']) ?><?php if ($x['succ_commessa'] !== '' && $x['succ_commessa'] !== $x['commessa']): ?> <span class="muted" style="font-size:10.5px" title="Commessa del modulo del giorno successivo">· <?= h($x['succ_commessa']) ?></span><?php endif; ?></td>
-          <td title="<?= h($x['cliente']) ?>"><?= h(mb_strimwidth($x['cliente'], 0, 34, '…')) ?></td>
-          <td><?php if ($can_pd && $x['project_id'] > 0): ?><a href="<?= url_safe('project_dashboard', ['id' => $x['project_id']]) ?>" title="Scheda commessa"><?= h($x['commessa']) ?></a><?php else: ?><?= h($x['commessa']) ?><?php endif; ?></td>
-          <td title="<?= h($x['tipo_label']) ?>"><?= h($x['tipo']) ?></td>
+          <td><?= h($v[0]) ?></td>
+          <td class="tr-rep" title="Turno notturno del <?= h($dt($x['turno'])) ?>"><?= h($v[1]) ?><?php if (substr($x['rep_inizio'], 0, 10) !== $x['turno']): ?> <span class="muted" style="font-size:10.5px">· notte del <?= h(date('d/m', strtotime($x['turno']))) ?></span><?php endif; ?></td>
+          <td class="tr-rep"><?= h($v[2]) ?></td>
+          <td class="tr-rep" title="<?= h($v[3]) ?>"><?= h(mb_strimwidth($v[3], 0, 30, '…')) ?></td>
+          <td class="tr-rep"><?php if ($can_pd && $x['project_id'] > 0): ?><a href="<?= url_safe('project_dashboard', ['id' => $x['project_id']]) ?>" title="Scheda commessa"><?= h($v[4]) ?></a><?php else: ?><?= h($v[4]) ?><?php endif; ?></td>
+          <td class="tr-rep" title="<?= h($x['tipo_label']) ?>"><?= h($v[5]) ?></td>
+          <td class="tr-gs"><?= h($v[6]) ?></td>
+          <td class="tr-gs"><?= h($v[7]) ?></td>
+          <td class="tr-gs" title="<?= h($v[8]) ?>"><?= h(mb_strimwidth($v[8], 0, 30, '…')) ?></td>
+          <td class="tr-gs"><?php if ($can_pd && $x['succ_project_id'] > 0): ?><a href="<?= url_safe('project_dashboard', ['id' => $x['succ_project_id']]) ?>" title="Scheda commessa"><?= h($v[9]) ?></a><?php else: ?><?= h($v[9]) ?><?php endif; ?></td>
+          <td class="tr-gs"><?= h($v[10]) ?></td>
         </tr>
       <?php endforeach; ?>
       </tbody></table></div>
     <?php if (count($RR) > count($vis) || $D['troncato']): ?><div class="tr-note">Vista limitata: <?= $h0(count($vis)) ?> righe su <?= $h0(count($RR)) ?><?= $D['troncato'] ? ' (interventi in reperibilità oltre il limite di elaborazione: restringere il periodo)' : '' ?>. L'export XLSX / CSV contiene tutte le righe.</div><?php endif; ?>
-    <div class="tr-note">Reperibilità = modulo con inizio fra le 18:01 e le 08:59 (turno del giorno di inizio se dopo le 18:01, del giorno precedente se prima delle 09:00) · Giorno succ. = primo giorno lavorativo (lun–ven, esclusi i festivi nazionali) dopo il turno: si riporta il primo modulo dello stesso tecnico con inizio 09:00–18:00 e non prima della fine dell'intervento in reperibilità · Cliente, Codice Commessa e Tipo (linea di servizio) sono dell'intervento in reperibilità · i filtri del pannello si applicano agli interventi in reperibilità, i filtri di colonna alla tabella.</div>
+    <div class="tr-note">Reperibilità = modulo con inizio fra le 18:01 e le 08:59 (turno del giorno di inizio se dopo le 18:01, del giorno precedente se prima delle 09:00) · Giorno succ. = primo giorno lavorativo (lun–ven, esclusi i festivi nazionali) dopo il turno: si riporta il primo modulo dello stesso tecnico con inizio 09:00–18:00 e non prima della fine dell'intervento in reperibilità · esclusi i moduli diurni che iniziano prima delle 09:00 (es. 08:00–17:00): conta come reperibilità il modulo che termina entro le 09:00 o è segnato in reperibilità · Cliente, Codice Commessa e Tipo (linea di servizio) sono riportati per ciascuno dei due interventi · i filtri del pannello si applicano agli interventi in reperibilità, i filtri di colonna alla tabella.</div>
   </section>
-  <style>.tr-t thead tr.tr-cf th{top:27px;background:#334155;padding:3px 4px}.tr-cf input{width:100%;min-width:90px;font-size:11px;padding:2px 5px;border:1px solid #cbd5e1;border-radius:4px}</style>
+  <style>.tr-rep{background:#faf5ff}.tr-gs{background:#f0fdf4}.tr-t thead th.tr-rep-h{background:#5b21b6}.tr-t thead th.tr-gs-h{background:#166534}.tr-t thead tr:nth-child(2) th{top:25px}.tr-t thead tr.tr-cf th{top:50px;background:#334155;padding:3px 4px}.tr-cf input{width:100%;min-width:90px;font-size:11px;padding:2px 5px;border:1px solid #cbd5e1;border-radius:4px}</style>
   <script>
   (function () {
     var t = document.getElementById('trRep'); if (!t) return;
