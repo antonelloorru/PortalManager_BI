@@ -1,9 +1,9 @@
 {
-  "name": "PortalManager Release v1.10.30",
-  "version": "1.10.30",
+  "name": "PortalManager Release v1.10.31",
+  "version": "1.10.31",
   "release_date": "2026-10-09 23:59:00",
   "cumulative_from": "1.10.06",
-  "description": "Filtro multi-select «Unità Organizzativa» in Commesse / Progetti, Report direzionale, Service Desk, Service SOC, Relazione di Servizio IT, Attività & Rendicontazione DGB, Carico & Sovrapposizioni, Relazione Tecnici. Include v1.10.07–v1.10.29.",
+  "description": "Link SP in Ordinativi Pratix (a fianco del link Commessa, colonna nell'export) e in Scheda Commessa (a fianco del Codice Commessa). Include v1.10.07–v1.10.30.",
   "files": [
     "VERSION",
     "app/CronlessScheduler.php",
@@ -291,7 +291,16 @@
     "docs/MANUALE_ADMIN_v1_10_30.md",
     "docs/MANUALE_UTENTE_v1_10_30.md",
     "docs/DEPLOYMENT_v1_10_30.md",
-    "docs/RELEASE_CHECKLIST_v1_10_30.md"
+    "docs/RELEASE_CHECKLIST_v1_10_30.md",
+    "pratix_orders.php",
+    "sql/migration_v1_10_31.sql",
+    "tools/verify_v1_10_31.php",
+    "docs/CHANGELOG_v1_10_31.md",
+    "docs/TECHNICAL_DESIGN_v1_10_31.md",
+    "docs/MANUALE_ADMIN_v1_10_31.md",
+    "docs/MANUALE_UTENTE_v1_10_31.md",
+    "docs/DEPLOYMENT_v1_10_31.md",
+    "docs/RELEASE_CHECKLIST_v1_10_31.md"
   ],
   "migrations": [
     "sql/migration_v1_10_07.sql",
@@ -317,10 +326,11 @@
     "sql/migration_v1_10_27.sql",
     "sql/migration_v1_10_28.sql",
     "sql/migration_v1_10_29.sql",
-    "sql/migration_v1_10_30.sql"
+    "sql/migration_v1_10_30.sql",
+    "sql/migration_v1_10_31.sql"
   ],
   "post_install": [
-    "Eseguire le migrazioni mancanti 1.10.07 → 1.10.30",
+    "Eseguire le migrazioni mancanti 1.10.07 → 1.10.31",
     "Stop+Start Apache",
     "Ctrl+F5",
     "Amministrazione › Permessi ruoli: verificare Ricerca (cm_search.php) e Ricerca importi e costi (cm_search_economics.php)",
@@ -330,6 +340,6 @@
     "WordPress: Lavora con noi › Impostazioni › Aspetto › Sezione di testata → Scegli dalla Libreria media → Salva",
     "WordPress: pagina Lavora con noi → riga a una colonna con [pm_ats_lavora_con_noi hero=\"0\"] al posto di accordion e Contact Form 7",
     "Sito web (WordPress) › Sincronizza tutto",
-    "php tools/verify_v1_10_30.php --db=<database>"
+    "php tools/verify_v1_10_31.php --db=<database>"
   ]
 }

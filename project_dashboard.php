@@ -487,7 +487,12 @@ if (!empty($_SESSION['flash_msg'])) { $msg=$_SESSION['flash_msg']; unset($_SESSI
 require_once('header.php');
 $eur = fn($v)=> $v===null?'—':number_format((float)$v,2,',','.').' €';
 ?>
-<div class="page-header"><h1><i class="fa-solid fa-briefcase"></i> <?=h($p['project_code'])?> — <?=h($p['name'])?></h1></div>
+<div class="page-header"><h1><i class="fa-solid fa-briefcase"></i> <?=h($p['project_code'])?>
+  <?php // v1.10.31 — Link SP a fianco del Codice Commessa ?>
+  <?php if (preg_match('~^https?://~i', (string)($p['external_link'] ?? ''))): ?><a href="<?=h($p['external_link'])?>" target="_blank" rel="noopener noreferrer" class="btn btn-sm"
+     title="Apri sul gestionale (SharePoint)" style="font-size:11px;padding:2px 8px;vertical-align:middle"><i class="fa-solid fa-arrow-up-right-from-square"></i> Link SP</a><?php else: ?><span
+     style="font-size:11px;color:#cbd5e1;font-weight:600;vertical-align:middle" title="Link SP non presente">Link SP —</span><?php endif; ?>
+  — <?=h($p['name'])?></h1></div>
 <?= $msg ?>
 
 <div class="tabs" style="display:flex;gap:6px;margin-bottom:14px;border-bottom:1px solid var(--border)">

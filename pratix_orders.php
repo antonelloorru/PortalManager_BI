@@ -92,9 +92,10 @@ try {
         $codici = array_column($ordinativi, 'order_code');
         $ph = implode(',', array_fill(0, count($codici), '?'));
         $st = $pdo->prepare(
-            "SELECT * FROM `v_cm_pratix_righe`
-              WHERE `order_code` IN ($ph)
-              ORDER BY `order_code`, `importo` DESC");
+            "SELECT r.*, pj.`external_link` AS link_sp   -- v1.10.31 Link SP della commessa
+               FROM `v_cm_pratix_righe` r LEFT JOIN `cm_projects` pj ON pj.`id` = r.`commessa_id`
+              WHERE r.`order_code` IN ($ph)
+              ORDER BY r.`order_code`, r.`importo` DESC");
         $st->execute($codici);
         /* La chiave e' normalizzata in MAIUSCOLO.
            MariaDB raggruppa con una collation _ci: 'a3992' e 'A3992' finiscono
@@ -149,12 +150,12 @@ if ($pronto && in_array(($_GET['export'] ?? ''), ['xlsx', 'csv', 'pdf'], true)) 
         $x['totale_dichiarato'], $x['scostamento'], $x['esito_validazione'],
         $x['dal'], $x['al']];
 
-    $rigHead = ['Ordinativo','Commessa','Denominazione','Cliente','Commerciale','Tipo contratto',
+    $rigHead = ['Ordinativo','Commessa','Link SP','Denominazione','Cliente','Commerciale','Tipo contratto',
                 'Descrizione','Importo','Origine importo','Fatturato','Stato commessa',
                 'Codici multipli','Data operazione'];
     $rigRows = [];
     foreach ($righePer as $cod => $righe) foreach ($righe as $x) $rigRows[] = [
-        $x['order_code'], $x['commessa'], $x['denominazione'], $x['cliente'],
+        $x['order_code'], $x['commessa'], (string)($x['link_sp'] ?? ''), $x['denominazione'], $x['cliente'],
         $x['commerciale'] ?? '', $x['tipo_contratto'], $x['descrizione'], $x['importo'],
         $x['origine_importo'], $x['importo_fatturato'], $x['stato_commessa'],
         (!empty($x['codici_multipli'])) ? 'SI' : 'NO', $x['data_operazione']];
@@ -451,7 +452,7 @@ $attivi = ($q !== '') + ($cliente !== '') + ($commerciale !== '') + ($solo !== '
       <table class="data-table" style="width:100%;font-size:11px">
         <thead><tr><th>Commessa</th><th>Cliente</th><th>Tipo contratto</th>
           <th>Descrizione</th><th style="text-align:right">Importo</th>
-          <th style="text-align:center">Stato</th><th style="width:36px"></th></tr></thead>
+          <th style="text-align:center">Stato</th><th style="width:64px;text-align:center" title="Commessa · Link SP (gestionale)">Link</th></tr></thead>
         <tbody>
         <?php foreach ($righe as $r): ?>
           <tr>
@@ -477,7 +478,12 @@ $attivi = ($q !== '') + ($cliente !== '') + ($commerciale !== '') + ($solo !== '
               <?php if ($r['commessa_id']): ?>
                 <a href="<?=url_safe('project_dashboard', ['id' => (int)$r['commessa_id']])?>"
                    title="Apri la commessa"><i class="fa-solid fa-arrow-up-right-from-square"></i></a>
-              <?php endif; ?></td>
+              <?php endif; ?>
+              <?php // v1.10.31 — Link SP a fianco del link Commessa ?>
+              <?php if (preg_match('~^https?://~i', (string)($r['link_sp'] ?? ''))): ?>
+                <a href="<?=h($r['link_sp'])?>" target="_blank" rel="noopener noreferrer" title="Apri sul gestionale (SharePoint)"
+                   style="margin-left:6px;white-space:nowrap;font-size:10px;font-weight:700">SP</a>
+              <?php else: ?><span style="margin-left:6px;color:#cbd5e1;font-size:10px" title="Link SP non presente">SP</span><?php endif; ?></td>
           </tr>
         <?php endforeach; ?>
           <tr style="background:#f8fafc;font-weight:700;border-top:2px solid #cbd5e1">
