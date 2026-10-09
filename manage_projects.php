@@ -90,7 +90,8 @@ $f = [
     'descr'          => trim($_GET['descr'] ?? ''),
     'client_id'      => (int)($_GET['client'] ?? 0),
     'company_id'     => (int)($_GET['company'] ?? 0),
-    'service_line'   => trim($_GET['sl'] ?? ''),
+    // v1.10.29 — «Tipo» (linea di servizio): selezione multipla (sl[] oppure elenco separato da virgole)
+    'service_line'   => array_values(array_slice(array_filter(array_map('trim', is_array($_GET['sl'] ?? null) ? $_GET['sl'] : explode(',', (string)($_GET['sl'] ?? ''))), fn($v) => $v !== ''), 0, 50)),
     'type'           => trim($_GET['type'] ?? ''),
     'has_link'       => $_GET['link'] ?? '',
     'has_dgb'        => $_GET['dgb'] ?? '',
@@ -264,7 +265,7 @@ $econBadge = fn($v) => match(strtoupper((string)$v)) {
 $active_filters = 0;
 foreach ($f as $k => $v) {
     if ($k === 'sort') continue;
-    if ($v === '' || $v === 0 || $v === null) continue;
+    if ($v === '' || $v === 0 || $v === null || $v === []) continue;
     $active_filters++;
 }
 $active = $active_filters > 0;
@@ -274,7 +275,7 @@ $qs = function(array $over = []) use ($f) {
     $map = [
         'q'=>$f['q'], 'abbr'=>$f['abbr'], 'cref'=>$f['commercial_ref'], 'cliente'=>$f['client_raw'],
         'descr'=>$f['descr'], 'client'=>$f['client_id'], 'company'=>$f['company_id'],
-        'sl'=>$f['service_line'], 'type'=>$f['type'], 'link'=>$f['has_link'], 'dgb'=>$f['has_dgb'], 'prj'=>$f['has_prj'],
+        'sl'=>implode(',', $f['service_line']), 'type'=>$f['type'], 'link'=>$f['has_link'], 'dgb'=>$f['has_dgb'], 'prj'=>$f['has_prj'],
         'status'=>$f['status'], 'commercial'=>$f['commercial'], 'econ'=>$f['econ'], 'econ_today'=>$f['econ_today'],
         'cverify'=>$f['compliance_to_verify'], 'cpre'=>$f['compliance_preauth'],
         'aopen'=>$f['anom_open']?1:'', 'ablocking'=>$f['anom_blocking']?1:'',
@@ -470,9 +471,9 @@ $total_projects = (int)$pdo->query("SELECT COUNT(*) FROM cm_projects")->fetchCol
               <?php foreach($companies as $id=>$n):?><option value="<?=(int)$id?>" <?=$f['company_id']===(int)$id?'selected':''?>><?=h($n)?></option><?php endforeach;?></select></div>
           <div class="form-group"><label>Testo nelle descrizioni</label>
             <input type="text" name="descr" value="<?=h($f['descr'])?>" placeholder="visibile o interna"></div>
-          <div class="form-group"><label>Linea di servizio</label>
-            <select name="sl"><option value="">— tutte —</option>
-              <?php foreach($service_lines as $s):?><option value="<?=h($s)?>" <?=$f['service_line']===$s?'selected':''?>><?=h($s)?></option><?php endforeach;?></select></div>
+          <div class="form-group"><label>Tipo <span class="pm-multi">(linea di servizio · multipla)</span></label>
+            <select name="sl[]" multiple size="4" class="pm-ms" data-placeholder="Tutti">
+              <?php foreach($service_lines as $s):?><option value="<?=h($s)?>" <?=in_array($s, $f['service_line'], true)?'selected':''?>><?=h($s)?></option><?php endforeach;?></select></div>
         </div>
       </div>
 

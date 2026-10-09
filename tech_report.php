@@ -32,7 +32,7 @@ if ($cmx === '') $cmx = null;
 
 $qs = function (array $over = []) use ($f, $tab, $det) {
     $p = ['from' => $f['from'], 'to' => $f['to'], 'ricavo' => $f['ricavo'], 'q' => $f['q'], 'cliente' => $f['cliente'], 'tab' => $tab !== 'tecnici' ? $tab : '', 'det' => $det ? '1' : ''];
-    foreach (['contratti', 'linee', 'codici', 'settori', 'aziende', 'incaricati', 'modalita', 'fasce', 'durate', 'sedi', 'tipologie', 'prov'] as $k)
+    foreach (['contratti', 'linee', 'codici', 'settori', 'aziende', 'incaricati', 'modalita', 'fasce', 'durate', 'sedi', 'tipologie', 'prov', 'tariffe'] as $k)
         if (!empty($f[$k])) $p[$k] = implode(',', $f[$k]);
     if (!empty($f['stati'])) $p['stato_commessa'] = implode(',', $f['stati']);
     $p = array_merge($p, $over);
@@ -85,9 +85,9 @@ $err = '';
 try {
     $D = $TR->data($tab, $f, false);
     $vLin = $m->valori('linea_label'); $vCod = $m->valori('linea_servizio'); $vSet = $m->valori('settore'); $vAz = $m->valori('azienda');
-    $vInc = $m->valori('incaricato'); $vSed = $m->valori('sede_riferimento'); $vTip = $m->valoriTipologie();
+    $vInc = $m->valori('incaricato'); $vSed = $m->valori('sede_riferimento'); $vTip = $m->valoriTipologie(); $vTar = $m->valoriTariffe();
 } catch (Throwable $e) {
-    $err = $e->getMessage(); $D = []; $vLin = $vCod = $vSet = $vAz = $vInc = $vSed = $vTip = [];
+    $err = $e->getMessage(); $D = []; $vLin = $vCod = $vSet = $vAz = $vInc = $vSed = $vTip = $vTar = [];
 }
 
 $GLOBALS['PM_NO_AUTOFILTER'] = true;
@@ -145,7 +145,7 @@ tr.tr-dd>td{background:#fbfdff;padding:4px 10px 10px 28px;white-space:normal}
 
 <?php
   $attivi = ($f['q'] !== '') + ($f['cliente'] !== '') + ($f['ricavo'] !== '');
-  foreach (['contratti', 'stati', 'linee', 'codici', 'settori', 'aziende', 'incaricati', 'modalita', 'fasce', 'durate', 'sedi', 'tipologie', 'prov'] as $k) $attivi += count($f[$k]) > 0 ? 1 : 0;
+  foreach (['contratti', 'stati', 'linee', 'codici', 'settori', 'aziende', 'incaricati', 'modalita', 'fasce', 'durate', 'sedi', 'tipologie', 'prov', 'tariffe'] as $k) $attivi += count($f[$k]) > 0 ? 1 : 0;
 ?>
 <details class="pm-panel" <?= $attivi > 0 ? 'open' : '' ?>>
   <summary><i class="fa-solid fa-chevron-right pm-chev"></i> Filtri
@@ -165,6 +165,10 @@ tr.tr-dd>td{background:#fbfdff;padding:4px 10px 10px 28px;white-space:normal}
           <div class="form-group"><label>Tipologia contratto <span class="pm-multi">(multipla)</span></label>
             <select name="tipologie[]" multiple size="4" class="pm-ms" data-placeholder="Tutte">
               <?php foreach ($vTip as $k => $l): ?><option value="<?= h($k) ?>" <?= in_array($k, $f['tipologie'], true) ? 'selected' : '' ?>><?= h($l) ?></option><?php endforeach; ?></select></div>
+          <div class="form-group"><label>Descrizione tariffa <span class="pm-multi">(multipla)</span></label>
+            <select name="tariffe[]" multiple size="4" class="pm-ms" data-placeholder="Tutte">
+              <?php foreach ($vTar as $v): ?><option value="<?= h($v) ?>" <?= in_array($v, $f['tariffe'], true) ? 'selected' : '' ?>><?= h($v) ?></option><?php endforeach; ?>
+              <?php foreach (array_diff($f['tariffe'], $vTar) as $v): ?><option value="<?= h($v) ?>" selected><?= h($v) ?> · (fuori elenco)</option><?php endforeach; ?></select></div>
           <div class="form-group"><label>Provenienza modulo <span class="pm-multi">(multipla)</span></label>
             <select name="prov[]" multiple size="3" class="pm-ms" data-placeholder="Tutte">
               <?php foreach (ItServiceModel::PROV as $k => $l): ?><option value="<?= $k ?>" <?= in_array($k, $f['prov'], true) ? 'selected' : '' ?>><?= h($l) ?></option><?php endforeach; ?></select></div>
@@ -261,7 +265,7 @@ tr.tr-dd>td{background:#fbfdff;padding:4px 10px 10px 28px;white-space:normal}
           <td class="r"><?= $h0($gg) ?></td><td class="r"><?= $h0($t['giornate_uomo'] ?? 0) ?></td><td class="r"><?= $h2($t['ore'] ?? 0) ?></td><td></td></tr>
       <?php endif; ?>
       </tbody></table></div>
-    <div class="tr-note">N. attività = moduli di intervento · N. ticket = riferimenti ticket distinti · GG lavorabili = lun–ven del periodo esclusi i festivi nazionali · GG uomo lavorati = giorni distinti con almeno un modulo (nel totale del tecnico un giorno lavorato su più linee conta una volta) · Fascia di costo = fascia del tecnico riportata sui moduli.</div>
+    <div class="tr-note">N. attività = moduli di intervento · N. ticket = riferimenti ticket distinti · GG lavorabili = lun–ven del periodo esclusi i festivi nazionali · GG uomo lavorati = giorni distinti con almeno un modulo (nel totale del tecnico un giorno lavorato su più linee conta una volta) · Descrizione tariffa = fascia oraria e unità dei moduli (es. «Fascia C (Ora)»), filtrabile dal pannello.</div>
   </section>
 
   <section class="tr-sec">

@@ -86,7 +86,11 @@ final class ProjectModel
         if (!empty($filters['status']))      { $where[] = "p.operational_status = ?";  $args[] = $filters['status']; }
         if (!empty($filters['commercial']))  { $where[] = "p.commercial_status = ?";   $args[] = $filters['commercial']; }
         if (!empty($filters['type']))        { $where[] = "p.project_type = ?";        $args[] = $filters['type']; }
-        if (!empty($filters['service_line'])){ $where[] = "p.service_line = ?";         $args[] = $filters['service_line']; }
+        // v1.10.29 — «Tipo» (linea di servizio) a selezione multipla: stringa singola o elenco
+        if (!empty($filters['service_line'])) {
+            $sl = array_values(array_filter(array_map('strval', (array)$filters['service_line']), fn($v) => $v !== ''));
+            if ($sl) { $where[] = "p.service_line IN (" . implode(',', array_fill(0, count($sl), '?')) . ")"; foreach ($sl as $v) $args[] = $v; }
+        }
         if (!empty($filters['company_id']))  { $where[] = "p.exec_company_id = ?";      $args[] = (int)$filters['company_id']; }
         if (!empty($filters['client_id']))   { $where[] = "p.client_id = ?";            $args[] = (int)$filters['client_id']; }
         if (isset($filters['value_min']) && $filters['value_min'] !== '' && $filters['value_min'] !== null) { $where[] = "p.value_total >= ?"; $args[] = (float)$filters['value_min']; }

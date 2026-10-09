@@ -3,7 +3,7 @@
  * PortalManager — app/TechReport.php  (v1.10.25; v1.10.28: «Linea di servizio» a destra di «Codice linea» in tutte le tabelle)
  *
  * Relazione Tecnici: dati e report multi-formato (CSV, XLSX, DOCX, PDF e stampa HTML via PmReport) per le due schede
- *   tecnici  — riepilogo per tecnico × codice linea (attività, ticket, giorni lavorabili, giornate-uomo, ore, fascia di costo),
+ *   tecnici  — riepilogo per tecnico × codice linea (attività, ticket, giorni lavorabili, giornate-uomo, ore, descrizione tariffa),
  *              metriche di dettaglio (ordinarie, fuori orario, reperibilità, extra, presso cliente, remoto, smart),
  *              moduli di intervento valorizzati / non valorizzati;
  *   rapporti — rapporti di intervento per tipologia di contratto e per commessa con la provenienza (ticket / riferimento
@@ -22,7 +22,7 @@ final class TechReport
     public const MAX_FILE = 50000;   // moduli nel dettaglio XLSX / CSV
     public const MAX_DOC  = 1500;    // moduli nel dettaglio DOCX / PDF / stampa
 
-    public const H_MAIN = ['Tecnico', 'Codice linea', 'Linea di servizio', 'N. attività', 'N. ticket', 'GG lavorabili', 'GG uomo lavorati', 'N. ore lavorate', 'Fascia di costo'];
+    public const H_MAIN = ['Tecnico', 'Codice linea', 'Linea di servizio', 'N. attività', 'N. ticket', 'GG lavorabili', 'GG uomo lavorati', 'N. ore lavorate', 'Descrizione tariffa'];
     public const H_DET  = ['Tecnico', 'Codice linea', 'Linea di servizio', 'Giornate-uomo', 'Ore cons.', 'Ordinarie', 'Fuori orario', 'Reperib.', 'Extra dich.', 'Presso cl.', 'Remoto', 'Smart'];
 
     public function __construct(private ItServiceModel $m, private bool $eco = false) {}
@@ -66,7 +66,7 @@ final class TechReport
     {
         $r = $x['r']; $sub = $x['tipo'] === 'sub';
         return [$sub ? 'Totale ' . $x['tecnico'] : $x['tecnico'], $sub ? (int)$r['linee'] . ' linee' : (string)$r['codice_linea'], $sub ? '' : (string)($r['linea_label'] ?? ''), (int)$r['attivita'], (int)$r['ticket'],
-                $gg, (int)$r['giornate_uomo'], (float)$r['ore'], (string)($r['fascia_costo'] ?? '')];
+                $gg, (int)$r['giornate_uomo'], (float)$r['ore'], (string)($r['descrizione_tariffa'] ?? '')];
     }
 
     public static function det(array $x): array
@@ -101,7 +101,7 @@ final class TechReport
             $tot = ['Totale', (int)($t['linee'] ?? 0) . ' linee', '', (int)($t['attivita'] ?? 0), (int)($t['ticket'] ?? 0), $gg, (int)($t['giornate_uomo'] ?? 0), (float)($t['ore'] ?? 0), ''];
             $r->table('Riepilogo per tecnico e codice linea', self::H_MAIN, array_merge(array_map(fn($x) => self::main($x, $gg), $d['righe']), $d['righe'] ? [$tot] : []),
                 ['dec' => [3 => 0, 4 => 0, 5 => 0, 6 => 0, 7 => 2], 'right' => [3, 4, 5, 6, 7], 'total' => (bool)$d['righe']]);
-            $r->note('N. attività = moduli di intervento · N. ticket = riferimenti ticket distinti dei moduli · GG lavorabili = giorni lunedì–venerdì del periodo esclusi i festivi nazionali · GG uomo lavorati = giorni distinti con almeno un modulo · Fascia di costo = fascia del tecnico sui moduli. Le righe «Totale» del tecnico contano i giorni una sola volta anche se lavorati su più linee.');
+            $r->note('N. attività = moduli di intervento · N. ticket = riferimenti ticket distinti dei moduli · GG lavorabili = giorni lunedì–venerdì del periodo esclusi i festivi nazionali · GG uomo lavorati = giorni distinti con almeno un modulo · Descrizione tariffa = fascia oraria e unità dei moduli («Fascia C (Ora)»), come nel riepilogo costi della Relazione di Servizio IT. Le righe «Totale» del tecnico contano i giorni una sola volta anche se lavorati su più linee.');
             $totD = ['Totale', (int)($t['linee'] ?? 0) . ' linee', '', (int)($t['giornate_uomo'] ?? 0), (float)($t['ore'] ?? 0), (float)($t['ore_ordinarie'] ?? 0), (float)($t['ore_fuori_orario'] ?? 0),
                      (float)($t['ore_reperibilita'] ?? 0), (float)($t['ore_extra'] ?? 0), (int)($t['presso_cliente'] ?? 0), (int)($t['da_remoto'] ?? 0), (int)($t['smart_working'] ?? 0)];
             $r->table('Metriche di dettaglio', self::H_DET, array_merge(array_map([self::class, 'det'], $d['righe']), $d['righe'] ? [$totD] : []),

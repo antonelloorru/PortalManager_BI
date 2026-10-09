@@ -384,6 +384,13 @@ $rp_page   = max(1, (int)($_GET['rp'] ?? 1));
 $rp_per    = 50;
 $rp_filter = ['q' => trim($_GET['q'] ?? ''), 'approved' => $_GET['appr'] ?? '', 'on_call' => $_GET['rep'] ?? ''];
 $rp        = $model->interventionsPaged($pid, $rp_filter, $rp_per, ($rp_page - 1) * $rp_per);
+// v1.10.29 — Consuntivo: «Descrizione tariffa» (fascia oraria + unità, es. «Fascia C (Ora)») al posto della fascia di costo,
+// stessa formula di Relazione IT, Service Desk e Relazione Tecnici
+$rp_tar = [];
+try {
+    require_once(__DIR__ . '/app/ItServiceModel.php');
+    $rp_tar = (new ItServiceModel($pdo))->tariffePerModuli(array_column($rp['rows'], 'id'));
+} catch (Throwable $e) { $rp_tar = []; }
 $rp_pages  = max(1, (int)ceil($rp['total'] / $rp_per));
 $edit_id   = (int)($_GET['edit_report'] ?? 0);
 $edit_rep  = $edit_id ? $model->intervention($edit_id) : null;
@@ -883,7 +890,7 @@ $eur = fn($v)=> $v===null?'—':number_format((float)$v,2,',','.').' €';
 
     <table class="data-table" style="width:100%;font-size:12px">
       <thead><tr>
-        <th style="width:26px"></th><th>Rapporto / Codice DGB</th><th>Data</th><th>Tecnico</th><th>Fascia</th><th>Ore</th>
+        <th style="width:26px"></th><th>Rapporto / Codice DGB</th><th>Data</th><th>Tecnico</th><th title="Fascia oraria e unità del modulo, come nel riepilogo costi">Descrizione tariffa</th><th>Ore</th>
         <th>Ricavo</th><th>Costo</th><th>Appr.</th><th>Rem.</th><th>Rep.</th><th>Orario</th><?php if($can_edit):?><th></th><?php endif;?>
       </tr></thead>
       <tbody>
@@ -910,7 +917,7 @@ $eur = fn($v)=> $v===null?'—':number_format((float)$v,2,',','.').' €';
             <?php endif; ?></td>
           <td><?=h($ir['report_date'] ?? '—')?></td>
           <td><?=h(trim(($ir['last_name']??'').' '.($ir['first_name']??'')) ?: '⚠ '.($ir['technician_raw']??'—'))?></td>
-          <td><?=h($ir['band_name'] ?? ($ir['band_raw'] ? '⚠ '.$ir['band_raw'] : '—'))?></td>
+          <td><?=h($rp_tar[(int)$ir['id']] ?? '—')?></td>
           <td style="text-align:right"><?=h($ir['quantity_hours'])?></td>
           <td style="text-align:right"><?=$eur($ir['client_revenue_import'])?></td>
           <td style="text-align:right"><?=$eur($ir['company_cost_import'])?></td>
@@ -929,6 +936,7 @@ $eur = fn($v)=> $v===null?'—':number_format((float)$v,2,',','.').' €';
               <div><small style="color:var(--muted)">Ticket</small><br><?=h($ir['ticket'] ?? '—')?></div>
               <div><small style="color:var(--muted)">Tipo servizio</small><br><?=h($ir['service_type'] ?? '—')?></div>
               <div><small style="color:var(--muted)">Settore tecnologico</small><br><?=h($ir['tech_sector'] ?? '—')?></div>
+              <div><small style="color:var(--muted)">Fascia di costo</small><br><?=h($ir['band_name'] ?? ($ir['band_raw'] ? '⚠ '.$ir['band_raw'] : '—'))?></div>
               <div><small style="color:var(--muted)">Inizio → Fine</small><br><?=h($ir['start_at'] ?? '—')?> → <?=h($ir['end_at'] ?? '—')?></div>
               <div><small style="color:var(--muted)">Ore pian./qtà/diff./extra</small><br><?=h($ir['planned_hours'])?> / <strong><?=h($ir['quantity_hours'])?></strong> / <?=h($ir['diff_hours'])?> / <?=h($ir['extra_hours'])?></div>
               <div><small style="color:var(--muted)">Ricavo importato / calcolato</small><br><?=$eur($ir['client_revenue_import'])?> / <span style="color:var(--muted)"><?=$eur($ir['client_revenue_calc'])?></span></div>

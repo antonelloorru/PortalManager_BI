@@ -115,6 +115,8 @@ final class ItServiceModel
             // v1.10.25 — Relazione Tecnici: tipologia di contratto (modello della linea) e provenienza ticket del modulo
             'tipologie' => array_slice($arr($q['tipologie'] ?? []), 0, 50),
             'prov'      => array_values(array_intersect(array_keys(self::PROV), $arr($q['prov'] ?? []))),
+            // v1.10.29 — descrizione tariffa del modulo («Fascia C (Ora)»: fascia oraria + unità di misura)
+            'tariffe'   => array_slice($arr($q['tariffe'] ?? []), 0, 50),
         ];
 
         // dimensioni di raggruppamento, validate contro l'elenco chiuso
@@ -191,6 +193,9 @@ final class ItServiceModel
             $w[] = "COALESCE(NULLIF(s.`modello_contratto`,''),'da_classificare') IN (" . implode(',', array_fill(0, count($f['tipologie']), '?')) . ")";
             foreach ($f['tipologie'] as $v) $a[] = $v;
         }
+        if (!empty($f['tariffe'])) {
+            $w[] = $this->tariffaFiltro($f['tariffe'], $a);
+        }
         if (!empty($f['prov']) && count($f['prov']) < count(self::PROV)) {
             $w[] = "(SELECT " . self::provSql('irp') . " FROM `cm_intervention_reports` irp WHERE irp.`id` = s.`report_id`) IN ('" . implode("','", $f['prov']) . "')";
         }
@@ -256,7 +261,7 @@ final class ItServiceModel
     /** Filtri attivi oltre al periodo (qualunque dimensione). */
     private static function haFiltri(array $f): bool
     {
-        foreach (['linee','codici','settori','aziende','incaricati','modalita','fasce','durate','sedi','contratti','stati','dipendenti','tipologie','prov'] as $k)
+        foreach (['linee','codici','settori','aziende','incaricati','modalita','fasce','durate','sedi','contratti','stati','dipendenti','tipologie','prov','tariffe'] as $k)
             if (!empty($f[$k])) return true;
         if (isset($f['tickets'])) return true;                                       // v1.10.11
         return ($f['ricavo'] ?? '') !== '' || ($f['q'] ?? '') !== '' || ($f['cliente'] ?? '') !== '';
@@ -326,6 +331,7 @@ final class ItServiceModel
         if (($f['q'] ?? '') !== '')       $out[] = 'Ricerca: ' . $f['q'];
         if (($f['cliente'] ?? '') !== '') $out[] = 'Cliente: ' . $f['cliente'];
         if (!empty($f['tipologie'])) $out[] = 'Tipologia contratto: ' . implode(', ', array_map([self::class, 'tipologia'], $f['tipologie']));
+        if (!empty($f['tariffe'])) $out[] = 'Descrizione tariffa: ' . implode(', ', $f['tariffe']);
         if (!empty($f['prov'])) $out[] = 'Provenienza: ' . implode(', ', array_map(fn($k) => self::PROV[$k] ?? $k, $f['prov']));
         return $out;
     }
@@ -1245,17 +1251,82 @@ final class ItServiceModel
         return $n;
     }
 
-    /** Join del rapportino (ticket, fascia di costo) per le letture della Relazione Tecnici. */
+    /**
+     * v1.10.29 — Descrizione tariffa del modulo, stessa formula di v_cm_sd_costi_valorizzati.descrizione_tariffa
+     * (Relazione IT, Service Desk): «Fascia <fascia> (<etichetta unità>)», es. «Fascia C (Ora)», «Fascia D (Giornata)».
+     * Fascia e unità dal perimetro dei giorni (v_cm_it_giorni_base, per report_id). NULL se il modulo non vi compare.
+     */
+    /**
+     * Condizione del filtro «Descrizione tariffa»: semi-join non correlato sul perimetro dei giorni
+     * (una sola lettura della vista / copia, anche senza indice su report_id).
+     */
+    private function tariffaFiltro(array $vals, array &$a): string
+    {
+        foreach ($vals as $v) $a[] = $v;
+        return "s.`report_id` IN (SELECT gbf.`report_id` FROM `{$this->v['v_cm_it_giorni_base']}` gbf
+                                    LEFT JOIN `cm_um_tempi` tmf ON " . self::u('tmf.`um`') . " = " . self::u('gbf.`um`') . "
+                                   WHERE " . self::tariffaExpr('gbf', 'tmf') . " IN (" . implode(',', array_fill(0, count($vals), '?')) . "))";
+    }
+
+    /**
+     * JOIN della descrizione tariffa per modulo (alias tt.descr) limitato al periodo del filtro: tabella derivata
+     * aggregata per report_id, una lettura della vista / copia filtrata per giorno (date già validate da normFilters).
+     */
+    private function tariffaJoin(array $f): string
+    {
+        $d = static fn($x) => preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)$x) ? (string)$x : '1900-01-01';
+        $from = $d($f['from'] ?? ''); $to = preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)($f['to'] ?? '')) ? $f['to'] : '9999-12-31';
+        return " LEFT JOIN (SELECT gbt.`report_id`, MIN(" . self::tariffaExpr('gbt', 'tmt') . ") AS descr
+                              FROM `{$this->v['v_cm_it_giorni_base']}` gbt LEFT JOIN `cm_um_tempi` tmt ON " . self::u('tmt.`um`') . " = " . self::u('gbt.`um`') . "
+                             WHERE gbt.`giorno` BETWEEN '$from' AND '$to' GROUP BY gbt.`report_id`) tt ON tt.`report_id` = s.`report_id` ";
+    }
+
+    /** Descrizione tariffa di un insieme di moduli (Scheda progetto › Consuntivo): [report_id => descrizione]. */
+    public function tariffePerModuli(array $ids): array
+    {
+        $ids = array_values(array_unique(array_filter(array_map('intval', $ids))));
+        if (!$ids) return [];
+        try {
+            $st = $this->pdo->prepare("SELECT gb.`report_id`, MIN(" . self::tariffaExpr('gb', 'tm') . ")
+                                         FROM `{$this->v['v_cm_it_giorni_base']}` gb LEFT JOIN `cm_um_tempi` tm ON " . self::u('tm.`um`') . " = " . self::u('gb.`um`') . "
+                                        WHERE gb.`report_id` IN (" . implode(',', $ids) . ") GROUP BY gb.`report_id`");
+            $st->execute();
+            return array_map('strval', $st->fetchAll(PDO::FETCH_KEY_PAIR));
+        } catch (Throwable $e) { return []; }
+    }
+
+    /** Collazione unica (copie aggiornate e viste possono avere collazioni diverse da cm_um_tempi). */
+    private static function u(string $x): string { return "CONVERT($x USING utf8mb4) COLLATE utf8mb4_unicode_ci"; }
+
+    /** «Fascia <fascia> (<etichetta unità>)» — stessa formula di v_cm_sd_costi_valorizzati.descrizione_tariffa. */
+    public static function tariffaExpr(string $gb, string $tm): string
+    {
+        return "CONCAT('Fascia ', " . self::u("$gb.`fascia`") . ", ' (', COALESCE(" . self::u("$tm.`etichetta`") . ", " . self::u("$gb.`um`") . "), ')')";
+    }
+
+    /** Valori del filtro «Descrizione tariffa», ordinati per fascia e unità (ora, mezza giornata, giornata). */
+    public function valoriTariffe(): array
+    {
+        try {
+            return $this->pdo->query("SELECT " . self::tariffaExpr('gb', 'tm') . " AS d
+                                        FROM `{$this->v['v_cm_it_giorni_base']}` gb LEFT JOIN `cm_um_tempi` tm ON " . self::u('tm.`um`') . " = " . self::u('gb.`um`') . "
+                                       WHERE gb.`fascia` IS NOT NULL AND gb.`fascia` <> ''
+                                       GROUP BY gb.`fascia`, gb.`um`, tm.`etichetta`, tm.`ordine`
+                                       ORDER BY gb.`fascia`, COALESCE(tm.`ordine`, 99)")->fetchAll(PDO::FETCH_COLUMN);
+        } catch (Throwable $e) { return []; }
+    }
+
+    /** Join del rapportino (ticket) per le letture della Relazione Tecnici. */
     private function trJoin(): string
     {
         return " LEFT JOIN `cm_intervention_reports` ir ON ir.`id` = s.`report_id` LEFT JOIN `cm_rate_bands` rbx ON rbx.`id` = ir.`band_id` ";
     }
 
-    /** Colonne aggregate comuni (attività, ticket, giorni, ore, classi, modalità, fascia di costo). */
+    /** Colonne aggregate comuni (attività, ticket, giorni, ore, classi, modalità, descrizione tariffa). */
     private function trSelect(): string
     {
         $c = $this->oreClassi();
-        $fascia = "NULLIF(TRIM(COALESCE(rbx.`band_name`, ir.`band_raw`)),'')";
+        $tar = "tt.`descr`";             // v1.10.29 — al posto della fascia di costo (Junior/Senior/…): tariffaJoin()
         return "COUNT(DISTINCT s.`report_id`)                           AS attivita,
                 COUNT(DISTINCT NULLIF(TRIM(ir.`ticket`),''))             AS ticket,
                 COUNT(DISTINCT CONCAT(s.`incaricato`,'|',s.`giorno`))    AS giornate_uomo,
@@ -1268,7 +1339,7 @@ final class ItServiceModel
                 SUM(s.`modalita` = 'presso cliente')                      AS presso_cliente,
                 SUM(s.`modalita` = 'da remoto')                           AS da_remoto,
                 SUM(s.`modalita` = 'smart working')                       AS smart_working,
-                GROUP_CONCAT(DISTINCT $fascia ORDER BY $fascia SEPARATOR ', ') AS fascia_costo";
+                GROUP_CONCAT(DISTINCT $tar ORDER BY $tar SEPARATOR ', ')  AS descrizione_tariffa";
     }
 
     /**
@@ -1280,7 +1351,7 @@ final class ItServiceModel
     {
         [$w, $a] = $this->where($f);
         $sel = $this->trSelect();
-        $from = "FROM `{$this->v['v_cm_it_servizio']}` s {$this->trJoin()} WHERE $w";
+        $from = "FROM `{$this->v['v_cm_it_servizio']}` s {$this->trJoin()} {$this->tariffaJoin($f)} WHERE $w";
         $st = $this->pdo->prepare("SELECT s.`incaricato` AS tecnico, MIN(s.`incaricato_ordina`) AS ordina,
                                           COALESCE(NULLIF(s.`linea_servizio`,''),'(n.d.)') AS codice_linea, MAX(s.`linea_label`) AS linea_label, $sel
                                      $from GROUP BY s.`incaricato`, codice_linea
