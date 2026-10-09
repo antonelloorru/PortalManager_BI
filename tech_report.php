@@ -1,6 +1,6 @@
 <?php
 /**
- * tech_report.php — Gestione Commesse › Relazione Tecnici (v1.10.25)
+ * tech_report.php — Gestione Commesse › Relazione Tecnici (v1.10.25; v1.10.28: colonna «Linea di servizio» dopo «Codice linea»)
  *
  * Filtri unificati della Relazione di Servizio IT (ItServiceModel::normFilters: contratto, stato commessa, periodo, ricerca,
  * cliente, linea, codice linea, settore, azienda, natura, incaricato, sede, modalità, fascia, durata) + tipologia di contratto
@@ -50,8 +50,8 @@ if (($_GET['ajax'] ?? '') === 'moduli' && $cmx !== null) {
     $n = $m->contaModuli($f, $cmx);
     $rows = $m->rapportiModuli($f, $cmx, 300);
     if (!$rows) { echo '<div class="tr-note">Nessun modulo.</div>'; exit; }
-    echo '<table class="tr-t tr-sub"><thead><tr><th>Modulo</th><th>Data</th><th>Tecnico</th><th>Codice linea</th><th>Modalità</th><th class="r">Ore</th><th>Provenienza</th><th>Ticket</th><th>Attività DGB</th></tr></thead><tbody>';
-    foreach ($rows as $r) echo '<tr><td>' . h($r['modulo']) . '</td><td>' . h($dt($r['giorno'])) . '</td><td>' . h($r['tecnico']) . '</td><td>' . h($r['codice_linea']) . '</td><td>'
+    echo '<table class="tr-t tr-sub"><thead><tr><th>Modulo</th><th>Data</th><th>Tecnico</th><th>Codice linea</th><th>Linea di servizio</th><th>Modalità</th><th class="r">Ore</th><th>Provenienza</th><th>Ticket</th><th>Attività DGB</th></tr></thead><tbody>';
+    foreach ($rows as $r) echo '<tr><td>' . h($r['modulo']) . '</td><td>' . h($dt($r['giorno'])) . '</td><td>' . h($r['tecnico']) . '</td><td>' . h($r['codice_linea']) . '</td><td>' . h((string)($r['linea_label'] ?? '')) . '</td><td>'
         . h(ItServiceModel::etichetta($r['modalita'])) . '</td><td class="r">' . $h2($r['ore']) . '</td><td><span class="tr-pv tr-pv-' . h($r['provenienza']) . '">' . h(ItServiceModel::PROV[$r['provenienza']] ?? $r['provenienza']) . '</span></td><td>'
         . h(mb_strimwidth((string)$r['ticket'], 0, 60, '…')) . '</td><td>' . h((string)$r['attivita_dgb']) . '</td></tr>';
     echo '</tbody></table>';
@@ -246,18 +246,18 @@ tr.tr-dd>td{background:#fbfdff;padding:4px 10px 10px 28px;white-space:normal}
   <section class="tr-sec">
     <h2>Riepilogo per tecnico e codice linea <small><?= count($tl['tecnici']) ?> tecnici · <?= count($tl['righe']) ?> righe</small></h2>
     <div class="tr-wrap"><table class="tr-t">
-      <thead><tr><?php foreach (TechReport::H_MAIN as $i => $hd): ?><th class="<?= in_array($i, [2, 3, 4, 5, 6], true) ? 'r' : '' ?>"><?= h($hd) ?></th><?php endforeach; ?></tr></thead>
+      <thead><tr><?php foreach (TechReport::H_MAIN as $i => $hd): ?><th class="<?= in_array($i, [3, 4, 5, 6, 7], true) ? 'r' : '' ?>"><?= h($hd) ?></th><?php endforeach; ?></tr></thead>
       <tbody>
-      <?php if (!$D['righe']): ?><tr><td colspan="8" class="muted" style="text-align:center;padding:18px">Nessun modulo di intervento nel periodo con i filtri impostati.</td></tr><?php endif; ?>
+      <?php if (!$D['righe']): ?><tr><td colspan="9" class="muted" style="text-align:center;padding:18px">Nessun modulo di intervento nel periodo con i filtri impostati.</td></tr><?php endif; ?>
       <?php $prev = null; foreach ($D['righe'] as $x): $v = TechReport::main($x, $gg); $sub = $x['tipo'] === 'sub'; $first = !$sub && $x['tecnico'] !== $prev; $prev = $x['tecnico']; ?>
         <tr class="<?= $sub ? 'sub' : ($first ? 'first' : '') ?>">
-          <td><?= $sub || $first ? h($v[0]) : '<span class="muted">〃</span>' ?></td><td><?= h($v[1]) ?></td>
-          <td class="r"><?= $h0($v[2]) ?></td><td class="r"><?= $h0($v[3]) ?></td><td class="r"><?= $h0($v[4]) ?></td>
-          <td class="r"><?= $h0($v[5]) ?></td><td class="r"><?= $h2($v[6]) ?></td><td><?= h($v[7]) ?></td>
+          <td><?= $sub || $first ? h($v[0]) : '<span class="muted">〃</span>' ?></td><td><?= h($v[1]) ?></td><td><?= h($v[2]) ?></td>
+          <td class="r"><?= $h0($v[3]) ?></td><td class="r"><?= $h0($v[4]) ?></td><td class="r"><?= $h0($v[5]) ?></td>
+          <td class="r"><?= $h0($v[6]) ?></td><td class="r"><?= $h2($v[7]) ?></td><td><?= h($v[8]) ?></td>
         </tr>
       <?php endforeach; ?>
       <?php if ($D['righe']): ?>
-        <tr class="tot"><td>Totale</td><td><?= $h0($t['linee'] ?? 0) ?> linee</td><td class="r"><?= $h0($t['attivita'] ?? 0) ?></td><td class="r"><?= $h0($t['ticket'] ?? 0) ?></td>
+        <tr class="tot"><td>Totale</td><td><?= $h0($t['linee'] ?? 0) ?> linee</td><td></td><td class="r"><?= $h0($t['attivita'] ?? 0) ?></td><td class="r"><?= $h0($t['ticket'] ?? 0) ?></td>
           <td class="r"><?= $h0($gg) ?></td><td class="r"><?= $h0($t['giornate_uomo'] ?? 0) ?></td><td class="r"><?= $h2($t['ore'] ?? 0) ?></td><td></td></tr>
       <?php endif; ?>
       </tbody></table></div>
@@ -267,18 +267,18 @@ tr.tr-dd>td{background:#fbfdff;padding:4px 10px 10px 28px;white-space:normal}
   <section class="tr-sec">
     <h2>Metriche di dettaglio <small>ore in h · Presso cl. / Remoto / Smart = n. interventi</small></h2>
     <div class="tr-wrap"><table class="tr-t">
-      <thead><tr><?php foreach (TechReport::H_DET as $i => $hd): ?><th class="<?= $i >= 2 ? 'r' : '' ?>"><?= h($hd) ?></th><?php endforeach; ?></tr></thead>
+      <thead><tr><?php foreach (TechReport::H_DET as $i => $hd): ?><th class="<?= $i >= 3 ? 'r' : '' ?>"><?= h($hd) ?></th><?php endforeach; ?></tr></thead>
       <tbody>
       <?php $prev = null; foreach ($D['righe'] as $x): $v = TechReport::det($x); $sub = $x['tipo'] === 'sub'; $first = !$sub && $x['tecnico'] !== $prev; $prev = $x['tecnico']; ?>
         <tr class="<?= $sub ? 'sub' : ($first ? 'first' : '') ?>">
-          <td><?= $sub || $first ? h($v[0]) : '<span class="muted">〃</span>' ?></td><td><?= h($v[1]) ?></td>
-          <td class="r"><?= $h0($v[2]) ?></td>
-          <?php for ($i = 3; $i <= 7; $i++): ?><td class="r<?= (float)$v[$i] == 0 ? ' muted' : '' ?>"><?= $h2($v[$i]) ?></td><?php endfor; ?>
-          <?php for ($i = 8; $i <= 10; $i++): ?><td class="r<?= (int)$v[$i] === 0 ? ' muted' : '' ?>"><?= $h0($v[$i]) ?></td><?php endfor; ?>
+          <td><?= $sub || $first ? h($v[0]) : '<span class="muted">〃</span>' ?></td><td><?= h($v[1]) ?></td><td><?= h($v[2]) ?></td>
+          <td class="r"><?= $h0($v[3]) ?></td>
+          <?php for ($i = 4; $i <= 8; $i++): ?><td class="r<?= (float)$v[$i] == 0 ? ' muted' : '' ?>"><?= $h2($v[$i]) ?></td><?php endfor; ?>
+          <?php for ($i = 9; $i <= 11; $i++): ?><td class="r<?= (int)$v[$i] === 0 ? ' muted' : '' ?>"><?= $h0($v[$i]) ?></td><?php endfor; ?>
         </tr>
       <?php endforeach; ?>
       <?php if ($D['righe']): ?>
-        <tr class="tot"><td>Totale</td><td><?= $h0($t['linee'] ?? 0) ?> linee</td><td class="r"><?= $h0($t['giornate_uomo'] ?? 0) ?></td>
+        <tr class="tot"><td>Totale</td><td><?= $h0($t['linee'] ?? 0) ?> linee</td><td></td><td class="r"><?= $h0($t['giornate_uomo'] ?? 0) ?></td>
           <?php foreach (['ore', 'ore_ordinarie', 'ore_fuori_orario', 'ore_reperibilita', 'ore_extra'] as $k): ?><td class="r"><?= $h2($t[$k] ?? 0) ?></td><?php endforeach; ?>
           <?php foreach (['presso_cliente', 'da_remoto', 'smart_working'] as $k): ?><td class="r"><?= $h0($t[$k] ?? 0) ?></td><?php endforeach; ?></tr>
       <?php endif; ?>
@@ -351,7 +351,7 @@ tr.tr-dd>td{background:#fbfdff;padding:4px 10px 10px 28px;white-space:normal}
   <section class="tr-sec">
     <h2>Per commessa <small><?= $h0(count($cm)) ?> commesse · apri una riga per i moduli; la provenienza è evidenziata</small></h2>
     <div class="tr-wrap"><table class="tr-t" id="trCm">
-      <thead><tr><th></th><th>Commessa</th><th>Denominazione</th><th>Cliente</th><th>Codice linea</th><th>Tipologia</th><th class="r">Moduli</th><th class="r">Ticket (codice)</th><th class="r">Rif. libero</th><th class="r">Da commessa</th><th class="r">Tecnici</th><th class="r">Ore</th><th>Periodo</th><?php if ($can_export): ?><th>Export</th><?php endif; ?></tr></thead>
+      <thead><tr><th></th><th>Commessa</th><th>Denominazione</th><th>Cliente</th><th>Codice linea</th><th>Linea di servizio</th><th>Tipologia</th><th class="r">Moduli</th><th class="r">Ticket (codice)</th><th class="r">Rif. libero</th><th class="r">Da commessa</th><th class="r">Tecnici</th><th class="r">Ore</th><th>Periodo</th><?php if ($can_export): ?><th>Export</th><?php endif; ?></tr></thead>
       <tbody>
       <?php foreach ($cm as $x): $code = (string)$x['commessa']; ?>
         <tr data-c="<?= h($code) ?>">
@@ -359,7 +359,7 @@ tr.tr-dd>td{background:#fbfdff;padding:4px 10px 10px 28px;white-space:normal}
           <td><?php if ($can_pd && (int)$x['project_id'] > 0): ?><a href="<?= url_safe('project_dashboard', ['id' => (int)$x['project_id']]) ?>" title="Scheda commessa"><?= h($code) ?></a><?php else: ?><?= h($code) ?><?php endif; ?></td>
           <td title="<?= h((string)$x['denominazione']) ?>"><?= h(mb_strimwidth((string)$x['denominazione'], 0, 42, '…')) ?></td>
           <td title="<?= h((string)$x['cliente']) ?>"><?= h(mb_strimwidth((string)$x['cliente'], 0, 32, '…')) ?></td>
-          <td><?= h((string)$x['codice_linea']) ?></td><td><?= h(ItServiceModel::tipologia($x['tipologia'])) ?></td>
+          <td><?= h((string)$x['codice_linea']) ?></td><td title="<?= h((string)($x['linea_label'] ?? '')) ?>"><?= h(mb_strimwidth((string)($x['linea_label'] ?? ''), 0, 34, '…')) ?></td><td><?= h(ItServiceModel::tipologia($x['tipologia'])) ?></td>
           <td class="r"><?= $h0($x['moduli']) ?></td>
           <td class="r"><?= (int)$x['da_ticket'] ? '<span class="tr-pv tr-pv-ticket">' . $h0($x['da_ticket']) . '</span>' : '<span class="muted">0</span>' ?></td>
           <td class="r"><?= (int)$x['da_testo'] ? '<span class="tr-pv tr-pv-testo">' . $h0($x['da_testo']) . '</span>' : '<span class="muted">0</span>' ?></td>
@@ -368,7 +368,7 @@ tr.tr-dd>td{background:#fbfdff;padding:4px 10px 10px 28px;white-space:normal}
           <?php if ($can_export): ?><td style="font-size:11px"><a href="<?= $qs(['rep' => 'xlsx', 'commessa' => $code]) ?>" title="Moduli della commessa in XLSX">XLSX</a> · <a href="<?= $qs(['rep' => 'csv', 'commessa' => $code]) ?>">CSV</a> · <a href="<?= $qs(['rep' => 'pdf', 'commessa' => $code]) ?>">PDF</a></td><?php endif; ?>
         </tr>
       <?php endforeach; ?>
-      <?php if ($cm): ?><tr class="tot"><td></td><td>Totale</td><td colspan="4"><?= $h0(count($cm)) ?> commesse</td><td class="r"><?= $h0($S($cm, 'moduli')) ?></td><td class="r"><?= $h0($S($cm, 'da_ticket')) ?></td><td class="r"><?= $h0($S($cm, 'da_testo')) ?></td><td class="r"><?= $h0($S($cm, 'da_commessa')) ?></td><td></td><td class="r"><?= $h2($S($cm, 'ore')) ?></td><td></td><?php if ($can_export): ?><td></td><?php endif; ?></tr><?php endif; ?>
+      <?php if ($cm): ?><tr class="tot"><td></td><td>Totale</td><td colspan="5"><?= $h0(count($cm)) ?> commesse</td><td class="r"><?= $h0($S($cm, 'moduli')) ?></td><td class="r"><?= $h0($S($cm, 'da_ticket')) ?></td><td class="r"><?= $h0($S($cm, 'da_testo')) ?></td><td class="r"><?= $h0($S($cm, 'da_commessa')) ?></td><td></td><td class="r"><?= $h2($S($cm, 'ore')) ?></td><td></td><?php if ($can_export): ?><td></td><?php endif; ?></tr><?php endif; ?>
       </tbody></table></div>
     <div class="tr-note">Provenienza dal campo ticket del modulo: <span class="tr-pv tr-pv-ticket">Ticket (codice)</span> riporta un codice ticket (es. WTS_000000070) · <span class="tr-pv tr-pv-testo">Riferimento libero</span> campo compilato con un testo · <span class="tr-pv tr-pv-commessa">Da commessa</span> nessun ticket, modulo generato dalla commessa.</div>
   </section>

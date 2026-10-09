@@ -1,6 +1,6 @@
 <?php
 /**
- * PortalManager — app/TechReport.php  (v1.10.25)
+ * PortalManager — app/TechReport.php  (v1.10.25; v1.10.28: «Linea di servizio» a destra di «Codice linea» in tutte le tabelle)
  *
  * Relazione Tecnici: dati e report multi-formato (CSV, XLSX, DOCX, PDF e stampa HTML via PmReport) per le due schede
  *   tecnici  — riepilogo per tecnico × codice linea (attività, ticket, giorni lavorabili, giornate-uomo, ore, fascia di costo),
@@ -22,8 +22,8 @@ final class TechReport
     public const MAX_FILE = 50000;   // moduli nel dettaglio XLSX / CSV
     public const MAX_DOC  = 1500;    // moduli nel dettaglio DOCX / PDF / stampa
 
-    public const H_MAIN = ['Tecnico', 'Codice linea', 'N. attività', 'N. ticket', 'GG lavorabili', 'GG uomo lavorati', 'N. ore lavorate', 'Fascia di costo'];
-    public const H_DET  = ['Tecnico', 'Codice linea', 'Giornate-uomo', 'Ore cons.', 'Ordinarie', 'Fuori orario', 'Reperib.', 'Extra dich.', 'Presso cl.', 'Remoto', 'Smart'];
+    public const H_MAIN = ['Tecnico', 'Codice linea', 'Linea di servizio', 'N. attività', 'N. ticket', 'GG lavorabili', 'GG uomo lavorati', 'N. ore lavorate', 'Fascia di costo'];
+    public const H_DET  = ['Tecnico', 'Codice linea', 'Linea di servizio', 'Giornate-uomo', 'Ore cons.', 'Ordinarie', 'Fuori orario', 'Reperib.', 'Extra dich.', 'Presso cl.', 'Remoto', 'Smart'];
 
     public function __construct(private ItServiceModel $m, private bool $eco = false) {}
 
@@ -65,14 +65,14 @@ final class TechReport
     public static function main(array $x, int $gg): array
     {
         $r = $x['r']; $sub = $x['tipo'] === 'sub';
-        return [$sub ? 'Totale ' . $x['tecnico'] : $x['tecnico'], $sub ? (int)$r['linee'] . ' linee' : (string)$r['codice_linea'], (int)$r['attivita'], (int)$r['ticket'],
+        return [$sub ? 'Totale ' . $x['tecnico'] : $x['tecnico'], $sub ? (int)$r['linee'] . ' linee' : (string)$r['codice_linea'], $sub ? '' : (string)($r['linea_label'] ?? ''), (int)$r['attivita'], (int)$r['ticket'],
                 $gg, (int)$r['giornate_uomo'], (float)$r['ore'], (string)($r['fascia_costo'] ?? '')];
     }
 
     public static function det(array $x): array
     {
         $r = $x['r']; $sub = $x['tipo'] === 'sub';
-        return [$sub ? 'Totale ' . $x['tecnico'] : $x['tecnico'], $sub ? (int)$r['linee'] . ' linee' : (string)$r['codice_linea'], (int)$r['giornate_uomo'], (float)$r['ore'],
+        return [$sub ? 'Totale ' . $x['tecnico'] : $x['tecnico'], $sub ? (int)$r['linee'] . ' linee' : (string)$r['codice_linea'], $sub ? '' : (string)($r['linea_label'] ?? ''), (int)$r['giornate_uomo'], (float)$r['ore'],
                 (float)$r['ore_ordinarie'], (float)$r['ore_fuori_orario'], (float)$r['ore_reperibilita'], (float)$r['ore_extra'],
                 (int)$r['presso_cliente'], (int)$r['da_remoto'], (int)$r['smart_working']];
     }
@@ -98,14 +98,14 @@ final class TechReport
                 ['label' => 'Giornate-uomo', 'value' => $n0($t['giornate_uomo'] ?? 0), 'color' => '7C3AED'],
                 ['label' => 'Ore lavorate', 'value' => $n2($t['ore'] ?? 0), 'color' => '16A34A', 'sub' => $n2($t['ore_fuori_orario'] ?? 0) . ' h fuori orario'],
             ]);
-            $tot = ['Totale', (int)($t['linee'] ?? 0) . ' linee', (int)($t['attivita'] ?? 0), (int)($t['ticket'] ?? 0), $gg, (int)($t['giornate_uomo'] ?? 0), (float)($t['ore'] ?? 0), ''];
+            $tot = ['Totale', (int)($t['linee'] ?? 0) . ' linee', '', (int)($t['attivita'] ?? 0), (int)($t['ticket'] ?? 0), $gg, (int)($t['giornate_uomo'] ?? 0), (float)($t['ore'] ?? 0), ''];
             $r->table('Riepilogo per tecnico e codice linea', self::H_MAIN, array_merge(array_map(fn($x) => self::main($x, $gg), $d['righe']), $d['righe'] ? [$tot] : []),
-                ['dec' => [2 => 0, 3 => 0, 4 => 0, 5 => 0, 6 => 2], 'right' => [2, 3, 4, 5, 6], 'total' => (bool)$d['righe']]);
+                ['dec' => [3 => 0, 4 => 0, 5 => 0, 6 => 0, 7 => 2], 'right' => [3, 4, 5, 6, 7], 'total' => (bool)$d['righe']]);
             $r->note('N. attività = moduli di intervento · N. ticket = riferimenti ticket distinti dei moduli · GG lavorabili = giorni lunedì–venerdì del periodo esclusi i festivi nazionali · GG uomo lavorati = giorni distinti con almeno un modulo · Fascia di costo = fascia del tecnico sui moduli. Le righe «Totale» del tecnico contano i giorni una sola volta anche se lavorati su più linee.');
-            $totD = ['Totale', (int)($t['linee'] ?? 0) . ' linee', (int)($t['giornate_uomo'] ?? 0), (float)($t['ore'] ?? 0), (float)($t['ore_ordinarie'] ?? 0), (float)($t['ore_fuori_orario'] ?? 0),
+            $totD = ['Totale', (int)($t['linee'] ?? 0) . ' linee', '', (int)($t['giornate_uomo'] ?? 0), (float)($t['ore'] ?? 0), (float)($t['ore_ordinarie'] ?? 0), (float)($t['ore_fuori_orario'] ?? 0),
                      (float)($t['ore_reperibilita'] ?? 0), (float)($t['ore_extra'] ?? 0), (int)($t['presso_cliente'] ?? 0), (int)($t['da_remoto'] ?? 0), (int)($t['smart_working'] ?? 0)];
             $r->table('Metriche di dettaglio', self::H_DET, array_merge(array_map([self::class, 'det'], $d['righe']), $d['righe'] ? [$totD] : []),
-                ['dec' => [2 => 0, 3 => 2, 4 => 2, 5 => 2, 6 => 2, 7 => 2, 8 => 0, 9 => 0, 10 => 0], 'right' => [2, 3, 4, 5, 6, 7, 8, 9, 10], 'total' => (bool)$d['righe']]);
+                ['dec' => [3 => 0, 4 => 2, 5 => 2, 6 => 2, 7 => 2, 8 => 2, 9 => 0, 10 => 0, 11 => 0], 'right' => [3, 4, 5, 6, 7, 8, 9, 10, 11], 'total' => (bool)$d['righe']]);
             $r->note('Ore in ore; Ordinarie + Fuori orario + Reperib. + non classificate = Ore cons. (stessa regola della Relazione di Servizio IT). Extra dich. = ore extra dichiarate sul modulo. Presso cl., Remoto, Smart = numero di interventi per modalità.');
 
             $v = $d['val']; $hv = ['Moduli di intervento', 'Moduli', 'Ore', 'Giornate-uomo', 'Tecnici', 'Commesse'];
@@ -151,21 +151,21 @@ final class TechReport
                 ['dec' => [6 => 1, 9 => 2], 'right' => [1, 2, 3, 4, 5, 6, 7, 8, 9], 'total' => (bool)$rows]);
         }
         $cm = $d['commesse'];
-        $rows = array_map(fn($x) => [(string)$x['commessa'], (string)($x['denominazione'] ?? ''), (string)$x['cliente'], (string)$x['codice_linea'], ItServiceModel::tipologia($x['tipologia']),
+        $rows = array_map(fn($x) => [(string)$x['commessa'], (string)($x['denominazione'] ?? ''), (string)$x['cliente'], (string)$x['codice_linea'], (string)($x['linea_label'] ?? ''), ItServiceModel::tipologia($x['tipologia']),
                                      (int)$x['moduli'], (int)$x['da_ticket'], (int)$x['da_testo'], (int)$x['da_commessa'], (int)$x['ticket'], (int)$x['tecnici'], (float)$x['ore'],
                                      $x['dal'] ? date('d/m/Y', strtotime($x['dal'])) : '', $x['al'] ? date('d/m/Y', strtotime($x['al'])) : ''], $cm);
-        if (count($rows) > 1) $rows[] = ['Totale', count($cm) . ' commesse', '', '', '', (int)$sum($cm, 'moduli'), (int)$sum($cm, 'da_ticket'), (int)$sum($cm, 'da_testo'), (int)$sum($cm, 'da_commessa'), null, null, round($sum($cm, 'ore'), 2), '', ''];
-        $r->table($commessa !== null ? 'Commessa' : 'Per commessa', ['Commessa', 'Denominazione', 'Cliente', 'Codice linea', 'Tipologia', 'Moduli', 'Ticket (codice)', 'Rif. libero', 'Da commessa', 'Ticket distinti', 'Tecnici', 'Ore', 'Dal', 'Al'],
-            $rows, ['dec' => [11 => 2], 'right' => [5, 6, 7, 8, 9, 10, 11], 'total' => count($rows) > 1]);
+        if (count($rows) > 1) $rows[] = ['Totale', count($cm) . ' commesse', '', '', '', '', (int)$sum($cm, 'moduli'), (int)$sum($cm, 'da_ticket'), (int)$sum($cm, 'da_testo'), (int)$sum($cm, 'da_commessa'), null, null, round($sum($cm, 'ore'), 2), '', ''];
+        $r->table($commessa !== null ? 'Commessa' : 'Per commessa', ['Commessa', 'Denominazione', 'Cliente', 'Codice linea', 'Linea di servizio', 'Tipologia', 'Moduli', 'Ticket (codice)', 'Rif. libero', 'Da commessa', 'Ticket distinti', 'Tecnici', 'Ore', 'Dal', 'Al'],
+            $rows, ['dec' => [12 => 2], 'right' => [6, 7, 8, 9, 10, 11, 12], 'total' => count($rows) > 1]);
         if ($d['moduli']) {
             $cap = in_array($fmt, ['docx', 'pdf', 'print'], true) ? self::MAX_DOC : self::MAX_FILE;
             $mm = array_slice($d['moduli'], 0, $cap);
             if ($d['n_moduli'] > count($mm)) $r->note('Dettaglio moduli: primi ' . $n0(count($mm)) . ' su ' . $n0($d['n_moduli']) . ($cap === self::MAX_DOC ? ' (elenco completo in XLSX e CSV).' : '.'));
-            $r->table('Dettaglio moduli di intervento', ['Modulo', 'Data', 'Commessa', 'Cliente', 'Tecnico', 'Codice linea', 'Tipologia', 'Modalità', 'Ore', 'Provenienza', 'Ticket', 'Attività DGB'],
+            $r->table('Dettaglio moduli di intervento', ['Modulo', 'Data', 'Commessa', 'Cliente', 'Tecnico', 'Codice linea', 'Linea di servizio', 'Tipologia', 'Modalità', 'Ore', 'Provenienza', 'Ticket', 'Attività DGB'],
                 array_map(fn($x) => [(string)$x['modulo'], $x['giorno'] ? date('d/m/Y', strtotime($x['giorno'])) : '', (string)$x['commessa'], (string)$x['cliente'], (string)$x['tecnico'],
-                                     (string)$x['codice_linea'], ItServiceModel::tipologia($x['tipologia']), ItServiceModel::etichetta($x['modalita']), (float)$x['ore'],
+                                     (string)$x['codice_linea'], (string)($x['linea_label'] ?? ''), ItServiceModel::tipologia($x['tipologia']), ItServiceModel::etichetta($x['modalita']), (float)$x['ore'],
                                      ItServiceModel::PROV[$x['provenienza']] ?? $x['provenienza'], mb_substr((string)$x['ticket'], 0, 80), (string)$x['attivita_dgb']], $mm),
-                ['dec' => [8 => 2], 'right' => [8]]);
+                ['dec' => [9 => 2], 'right' => [9]]);
         }
         return $r;
     }

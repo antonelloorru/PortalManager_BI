@@ -1350,7 +1350,7 @@ final class ItServiceModel
     {
         [$w, $a] = $this->where($f);
         $pv = self::provSql('ir');
-        $st = $this->pdo->prepare("SELECT s.`commessa`, MAX(s.`cliente`) AS cliente, MAX(s.`linea_servizio`) AS codice_linea,
+        $st = $this->pdo->prepare("SELECT s.`commessa`, MAX(s.`cliente`) AS cliente, MAX(s.`linea_servizio`) AS codice_linea, MAX(s.`linea_label`) AS linea_label,
                     COALESCE(NULLIF(MAX(s.`modello_contratto`),''),'da_classificare') AS tipologia,
                     (SELECT MIN(pp.`id`) FROM `cm_projects` pp WHERE pp.`project_code` = s.`commessa`) AS project_id,
                     (SELECT MIN(COALESCE(NULLIF(pp.`description`,''), pp.`name`)) FROM `cm_projects` pp WHERE pp.`project_code` = s.`commessa`) AS denominazione,
@@ -1372,7 +1372,7 @@ final class ItServiceModel
         [$w, $a] = $this->where($f);
         if ($commessa !== null) { $w .= " AND s.`commessa` = ?"; $a[] = $commessa; }
         $st = $this->pdo->prepare("SELECT s.`report_id`, s.`modulo`, s.`giorno`, s.`commessa`, s.`cliente`, s.`incaricato` AS tecnico,
-                    s.`linea_servizio` AS codice_linea, COALESCE(NULLIF(s.`modello_contratto`,''),'da_classificare') AS tipologia,
+                    s.`linea_servizio` AS codice_linea, s.`linea_label`, COALESCE(NULLIF(s.`modello_contratto`,''),'da_classificare') AS tipologia,
                     s.`modalita`, ROUND(s.`ore`, 2) AS ore, NULLIF(TRIM(ir.`ticket`),'') AS ticket, " . self::provSql('ir') . " AS provenienza,
                     ir.`dgb_activity_code` AS attivita_dgb
                FROM `{$this->v['v_cm_it_servizio']}` s {$this->trJoin()} WHERE $w
