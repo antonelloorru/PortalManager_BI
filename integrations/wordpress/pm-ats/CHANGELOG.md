@@ -5,12 +5,21 @@ Versioning semantico `MAJOR.MINOR.PATCH`. Allineati a ogni rilascio: header `Ver
 
 | Costante | Valore | Significato |
 |---|---|---|
-| PM_ATS_VERSION | 1.3.4 | versione del plugin |
+| PM_ATS_VERSION | 1.3.5 | versione del plugin |
 | PM_ATS_API_VERSION | 1 | protocollo REST `pm-ats/v1` (cambia solo con modifiche incompatibili) |
 | PM_ATS_DB_VERSION | 1 | schema tabelle `pm_ats_applications`, `pm_ats_log` |
-| PM_ATS_SETTINGS_VERSION | 7 | schema dell'opzione `pm_ats_settings` |
+| PM_ATS_SETTINGS_VERSION | 8 | schema dell'opzione `pm_ats_settings` |
 | PM_ATS_TEMPLATE_VERSION | 1.3.4 | template sovrascrivibili dal tema |
 | PM_ATS_MIN_PM | 1.10.20 | PortalManager minimo per tutte le funzioni |
+
+## 1.3.5 — 2026-10-09 (PortalManager v1.10.37)
+- **Testata a tutta larghezza della finestra** (`wt_hero_width`, schema impostazioni 8):
+  - causa: con il codice breve dentro una riga/colonna del tema (Divi: riga 80%, max 1080 px) la testata, larga il 100% del contenitore, restava a 1080 px anche su finestre più ampie;
+  - `window` (predefinito): classe `.pm-ats-wt-hero-full`, larghezza = area utile della finestra (`clientWidth`, senza barra di scorrimento) e margine sinistro = −scostamento reale dal bordo, calcolati da `pm-ats.js` a caricamento e ridimensionamento (`resize`, `ResizeObserver`); senza JavaScript vale `calc(50% − 50vw)`;
+  - altezza della fascia `cover`, corpo del titolo e spaziature proporzionali alla larghezza della testata (non più del contenitore);
+  - gli antenati con `overflow:hidden` vengono marcati `.pm-ats-wt-hero-host` (`overflow:visible`) per non tagliare la testata;
+  - `container`: comportamento della 1.3.4 (larghezza del contenitore).
+- Impostazioni › Aspetto › Sezione di testata: selettore «Larghezza».
 
 ## 1.3.4 — 2026-10-07 (PortalManager v1.10.23)
 - **Testata «Lavora con noi» adattiva** (`PM_ATS_Public::heroHtml`, `wt_hero_fit`):

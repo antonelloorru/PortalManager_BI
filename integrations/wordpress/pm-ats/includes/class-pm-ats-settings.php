@@ -48,6 +48,7 @@ final class PM_ATS_Settings
             'wt_hero_image'      => '',
             'wt_hero_image_id'   => 0,             // v1.3.4: allegato della Libreria media (srcset); 0 = URL esterno
             'wt_hero_fit'        => 'scale',       // v1.3.4: scale = immagine intera proporzionale alla finestra | cover = fascia ritagliata
+            'wt_hero_width'      => 'window',      // v1.3.5: window = testata a tutta larghezza della finestra | container = larghezza del contenitore
             'wt_title'           => 'Unisciti a {We}Tech\'s!',   // {testo} = evidenziato con il colore d'accento
             'wt_intro'           => 'Siamo sempre alla ricerca di talenti motivati e appassionati di tecnologia. Scopri le posizioni aperte e inviaci la tua candidatura attraverso il modulo qui sotto.',
             'wt_list_title'      => 'Posizioni Aperte',
@@ -88,7 +89,7 @@ final class PM_ATS_Settings
         'pagina'      => ['list_page_id', 'jobs_slug', 'auto_form', 'allow_spontaneous', 'phone_required', 'show_salary', 'privacy_url', 'privacy_version',
                           'cv_types', 'cv_max_mb', 'rate_per_day', 'min_fill_seconds', 'notify_email', 'confirm_candidate'],
         'aspetto'     => ['color_primary', 'color_primary_text', 'color_text', 'color_muted', 'color_card', 'color_border', 'radius', 'font_family', 'layout', 'per_page', 'custom_css',
-                          'color_title', 'color_accent', 'wt_list_mode', 'hide_sidebar', 'page_title_mode', 'page_title_text', 'wt_hero', 'wt_hero_title', 'wt_hero_image', 'wt_hero_image_id', 'wt_hero_fit', 'wt_title', 'wt_intro', 'wt_list_title', 'wt_form_title'],
+                          'color_title', 'color_accent', 'wt_list_mode', 'hide_sidebar', 'page_title_mode', 'page_title_text', 'wt_hero', 'wt_hero_title', 'wt_hero_image', 'wt_hero_image_id', 'wt_hero_fit', 'wt_hero_width', 'wt_title', 'wt_intro', 'wt_list_title', 'wt_form_title'],
         'dati'        => ['company_name', 'company_logo', 'purge_after_ack', 'retention_synced', 'retention_pending', 'remove_on_uninstall'],
     ];
     public const CHECKBOXES = ['auto_form', 'allow_spontaneous', 'phone_required', 'show_salary', 'confirm_candidate', 'purge_after_ack', 'remove_on_uninstall', 'wt_hero', 'hide_sidebar'];
@@ -169,6 +170,7 @@ final class PM_ATS_Settings
         $o['wt_hero_image_id']  = max(0, (int)($in['wt_hero_image_id'] ?? 0));
         if ($o['wt_hero_image'] === '' || ($o['wt_hero_image_id'] > 0 && (!wp_attachment_is_image($o['wt_hero_image_id']) || !current_user_can('read_post', $o['wt_hero_image_id'])))) $o['wt_hero_image_id'] = 0;
         $o['wt_hero_fit']       = in_array($in['wt_hero_fit'] ?? '', ['scale', 'cover'], true) ? $in['wt_hero_fit'] : 'scale';
+        $o['wt_hero_width']     = in_array($in['wt_hero_width'] ?? '', ['window', 'container'], true) ? $in['wt_hero_width'] : 'window';
         foreach (['wt_hero_title', 'wt_title', 'wt_list_title', 'wt_form_title'] as $k) $o[$k] = mb_substr(sanitize_text_field((string)($in[$k] ?? $d[$k])), 0, 150);
         $o['wt_intro']          = mb_substr(sanitize_textarea_field((string)($in['wt_intro'] ?? $d['wt_intro'])), 0, 2000);
         $o['per_page']          = max(1, min(100, (int)($in['per_page'] ?? 12)));

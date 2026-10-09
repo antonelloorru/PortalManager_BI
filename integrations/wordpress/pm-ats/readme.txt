@@ -3,7 +3,7 @@ Contributors: portalmanager
 Requires at least: 6.0
 Tested up to: 6.8
 Requires PHP: 8.0
-Stable tag: 1.3.4
+Stable tag: 1.3.5
 License: Proprietary
 
 Pubblica sul sito le posizioni aperte gestite in PortalManager e raccoglie le candidature con CV.
@@ -88,6 +88,10 @@ Configurazione guidata, impostazioni a schede, codice di connessione per PortalM
 Le installazioni 1.0.x già configurate non devono ripetere la configurazione.
 
 == Changelog ==
+
+= 1.3.5 =
+* Testata «Lavora con noi» a tutta larghezza della finestra del browser anche quando il codice breve è dentro una riga o colonna del tema (es. Divi 80%, max 1080 px); altezza e titolo proporzionali alla finestra.
+* Impostazioni › Aspetto › Sezione di testata: scelta «Larghezza: tutta la finestra» (predefinita) o «contenitore della pagina».
 
 = 1.3.4 =
 * Testata «Lavora con noi» adattiva: immagine intera a larghezza 100% e altezza proporzionale (predefinito) o fascia proporzionale ritagliata; titolo con corpo fluido; srcset dalla Libreria media.

@@ -1,4 +1,4 @@
-/*! PortalManager ATS — pm-ats.js · @version 1.3.0 */
+/*! PortalManager ATS — pm-ats.js · @version 1.3.5 */
 /* PortalManager ATS — miglioramenti progressivi del modulo (il modulo funziona anche senza JavaScript). */
 (function () {
   'use strict';
@@ -83,4 +83,32 @@
   // porta in vista l'esito dopo il redirect
   var a = document.querySelector('.pm-ats-alert');
   if (a) { a.scrollIntoView({ block: 'center' }); a.focus({ preventScroll: true }); }
+
+  // v1.3.5 — testata a tutta larghezza della finestra (.pm-ats-wt-hero-full): larghezza = area utile della finestra (senza
+  // barra di scorrimento verticale), margine sinistro = scostamento reale della testata dal bordo, ricalcolati a ogni
+  // ridimensionamento. Gli antenati che tagliano il contenuto (overflow) vengono marcati .pm-ats-wt-hero-host.
+  var heroes = document.querySelectorAll('.pm-ats-wt-hero-full');
+  if (heroes.length) {
+    var fit = function () {
+      var vw = document.documentElement.clientWidth;
+      heroes.forEach(function (h) {
+        h.style.setProperty('--pm-ats-hero-ml', '0px');
+        h.style.setProperty('--pm-ats-hero-w', vw + 'px');
+        var left = h.getBoundingClientRect().left + (window.pageXOffset || 0) - (document.documentElement.getBoundingClientRect().left + (window.pageXOffset || 0));
+        h.style.setProperty('--pm-ats-hero-ml', (-Math.round(left)) + 'px');
+      });
+    };
+    heroes.forEach(function (h) {
+      for (var p = h.parentElement; p && p !== document.body; p = p.parentElement) {
+        var ov = window.getComputedStyle(p).overflowX;
+        if (ov === 'hidden' || ov === 'clip') p.classList.add('pm-ats-wt-hero-host');
+      }
+    });
+    var raf = 0;
+    var later = function () { if (raf) return; raf = (window.requestAnimationFrame || setTimeout)(function () { raf = 0; fit(); }); };
+    fit();
+    window.addEventListener('resize', later);
+    window.addEventListener('load', fit);
+    if (window.ResizeObserver) new ResizeObserver(later).observe(document.body);
+  }
 })();

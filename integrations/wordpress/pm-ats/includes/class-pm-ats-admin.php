@@ -321,6 +321,9 @@ final class PM_ATS_Admin
                 <select name="<?php echo $f('wt_hero_fit'); ?>">
                   <option value="scale" <?php selected($s['wt_hero_fit'], 'scale'); ?>><?php esc_html_e('Immagine intera, ridimensionata con la larghezza della finestra', 'pm-ats'); ?></option>
                   <option value="cover" <?php selected($s['wt_hero_fit'], 'cover'); ?>><?php esc_html_e('Fascia proporzionale alla finestra, immagine ritagliata', 'pm-ats'); ?></option></select>
+                <select name="<?php echo $f('wt_hero_width'); ?>">
+                  <option value="window" <?php selected($s['wt_hero_width'], 'window'); ?>><?php esc_html_e('Larghezza: tutta la finestra del browser', 'pm-ats'); ?></option>
+                  <option value="container" <?php selected($s['wt_hero_width'], 'container'); ?>><?php esc_html_e('Larghezza: contenitore della pagina (riga/colonna del tema)', 'pm-ats'); ?></option></select>
                 <p class="description"><?php esc_html_e('L\'altezza della testata e il titolo si adattano alla larghezza dello schermo. Carica o scegli l\'immagine dalla Libreria media: il browser scarica la dimensione adatta allo schermo (srcset).', 'pm-ats'); ?></p></td></tr>
               <tr><th><?php esc_html_e('Titolo', 'pm-ats'); ?></th><td><?php $txt('wt_title', 'text'); ?><p class="description"><?php esc_html_e('Il testo fra parentesi graffe {…} è evidenziato con il colore d\'accento.', 'pm-ats'); ?></p></td></tr>
               <tr><th><?php esc_html_e('Introduzione', 'pm-ats'); ?></th><td><textarea name="<?php echo $f('wt_intro'); ?>" rows="3" class="large-text"><?php echo esc_textarea($s['wt_intro']); ?></textarea></td></tr>
