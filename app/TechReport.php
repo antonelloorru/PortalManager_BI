@@ -8,6 +8,8 @@
  *              moduli di intervento valorizzati / non valorizzati;
  *   rapporti — rapporti di intervento per tipologia di contratto e per commessa con la provenienza (ticket / riferimento
  *              libero / da commessa), dettaglio dei moduli e drill-down sulla singola commessa.
+ *   reperibilita — v1.10.32 «Controllo Reperibilità»: interventi in reperibilità (inizio 18:01–08:59) del tecnico correlati al
+ *              primo intervento ordinario (09:00–18:00) del giorno lavorativo successivo (ItServiceModel::controlloReperibilita).
  * Perimetro e filtri: ItServiceModel (gli stessi della Relazione di Servizio IT).
  * Valori economici (produzione teorica, valore addebitato) solo con $eco (permesso tech_report_economics.php).
  */
@@ -18,18 +20,28 @@ require_once __DIR__ . '/PmReport.php';
 
 final class TechReport
 {
-    public const TABS = ['tecnici' => 'Tecnici', 'rapporti' => 'Rapporti di intervento'];
+    public const TABS = ['tecnici' => 'Tecnici', 'rapporti' => 'Rapporti di intervento', 'reperibilita' => 'Controllo Reperibilità'];
     public const MAX_FILE = 50000;   // moduli nel dettaglio XLSX / CSV
     public const MAX_DOC  = 1500;    // moduli nel dettaglio DOCX / PDF / stampa
 
     public const H_MAIN = ['Tecnico', 'Codice linea', 'Linea di servizio', 'N. attività', 'N. ticket', 'GG lavorabili', 'GG uomo lavorati', 'N. ore lavorate', 'Descrizione tariffa'];
     public const H_DET  = ['Tecnico', 'Codice linea', 'Linea di servizio', 'Giornate-uomo', 'Ore cons.', 'Ordinarie', 'Fuori orario', 'Reperib.', 'Extra dich.', 'Presso cl.', 'Remoto', 'Smart'];
 
+    /** v1.10.32 — colonne del Controllo Reperibilità (vista, filtri di colonna, export). */
+    public const H_REP = ['Tecnico / Incaricato', 'Data/Ora Reperibilità', 'Rif. Modulo Intervento (reperibilità)', 'Data/Ora Giorno Succ.', 'Rif. Modulo Intervento (giorno succ.)', 'Cliente', 'Codice Commessa', 'Tipo'];
+
     public function __construct(private ItServiceModel $m, private bool $eco = false) {}
 
     // ── dati ─────────────────────────────────────────────────────────
     public function data(string $tab, array $f, bool $dettaglio = false, ?string $commessa = null, int $maxModuli = 0): array
     {
+        if ($tab === 'reperibilita') {
+            $d = $this->m->controlloReperibilita($f);
+            $d['cf'] = self::colFiltri($f['cf'] ?? []);
+            $d['casi'] = count($d['righe']);   // prima dei filtri di colonna
+            $d['righe'] = self::filtraColonne($d['righe'], $d['cf']);
+            return $d;
+        }
         if ($tab === 'tecnici') {
             $tl = $this->m->tecniciLinea($f);
             return ['tl' => $tl, 'righe' => self::gruppi($tl), 'val' => $this->m->valorizzazione($f), 'valTec' => $this->m->valorizzazione($f, true)];
@@ -77,6 +89,37 @@ final class TechReport
                 (int)$r['presso_cliente'], (int)$r['da_remoto'], (int)$r['smart_working']];
     }
 
+    /** v1.10.32 — riga del Controllo Reperibilità (valori in ordine di H_REP). */
+    public static function rep(array $x): array
+    {
+        $dh = static fn($v) => $v ? date('d/m/Y H:i', strtotime((string)$v)) : '';
+        return [$x['tecnico'], $dh($x['rep_inizio']), $x['rep_modulo'], $dh($x['succ_inizio']), $x['succ_modulo'], $x['cliente'], $x['commessa'], $x['tipo']];
+    }
+
+    /** v1.10.32 — filtri di colonna (cf[i], «contiene», senza distinzione di maiuscole e accenti) sulle righe di H_REP. */
+    public static function colFiltri($raw): array
+    {
+        $out = [];
+        foreach ((array)$raw as $i => $v) if (is_scalar($v) && ctype_digit((string)$i) && (int)$i < count(self::H_REP) && trim((string)$v) !== '') $out[(int)$i] = mb_substr(trim((string)$v), 0, 80);
+        ksort($out);
+        return $out;
+    }
+
+    public static function filtraColonne(array $righe, array $cf): array
+    {
+        if (!$cf) return $righe;
+        $n = static function (string $s): string {
+            $s = mb_strtolower($s, 'UTF-8');
+            return class_exists('Normalizer') ? preg_replace('/\p{Mn}+/u', '', (string)Normalizer::normalize($s, Normalizer::FORM_D)) : $s;
+        };
+        $cfn = array_map($n, $cf);
+        return array_values(array_filter($righe, function ($x) use ($cfn, $n) {
+            $v = self::rep($x);
+            foreach ($cfn as $i => $q) if (!str_contains($n((string)$v[$i]), $q)) return false;
+            return true;
+        }));
+    }
+
     public static function pct($a, $b): ?float { return (float)$b > 0 ? round((float)$a / (float)$b * 100, 1) : null; }
 
     // ── report ───────────────────────────────────────────────────────
@@ -85,10 +128,22 @@ final class TechReport
         $per = date('d/m/Y', strtotime($f['from'])) . ' – ' . date('d/m/Y', strtotime($f['to']));
         $n0 = static fn($v) => number_format((float)$v, 0, ',', '.');
         $n2 = static fn($v) => number_format((float)$v, 2, ',', '.');
-        $title = $tab === 'tecnici' ? 'Relazione Tecnici' : 'Rapporti di intervento' . ($commessa !== null ? ' — commessa ' . $commessa : '');
+        $title = $tab === 'tecnici' ? 'Relazione Tecnici' : ($tab === 'reperibilita' ? 'Controllo Reperibilità' : 'Rapporti di intervento' . ($commessa !== null ? ' — commessa ' . $commessa : ''));
         $r = new PmReport($title, 'Periodo ' . $per . ' · generato il ' . date('d/m/Y H:i'), 'L');
         $r->meta($filtri !== '' ? 'Filtri: ' . $filtri : 'Nessun filtro oltre al periodo');
 
+        if ($tab === 'reperibilita') {
+            $rr = $d['righe'];
+            $r->kpi([
+                ['label' => 'Interventi in reperibilità', 'value' => $n0($d['notturni']), 'color' => '7C3AED', 'sub' => $n0($d['tecnici_notte']) . ' tecnici · inizio 18:01–08:59'],
+                ['label' => 'Con attività il giorno succ.', 'value' => $n0($d['casi']), 'color' => 'DC2626', 'sub' => (($p = self::pct($d['casi'], $d['notturni'])) !== null ? number_format($p, 1, ',', '.') . '%' : '') . ($d['cf'] ? ' · ' . $n0(count($rr)) . ' con i filtri di colonna' : '')],
+                ['label' => 'Tecnici', 'value' => $n0($d['tecnici']), 'color' => '2563EB', 'sub' => 'con almeno un caso'],
+            ]);
+            if ($d['cf']) $r->meta('Filtri di colonna: ' . implode(' · ', array_map(fn($i, $v) => self::H_REP[$i] . ' contiene «' . $v . '»', array_keys($d['cf']), $d['cf'])));
+            $r->table('Controllo Reperibilità', self::H_REP, array_map([self::class, 'rep'], $rr));
+            $r->note('Reperibilità = modulo con inizio fra le 18:01 e le 08:59 (turno del giorno di inizio se dopo le 18:01, del giorno precedente se prima delle 09:00). Giorno succ. = primo giorno lavorativo (lun–ven, esclusi i festivi nazionali) dopo il giorno del turno; si riporta il primo modulo dello stesso tecnico con inizio fra le 09:00 e le 18:00 e non prima della fine dell\'intervento in reperibilità. Cliente, Codice Commessa e Tipo (linea di servizio) si riferiscono all\'intervento in reperibilità; i filtri della pagina si applicano agli interventi in reperibilità.');
+            return $r;
+        }
         if ($tab === 'tecnici') {
             $tl = $d['tl']; $t = $tl['totale']; $gg = (int)$tl['gg_lavorabili'];
             $r->kpi([

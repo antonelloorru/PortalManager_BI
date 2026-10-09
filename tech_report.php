@@ -9,6 +9,8 @@
  *                            moduli di intervento valorizzati / non valorizzati;
  *   Rapporti di intervento — moduli per tipologia di contratto e per commessa con la provenienza ticket, drill-down sulla
  *                            commessa (moduli, link alla scheda, export della singola commessa).
+ *   Controllo Reperibilità — v1.10.32: interventi in reperibilità (inizio 18:01–08:59) con il primo intervento ordinario
+ *                            (09:00–18:00) del giorno lavorativo successivo; filtri globali + filtri di colonna.
  * Stampa (HTML) ed export CSV / XLSX / DOCX / PDF dallo stesso report (app/TechReport.php).
  * Permessi: tech_report.php (view / export) · tech_report_economics.php (produzione teorica e valore addebitato).
  */
@@ -26,6 +28,8 @@ $m  = new ItServiceModel($pdo);
 $f  = $m->normFilters($_GET);
 $TR = new TechReport($m, $eco);
 $tab = isset(TechReport::TABS[$_GET['tab'] ?? '']) ? (string)$_GET['tab'] : 'tecnici';
+// v1.10.32 — filtri di colonna del Controllo Reperibilità (cf[i]): vista, stampa ed export
+$f['cf'] = $tab === 'reperibilita' ? TechReport::colFiltri($_GET['cf'] ?? []) : [];
 $det = ($_GET['det'] ?? '') === '1';
 $cmx = isset($_GET['commessa']) ? mb_substr(trim((string)$_GET['commessa']), 0, 60) : null;
 if ($cmx === '') $cmx = null;
@@ -35,6 +39,7 @@ $qs = function (array $over = []) use ($f, $tab, $det) {
     foreach (['contratti', 'linee', 'codici', 'settori', 'aziende', 'incaricati', 'modalita', 'fasce', 'durate', 'sedi', 'tipologie', 'prov', 'tariffe', 'uo'] as $k)
         if (!empty($f[$k])) $p[$k] = implode(',', $f[$k]);
     if (!empty($f['stati'])) $p['stato_commessa'] = implode(',', $f['stati']);
+    if (!empty($f['cf']) && !array_key_exists('tab', $over)) $p['cf'] = $f['cf'];   // v1.10.32 — solo nella stessa scheda
     $p = array_merge($p, $over);
     return url_safe('tech_report', array_filter($p, fn($v) => $v !== '' && $v !== [] && $v !== null));
 };
@@ -72,7 +77,7 @@ if ($repFmt !== '' || $print) {
     $data = $TR->data($tab, $f, $tab === 'rapporti' && $det, $tab === 'rapporti' ? $cmx : null,
                       in_array($fmt, ['docx', 'pdf', 'print'], true) ? TechReport::MAX_DOC : TechReport::MAX_FILE);
     $rep  = $TR->build($tab, $f, $data, $filtriTxt, $fmt, $tab === 'rapporti' ? $cmx : null);
-    $base = 'relazione_tecnici_' . ($tab === 'rapporti' ? 'rapporti_' . ($cmx !== null ? PmReport::safe($cmx) . '_' : '') : '') . $f['from'] . '_' . $f['to'];
+    $base = 'relazione_tecnici_' . ($tab === 'reperibilita' ? 'controllo_reperibilita_' : '') . ($tab === 'rapporti' ? 'rapporti_' . ($cmx !== null ? PmReport::safe($cmx) . '_' : '') : '') . $f['from'] . '_' . $f['to'];
     write_log('TechReport', 'info', ($print ? 'Stampa' : 'Export ' . $repFmt) . ' Relazione Tecnici › ' . TechReport::TABS[$tab] . ($cmx !== null ? " (commessa $cmx)" : ''), $u_id,
         ['scheda' => $tab, 'formato' => $fmt, 'periodo' => $f['from'] . '..' . $f['to'], 'commessa' => $cmx, 'dettaglio' => $det]);
     if ($print) { header('Content-Type: text/html; charset=utf-8'); echo $rep->toHtml(true); exit; }
@@ -83,7 +88,9 @@ if ($repFmt !== '' || $print) {
 // ── dati della vista ────────────────────────────────────────────────────────
 $err = '';
 try {
-    $D = $TR->data($tab, $f, false);
+    // v1.10.32 — nella vista i filtri di colonna sono applicati dal browser (righe complete, filtri modificabili al volo)
+    $D = $TR->data($tab, $tab === 'reperibilita' ? ['cf' => []] + $f : $f, false);
+    if ($tab === 'reperibilita') $D['cf'] = $f['cf'];
     $vLin = $m->valori('linea_label'); $vCod = $m->valori('linea_servizio'); $vSet = $m->valori('settore'); $vAz = $m->valori('azienda');
     $vInc = $m->valori('incaricato'); $vSed = $m->valori('sede_riferimento'); $vTip = $m->valoriTipologie(); $vTar = $m->valoriTariffe();
 } catch (Throwable $e) {
@@ -155,6 +162,7 @@ tr.tr-dd>td{background:#fbfdff;padding:4px 10px 10px 28px;white-space:normal}
     <form method="get">
       <?= route_slug_field() ?>
       <?php if ($tab !== 'tecnici'): ?><input type="hidden" name="tab" value="<?= h($tab) ?>"><?php endif; ?>
+      <?php foreach ($f['cf'] as $ci => $cv): ?><input type="hidden" class="tr-cf-h" name="cf[<?= (int)$ci ?>]" value="<?= h($cv) ?>"><?php endforeach; ?>
       <div class="pm-group">
         <h4>Contratto e stato commessa <span class="pm-multi">(filtro globale, come nella Relazione di Servizio IT)</span></h4>
         <div class="pm-grid-auto">
@@ -323,7 +331,73 @@ tr.tr-dd>td{background:#fbfdff;padding:4px 10px 10px 28px;white-space:normal}
     <div class="tr-note">Valorizzati = moduli con tariffa di listino della commessa; non valorizzati = commessa senza listino o combinazione fascia/unità non prevista (dettaglio dei motivi nella Relazione di Servizio IT).</div>
   </section>
 
-<?php else:
+<?php elseif ($tab === 'reperibilita'):
+    $RR = $D['righe']; $dh = fn($v) => $v ? date('d/m/Y H:i', strtotime((string)$v)) : '';
+    $vis = array_slice($RR, 0, 5000); ?>
+  <div class="tr-kpi">
+    <div style="--c:#7c3aed"><b><?= $h0($D['notturni']) ?></b><span>Interventi in reperibilità</span><small><?= $h0($D['tecnici_notte']) ?> tecnici · inizio 18:01–08:59</small></div>
+    <div style="--c:#dc2626"><b><?= $h0(count($RR)) ?></b><span>Con attività il giorno succ.</span><small><?= $pc(TechReport::pct(count($RR), $D['notturni'])) ?> degli interventi</small></div>
+    <div style="--c:#2563eb"><b><?= $h0($D['tecnici']) ?></b><span>Tecnici</span><small>con almeno un caso</small></div>
+  </div>
+
+  <section class="tr-sec">
+    <h2>Controllo Reperibilità <small>intervento in reperibilità → primo intervento ordinario (09:00–18:00) del giorno lavorativo successivo · <span id="trRepN"><?= $h0(count($vis)) ?></span> righe</small></h2>
+    <div class="tr-wrap"><table class="tr-t" id="trRep">
+      <thead>
+        <tr><?php foreach (TechReport::H_REP as $hd): ?><th><?= h($hd) ?></th><?php endforeach; ?></tr>
+        <tr class="tr-cf"><?php foreach (TechReport::H_REP as $i => $hd): ?><th><input type="search" data-col="<?= $i ?>" value="<?= h($D['cf'][$i] ?? '') ?>" placeholder="filtra…" aria-label="Filtra <?= h($hd) ?>"></th><?php endforeach; ?></tr>
+      </thead>
+      <tbody>
+      <?php if (!$RR): ?><tr class="tr-empty"><td colspan="8" class="muted" style="text-align:center;padding:18px">Nessun intervento in reperibilità seguito da attività ordinaria il giorno lavorativo successivo, con i filtri impostati.</td></tr><?php endif; ?>
+      <?php foreach ($vis as $x): ?>
+        <tr>
+          <td><?= h($x['tecnico']) ?></td>
+          <td title="Turno del <?= h($dt($x['turno'])) ?><?= $x['rep_fine'] ? ' · fine ' . h($dh($x['rep_fine'])) : '' ?>"><?= h($dh($x['rep_inizio'])) ?></td>
+          <td><?= h($x['rep_modulo']) ?></td>
+          <td title="<?= $x['succ_fine'] ? 'Fine ' . h($dh($x['succ_fine'])) : '' ?>"><?= h($dh($x['succ_inizio'])) ?></td>
+          <td><?= h($x['succ_modulo']) ?><?php if ($x['succ_commessa'] !== '' && $x['succ_commessa'] !== $x['commessa']): ?> <span class="muted" style="font-size:10.5px" title="Commessa del modulo del giorno successivo">· <?= h($x['succ_commessa']) ?></span><?php endif; ?></td>
+          <td title="<?= h($x['cliente']) ?>"><?= h(mb_strimwidth($x['cliente'], 0, 34, '…')) ?></td>
+          <td><?php if ($can_pd && $x['project_id'] > 0): ?><a href="<?= url_safe('project_dashboard', ['id' => $x['project_id']]) ?>" title="Scheda commessa"><?= h($x['commessa']) ?></a><?php else: ?><?= h($x['commessa']) ?><?php endif; ?></td>
+          <td title="<?= h($x['tipo_label']) ?>"><?= h($x['tipo']) ?></td>
+        </tr>
+      <?php endforeach; ?>
+      </tbody></table></div>
+    <?php if (count($RR) > count($vis) || $D['troncato']): ?><div class="tr-note">Vista limitata: <?= $h0(count($vis)) ?> righe su <?= $h0(count($RR)) ?><?= $D['troncato'] ? ' (interventi in reperibilità oltre il limite di elaborazione: restringere il periodo)' : '' ?>. L'export XLSX / CSV contiene tutte le righe.</div><?php endif; ?>
+    <div class="tr-note">Reperibilità = modulo con inizio fra le 18:01 e le 08:59 (turno del giorno di inizio se dopo le 18:01, del giorno precedente se prima delle 09:00) · Giorno succ. = primo giorno lavorativo (lun–ven, esclusi i festivi nazionali) dopo il turno: si riporta il primo modulo dello stesso tecnico con inizio 09:00–18:00 e non prima della fine dell'intervento in reperibilità · Cliente, Codice Commessa e Tipo (linea di servizio) sono dell'intervento in reperibilità · i filtri del pannello si applicano agli interventi in reperibilità, i filtri di colonna alla tabella.</div>
+  </section>
+  <style>.tr-t thead tr.tr-cf th{top:27px;background:#334155;padding:3px 4px}.tr-cf input{width:100%;min-width:90px;font-size:11px;padding:2px 5px;border:1px solid #cbd5e1;border-radius:4px}</style>
+  <script>
+  (function () {
+    var t = document.getElementById('trRep'); if (!t) return;
+    var ins = t.querySelectorAll('.tr-cf input'), rows = Array.prototype.slice.call(t.tBodies[0].rows).filter(function (r) { return !r.classList.contains('tr-empty'); }), out = document.getElementById('trRepN');
+    function norm(s) { return (s || '').toString().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ''); }
+    function apply() {
+      var f = Array.prototype.map.call(ins, function (i) { return norm(i.value.trim()); }), n = 0;
+      rows.forEach(function (r) {
+        var ok = f.every(function (v, c) { return v === '' || norm(r.cells[c].textContent).indexOf(v) >= 0; });
+        r.style.display = ok ? '' : 'none'; if (ok) n++;
+      });
+      if (out) out.textContent = n.toLocaleString('it-IT');
+      // stampa ed export riportano gli stessi filtri di colonna (cf[i])
+      document.querySelectorAll('.tr-bar a[href]').forEach(function (a) {
+        var u = new URL(a.getAttribute('href'), document.baseURI);
+        Array.prototype.slice.call(u.searchParams.keys()).filter(function (k) { return /^cf\[/.test(k); }).forEach(function (k) { u.searchParams.delete(k); });
+        ins.forEach(function (i) { if (i.value.trim() !== '') u.searchParams.set('cf[' + i.dataset.col + ']', i.value.trim()); });
+        a.setAttribute('href', u.toString());
+      });
+    }
+    ins.forEach(function (i) { i.addEventListener('input', apply); });
+    var pf = document.querySelector('.pm-panel form');
+    function syncForm() {
+      if (!pf) return;
+      pf.querySelectorAll('.tr-cf-h').forEach(function (h) { h.remove(); });
+      ins.forEach(function (i) { if (i.value.trim() === '') return; var h = document.createElement('input'); h.type = 'hidden'; h.className = 'tr-cf-h'; h.name = 'cf[' + i.dataset.col + ']'; h.value = i.value.trim(); pf.appendChild(h); });
+    }
+    ins.forEach(function (i) { i.addEventListener('input', syncForm); });
+    if (Array.prototype.some.call(ins, function (i) { return i.value.trim() !== ''; })) apply();
+  })();
+  </script>
+<?php elseif ($tab === 'rapporti'):
     $tp = $D['tipologie']; $cm = $D['commesse'];
     $S = fn(array $rows, string $k) => array_sum(array_map(fn($x) => (float)$x[$k], $rows));
     $mod = $S($tp, 'moduli'); ?>

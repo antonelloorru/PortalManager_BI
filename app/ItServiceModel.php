@@ -1232,6 +1232,119 @@ final class ItServiceModel
     }
 
     /**
+     * v1.10.32 — Festivi nazionali italiani degli anni [y1, y2] (1/1, 6/1, Pasquetta, 25/4, 1/5, 2/6, 15/8, 1/11, 8/12,
+     * 25/12, 26/12) come chiavi 'Y-m-d'. Condiviso da giorniLavorabili() e prossimoLavorativo().
+     */
+    public static function festivi(int $y1, int $y2): array
+    {
+        static $cache = [];
+        $fest = [];
+        for ($y = $y1; $y <= $y2; $y++) {
+            if (!isset($cache[$y])) {
+                $c0 = [];
+                foreach (['01-01', '01-06', '04-25', '05-01', '06-02', '08-15', '11-01', '12-08', '12-25', '12-26'] as $md) $c0["$y-$md"] = 1;
+                // Pasqua (algoritmo di Meeus/Jones/Butcher) + 1 giorno
+                $a = $y % 19; $b = intdiv($y, 100); $c = $y % 100; $dd = intdiv($b, 4); $ee = $b % 4; $f = intdiv($b + 8, 25); $g = intdiv($b - $f + 1, 3);
+                $h = (19 * $a + $b - $dd - $g + 15) % 30; $i = intdiv($c, 4); $k = $c % 4; $l = (32 + 2 * $ee + 2 * $i - $h - $k) % 7; $m = intdiv($a + 11 * $h + 22 * $l, 451);
+                $mo = intdiv($h + $l - 7 * $m + 114, 31); $da = (($h + $l - 7 * $m + 114) % 31) + 1;
+                $c0[date('Y-m-d', mktime(0, 0, 0, $mo, $da + 1, $y))] = 1;
+                $cache[$y] = $c0;
+            }
+            $fest += $cache[$y];
+        }
+        return $fest;
+    }
+
+    /** v1.10.32 — Primo giorno lavorativo (lun–ven non festivo) successivo alla data indicata (Y-m-d). */
+    public static function prossimoLavorativo(string $giorno): string
+    {
+        $d = new DateTime($giorno);
+        for ($i = 0; $i < 15; $i++) {
+            $d->modify('+1 day');
+            $fest = self::festivi((int)$d->format('Y'), (int)$d->format('Y'));
+            if ((int)$d->format('N') < 6 && !isset($fest[$d->format('Y-m-d')])) break;
+        }
+        return $d->format('Y-m-d');
+    }
+
+    /**
+     * v1.10.32 — Controllo Reperibilità (Relazione Tecnici).
+     *
+     * 1. Interventi in reperibilità: moduli del perimetro filtrato (where(): tutti i filtri globali di pagina) con inizio
+     *    nella fascia 18:01–08:59. Il turno notturno appartiene al giorno in cui inizia: inizio 18:01–23:59 → turno del
+     *    giorno stesso; inizio 00:00–08:59 → turno del giorno precedente.
+     * 2. Giorno successivo: primo giorno lavorativo (lun–ven non festivo) dopo il giorno del turno.
+     * 3. Correlazione: primo modulo dello STESSO tecnico (dipendente o professionista) in quel giorno con inizio nella fascia
+     *    09:00–18:00 e non prima della fine dell'intervento in reperibilità, cercato fra tutti i suoi moduli (il controllo
+     *    riguarda la persona, non il perimetro della commessa).
+     * Una riga per intervento in reperibilità con attività ordinaria nel giorno successivo.
+     */
+    public const REP_NOTTE = ['18:01:00', '09:00:00'];   // TIME >= [0] OR TIME < [1]
+    public const REP_GIORNO = ['09:00:00', '18:00:59'];  // TIME BETWEEN [0] AND [1]
+
+    public function controlloReperibilita(array $f, int $limite = 20000): array
+    {
+        [$w, $a] = $this->where($f);
+        $st = $this->pdo->prepare("SELECT s.`report_id`, s.`modulo`, s.`incaricato` AS tecnico, s.`commessa`, s.`cliente`, s.`linea_servizio` AS tipo,
+                    s.`linea_label`, ir.`start_at`, ir.`end_at`, ir.`technician_id`, ir.`technician_professional_id`, ir.`project_id`
+               FROM `{$this->v['v_cm_it_servizio']}` s {$this->trJoin()}
+              WHERE $w AND ir.`start_at` IS NOT NULL
+                AND (TIME(ir.`start_at`) >= '" . self::REP_NOTTE[0] . "' OR TIME(ir.`start_at`) < '" . self::REP_NOTTE[1] . "')
+              ORDER BY s.`incaricato`, ir.`start_at` LIMIT " . (int)$limite);
+        $st->execute($a); $notte = $st->fetchAll(PDO::FETCH_ASSOC); $st->closeCursor();
+
+        $key = static fn(array $r): string => !empty($r['technician_id']) ? 'e' . (int)$r['technician_id'] : (!empty($r['technician_professional_id']) ? 'p' . (int)$r['technician_professional_id'] : '');
+        $emp = []; $prof = []; $giorni = [];
+        foreach ($notte as $i => $r) {
+            $t = strtotime((string)$r['start_at']);
+            $turno = date('H:i:s', $t) >= self::REP_NOTTE[0] ? date('Y-m-d', $t) : date('Y-m-d', $t - 86400);
+            $notte[$i]['turno'] = $turno;
+            $notte[$i]['giorno_succ'] = self::prossimoLavorativo($turno);
+            $giorni[$notte[$i]['giorno_succ']] = 1;
+            if (!empty($r['technician_id'])) $emp[(int)$r['technician_id']] = 1;
+            elseif (!empty($r['technician_professional_id'])) $prof[(int)$r['technician_professional_id']] = 1;
+        }
+        $primo = [];
+        if ($giorni && ($emp || $prof)) {
+            $cond = [];
+            if ($emp)  $cond[] = 'ir.`technician_id` IN (' . implode(',', array_map('intval', array_keys($emp))) . ')';
+            if ($prof) $cond[] = '(ir.`technician_id` IS NULL AND ir.`technician_professional_id` IN (' . implode(',', array_map('intval', array_keys($prof))) . '))';
+            $gg = array_keys($giorni); sort($gg);
+            $ph = implode(',', array_fill(0, count($gg), '?'));
+            $sd = $this->pdo->prepare("SELECT ir.`id`, ir.`report_code` AS modulo, ir.`start_at`, ir.`end_at`, ir.`technician_id`, ir.`technician_professional_id`,
+                        COALESCE(p.`project_code`, ir.`project_code`) AS commessa, ir.`project_id`
+                   FROM `cm_intervention_reports` ir LEFT JOIN `cm_projects` p ON p.`id` = ir.`project_id`
+                  WHERE ir.`start_at` >= ? AND ir.`start_at` < ? AND DATE(ir.`start_at`) IN ($ph)
+                    AND TIME(ir.`start_at`) BETWEEN '" . self::REP_GIORNO[0] . "' AND '" . self::REP_GIORNO[1] . "'
+                    AND (" . implode(' OR ', $cond) . ")
+                  ORDER BY ir.`start_at`, ir.`id`");
+            $sd->execute(array_merge([$gg[0] . ' 00:00:00', date('Y-m-d', strtotime(end($gg) . ' +1 day')) . ' 00:00:00'], $gg));
+            foreach ($sd->fetchAll(PDO::FETCH_ASSOC) as $r) {
+                $primo[$key($r) . '|' . substr((string)$r['start_at'], 0, 10)][] = $r;   // in ordine di inizio
+            }
+            $sd->closeCursor();
+        }
+        $righe = []; $tec = [];
+        foreach ($notte as $r) {
+            $k = $key($r);
+            if ($k === '' || !isset($primo[$k . '|' . $r['giorno_succ']])) continue;
+            // primo modulo ordinario che inizia dopo la fine dell'intervento in reperibilità (es. turno 00:00–08:59 che
+            // termina alle 10:00: il modulo delle 09:30 è la prosecuzione, non l'attività del giorno successivo)
+            $fine = (string)($r['end_at'] ?: $r['start_at']); $g = null;
+            foreach ($primo[$k . '|' . $r['giorno_succ']] as $c) if ((string)$c['start_at'] >= $fine && (int)$c['id'] !== (int)$r['report_id']) { $g = $c; break; }
+            if ($g === null) continue;
+            $righe[] = ['tecnico' => (string)$r['tecnico'], 'rep_inizio' => (string)$r['start_at'], 'rep_fine' => $r['end_at'], 'rep_modulo' => (string)$r['modulo'],
+                        'turno' => $r['turno'], 'succ_inizio' => (string)$g['start_at'], 'succ_fine' => $g['end_at'], 'succ_modulo' => (string)$g['modulo'],
+                        'succ_commessa' => (string)$g['commessa'], 'succ_project_id' => (int)$g['project_id'],
+                        'cliente' => (string)$r['cliente'], 'commessa' => (string)$r['commessa'], 'project_id' => (int)$r['project_id'],
+                        'tipo' => (string)$r['tipo'], 'tipo_label' => (string)($r['linea_label'] ?? '')];
+            $tec[$k] = 1;
+        }
+        return ['righe' => $righe, 'notturni' => count($notte), 'tecnici' => count($tec),
+                'tecnici_notte' => count(array_unique(array_filter(array_map($key, $notte)))), 'troncato' => count($notte) >= $limite];
+    }
+
+    /**
      * Giorni lavorabili fra due date: lunedì–venerdì esclusi i festivi nazionali italiani
      * (1/1, 6/1, Pasquetta, 25/4, 1/5, 2/6, 15/8, 1/11, 8/12, 25/12, 26/12).
      */
@@ -1239,15 +1352,7 @@ final class ItServiceModel
     {
         try { $d = new DateTime($from); $e = new DateTime($to); } catch (Throwable $x) { return 0; }
         if ($e < $d) return 0;
-        $fest = [];
-        for ($y = (int)$d->format('Y'); $y <= (int)$e->format('Y'); $y++) {
-            foreach (['01-01', '01-06', '04-25', '05-01', '06-02', '08-15', '11-01', '12-08', '12-25', '12-26'] as $md) $fest["$y-$md"] = 1;
-            // Pasqua (algoritmo di Meeus/Jones/Butcher) + 1 giorno
-            $a = $y % 19; $b = intdiv($y, 100); $c = $y % 100; $dd = intdiv($b, 4); $ee = $b % 4; $f = intdiv($b + 8, 25); $g = intdiv($b - $f + 1, 3);
-            $h = (19 * $a + $b - $dd - $g + 15) % 30; $i = intdiv($c, 4); $k = $c % 4; $l = (32 + 2 * $ee + 2 * $i - $h - $k) % 7; $m = intdiv($a + 11 * $h + 22 * $l, 451);
-            $mo = intdiv($h + $l - 7 * $m + 114, 31); $da = (($h + $l - 7 * $m + 114) % 31) + 1;
-            $fest[date('Y-m-d', mktime(0, 0, 0, $mo, $da + 1, $y))] = 1;
-        }
+        $fest = self::festivi((int)$d->format('Y'), (int)$e->format('Y'));
         $n = 0; $guard = 0;
         while ($d <= $e && $guard++ < 40000) {
             if ((int)$d->format('N') < 6 && !isset($fest[$d->format('Y-m-d')])) $n++;
